@@ -2,15 +2,19 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
 from app.main import app
 from app.models import User
-from app.auth import hash_password, create_session
+from app.auth import hash_password, serializer, SESSION_COOKIE
 
-TEST_DATABASE_URL = "sqlite:///./test.db"
-
-engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
+# Base de données en mémoire partagée — isolation par create_all/drop_all par test
+engine = create_engine(
+    "sqlite:///:memory:",
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -75,18 +79,30 @@ def regular_user(db):
 
 
 @pytest.fixture
-def admin_client(client, admin_user):
-    """Client with admin session cookie."""
-    from app.auth import serializer, SESSION_COOKIE
-    token = serializer.dumps({"user_id": admin_user.id})
+def second_user(db):
+    user = User(
+        username="bob",
+        email="bob@test.com",
+        hashed_password=hash_password("password123"),
+        is_admin=False,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def _authenticated_client(client, user_id):
+    token = serializer.dumps({"user_id": user_id})
     client.cookies.set(SESSION_COOKIE, token)
     return client
 
 
 @pytest.fixture
+def admin_client(client, admin_user):
+    return _authenticated_client(client, admin_user.id)
+
+
+@pytest.fixture
 def user_client(client, regular_user):
-    """Client with regular user session cookie."""
-    from app.auth import serializer, SESSION_COOKIE
-    token = serializer.dumps({"user_id": regular_user.id})
-    client.cookies.set(SESSION_COOKIE, token)
-    return client
+    return _authenticated_client(client, regular_user.id)
