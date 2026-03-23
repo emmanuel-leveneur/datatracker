@@ -1,16 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Mes tables — DataTracker{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold text-gray-800">Mes tables</h1>
-  <a href="/tables/create"
-    class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">
-    + Nouvelle table
-  </a>
+<div class="flex items-center justify-between gap-3 mb-6">
+  <h1 class="text-2xl font-bold text-gray-800 shrink-0">Mes tables</h1>
+  <div class="flex items-center gap-3 flex-1 justify-end">
+    <input
+      id="table-search"
+      type="search"
+      placeholder="Rechercher une table…"
+      class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-400"
+      autocomplete="off"
+    />
+    <a href="/tables/create"
+      class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition shrink-0">
+      + Nouvelle table
+    </a>
+  </div>
 </div>
 
 {% macro table_card(table) %}
-<div class="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md transition p-5 flex flex-col gap-3">
+<div class="table-card bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md transition p-5 flex flex-col gap-3"
+     data-name="{{ table.name | lower }}"
+     data-desc="{{ (table.description or '') | lower }}">
   <div class="flex items-start justify-between gap-2">
     <div class="min-w-0">
       <h2 class="text-lg font-semibold text-gray-800 truncate">{{ table.name }}</h2>
@@ -56,7 +67,7 @@
 {% endmacro %}
 
 {% if favorites %}
-<section class="mb-8">
+<section id="section-favorites" class="mb-8">
   <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
     <span>⭐</span> Mes favoris
   </h2>
@@ -69,7 +80,7 @@
 {% endif %}
 
 {% if tables %}
-<section>
+<section id="section-all">
   {% if favorites %}
   <h2 class="text-lg font-semibold text-gray-700 mb-3">Toutes mes tables</h2>
   {% endif %}
@@ -78,6 +89,7 @@
     {{ table_card(table) }}
     {% endfor %}
   </div>
+  <p id="no-results" class="hidden text-center py-10 text-gray-400 text-sm">Aucune table ne correspond à votre recherche.</p>
 </section>
 {% else %}
 <div class="text-center py-20 text-gray-400">
@@ -90,4 +102,39 @@
   </a>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var input = document.getElementById('table-search');
+  if (!input) return;
+
+  input.addEventListener('input', function () {
+    var q = this.value.trim().toLowerCase();
+    var cards = document.querySelectorAll('.table-card');
+    var totalVisible = 0;
+
+    cards.forEach(function (card) {
+      var match = !q
+        || card.dataset.name.includes(q)
+        || card.dataset.desc.includes(q);
+      card.style.display = match ? '' : 'none';
+      if (match) totalVisible++;
+    });
+
+    // Masquer les sections entières si aucune carte visible
+    ['section-favorites', 'section-all'].forEach(function (id) {
+      var section = document.getElementById(id);
+      if (!section) return;
+      var visible = Array.from(section.querySelectorAll('.table-card'))
+        .some(function (c) { return c.style.display !== 'none'; });
+      section.style.display = visible ? '' : 'none';
+    });
+
+    var noResults = document.getElementById('no-results');
+    if (noResults) noResults.classList.toggle('hidden', totalVisible > 0 || !q);
+  });
+})();
+</script>
 {% endblock %}
