@@ -64,7 +64,7 @@
         <!-- Columns -->
         {% if table.columns %}
         <div class="overflow-x-auto">
-          <table class="min-w-full text-xs divide-y divide-gray-100">
+          <table class="dt-col-table min-w-full text-xs divide-y divide-gray-100">
             <thead>
               <tr class="bg-gray-50/50">
                 <th class="px-4 py-2 text-left text-gray-500 font-medium">Colonne</th>
@@ -100,6 +100,9 @@
               </tr>
               {% endfor %}
             </tbody>
+            <tfoot>
+              <tr><th></th><th></th><th></th><th></th></tr>
+            </tfoot>
           </table>
         </div>
         {% else %}
@@ -123,4 +126,24 @@
   </form>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+  $('.dt-col-table').each(function() {
+    $(this).DataTable({
+      dom: 'frtip',   /* pas de boutons export sur les sous-tables de formulaire */
+      language: DT_LANG_FR,
+      paging: false,
+      columnDefs: [
+        { orderable: false, searchable: false, targets: [2, 3] }
+      ],
+      initComplete: function() {
+        dtColFilters(this.api(), [2, 3]);
+      }
+    });
+  });
+});
+</script>
 {% endblock %}

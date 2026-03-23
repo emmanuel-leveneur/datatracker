@@ -65,3 +65,37 @@
 {% endif %}
 
 {% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  var canWrite = {{ 'true' if can_write else 'false' }};
+  var nbCols   = {{ columns | length }};
+
+  function initMainTable() {
+    if (!document.getElementById('main-table')) return;
+    if ($.fn.DataTable.isDataTable('#main-table')) {
+      $('#main-table').DataTable().destroy();
+    }
+    var cfg = {
+      dom: 'Bfrtip',
+      buttons: DT_BUTTONS,
+      language: DT_LANG_FR,
+      initComplete: function() {
+        dtColFilters(this.api(), canWrite ? [nbCols] : []);
+      }
+    };
+    if (canWrite) {
+      cfg.columnDefs = [{ orderable: false, searchable: false, targets: -1 }];
+    }
+    $('#main-table').DataTable(cfg);
+  }
+
+  $(document).ready(initMainTable);
+
+  document.body.addEventListener('htmx:afterSwap', function(e) {
+    if (e.detail.target && e.detail.target.id === 'table-body') initMainTable();
+  });
+})();
+</script>
+{% endblock %}

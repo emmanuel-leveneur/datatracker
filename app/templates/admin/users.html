@@ -8,7 +8,7 @@
   </div>
 
   <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-    <table class="min-w-full text-sm divide-y divide-gray-200">
+    <table id="users-table" class="min-w-full text-sm divide-y divide-gray-200">
       <thead class="bg-gray-50">
         <tr>
           <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Utilisateur</th>
@@ -65,7 +65,26 @@
         </tr>
         {% endfor %}
       </tbody>
+      <tfoot>
+        <tr><th></th><th></th><th></th><th></th><th></th></tr>
+      </tfoot>
     </table>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+$(document).ready(function() {
+  $('#users-table').DataTable({
+    dom: 'Bfrtip',
+    buttons: DT_BUTTONS,
+    language: DT_LANG_FR,
+    columnDefs: [{ orderable: false, searchable: false, targets: -1 }],
+    initComplete: function() {
+      dtColFilters(this.api(), [4]);
+    }
+  });
+});
+</script>
 {% endblock %}

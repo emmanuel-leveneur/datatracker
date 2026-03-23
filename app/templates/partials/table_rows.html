@@ -1,4 +1,4 @@
-<table class="min-w-full divide-y divide-gray-200 text-sm">
+<table id="main-table" class="min-w-full divide-y divide-gray-200 text-sm">
   <thead class="bg-gray-50">
     <tr>
       {% for col in columns %}
@@ -64,9 +64,10 @@
     </tr>
     {% endif %}
   </tbody>
+  <tfoot>
+    <tr>
+      {% for col in columns %}<th></th>{% endfor %}
+      {% if can_write %}<th></th>{% endif %}
+    </tr>
+  </tfoot>
 </table>
-{% if rows_data %}
-<div class="px-4 py-2 bg-gray-50 border-t border-gray-200 text-xs text-gray-400">
-  {{ rows_data | length }} ligne(s)
-</div>
-{% endif %}
