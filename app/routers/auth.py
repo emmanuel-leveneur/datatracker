@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Form, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from app.activity import log_action
 from app.auth import clear_session, create_session, hash_password, verify_password
 from app.database import get_db
 from app.models import User
@@ -30,6 +31,8 @@ def login(
             {"error": "Identifiants incorrects"},
             status_code=400,
         )
+    log_action(db, user, "login", "user", resource_name=user.username)
+    db.commit()
     resp = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
     create_session(resp, user.id)
     return resp
@@ -68,6 +71,10 @@ def register(
         is_admin=is_first,
     )
     db.add(user)
+    db.flush()
+    log_action(db, user, "register", "user",
+               resource_id=user.id, resource_name=user.username,
+               details="Admin" if is_first else "")
     db.commit()
     return RedirectResponse(url="/auth/login?registered=1", status_code=status.HTTP_303_SEE_OTHER)
 

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from app.activity import log_action
 from app.database import get_db
 from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
@@ -63,6 +64,8 @@ async def create_row(
         value = form.get(f"col_{col.id}", "")
         cell = CellValue(row_id=row.id, column_id=col.id, value=str(value))
         db.add(cell)
+    log_action(db, user, "create_row", "row",
+               resource_id=row.id, resource_name=table.name)
     db.commit()
 
     if request.headers.get("HX-Request"):
@@ -151,6 +154,8 @@ async def update_row(
             existing_cells[col.id].value = str(value)
         else:
             db.add(CellValue(row_id=row.id, column_id=col.id, value=str(value)))
+    log_action(db, user, "update_row", "row",
+               resource_id=row.id, resource_name=table.name)
     db.commit()
 
     if request.headers.get("HX-Request"):
@@ -193,6 +198,8 @@ def delete_row(
     row = db.get(TableRow, row_id)
     if not row or row.table_id != table_id:
         raise HTTPException(status_code=404)
+    log_action(db, user, "delete_row", "row",
+               resource_id=row.id, resource_name=table.name)
     db.delete(row)
     db.commit()
 
@@ -272,6 +279,8 @@ async def import_csv(
                 db.add(CellValue(row_id=row.id, column_id=col.id, value=value or ""))
         imported += 1
 
+    log_action(db, user, "import_csv", "row",
+               resource_name=table.name, details=f"{imported} ligne(s) importée(s)")
     db.commit()
     return templates.TemplateResponse(
         request, "tables/import.html",

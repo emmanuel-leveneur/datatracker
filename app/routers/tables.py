@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from app.activity import log_action
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404
 from app.models import ColumnType, DataTable, TableColumn, TablePermission, User
@@ -69,6 +70,9 @@ def create_table(
             select_options=options,
         )
         db.add(col)
+    log_action(db, user, "create_table", "table",
+               resource_id=table.id, resource_name=table.name,
+               details=f"{len(col_names)} colonne(s)")
     db.commit()
     return RedirectResponse(url=f"/tables/{table.id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -190,6 +194,8 @@ def edit_table(
             )
             db.add(col)
 
+    log_action(db, user, "edit_table", "table",
+               resource_id=table.id, resource_name=name)
     db.commit()
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -205,6 +211,8 @@ def delete_table(
         raise HTTPException(status_code=404)
     if table.created_by_id != user.id and not user.is_admin:
         raise HTTPException(status_code=403)
+    log_action(db, user, "delete_table", "table",
+               resource_id=table.id, resource_name=table.name)
     db.delete(table)
     db.commit()
     return RedirectResponse(url="/tables/", status_code=status.HTTP_303_SEE_OTHER)

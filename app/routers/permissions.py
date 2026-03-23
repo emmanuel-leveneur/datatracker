@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+from app.activity import log_action
 from app.database import get_db
 from app.dependencies import get_current_user, get_table_or_404
 from app.models import (
@@ -93,6 +94,8 @@ async def bulk_set_permissions(
                 if cp:
                     db.delete(cp)
 
+    log_action(db, user, "update_permissions", "permission",
+               resource_id=table.id, resource_name=table.name)
     db.commit()
     return RedirectResponse(
         url=f"/tables/{table_id}/permissions",
