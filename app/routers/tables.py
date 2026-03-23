@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.activity import log_action
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404
-from app.models import ColumnType, DataTable, TableColumn, TablePermission, User
+from app.models import ColumnType, DataTable, TableColumn, TableFavorite, TablePermission, User
 
 router = APIRouter(prefix="/tables", tags=["tables"])
 templates = Jinja2Templates(directory="app/templates")
@@ -26,9 +26,34 @@ def list_tables(request: Request, user: User = Depends(get_current_user), db: Se
         shared = db.query(DataTable).filter(DataTable.id.in_(shared_ids)).all()
         seen = {t.id for t in owned}
         tables = owned + [t for t in shared if t.id not in seen]
+
+    favorite_ids = {
+        f.table_id for f in db.query(TableFavorite).filter_by(user_id=user.id).all()
+    }
+    favorites = [t for t in tables if t.id in favorite_ids]
+
     return templates.TemplateResponse(
-        request, "tables/list.html", {"user": user, "tables": tables}
+        request, "tables/list.html",
+        {"user": user, "tables": tables, "favorites": favorites, "favorite_ids": favorite_ids},
     )
+
+
+@router.post("/{table_id}/favorite")
+def toggle_favorite(
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    fav = db.query(TableFavorite).filter_by(user_id=user.id, table_id=table_id).first()
+    if fav:
+        db.delete(fav)
+    else:
+        db.add(TableFavorite(user_id=user.id, table_id=table_id))
+    db.commit()
+    return RedirectResponse(url="/tables/", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/create", response_class=HTMLResponse)

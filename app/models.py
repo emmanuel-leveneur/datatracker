@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 from sqlalchemy import (
-    Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
+    Boolean, DateTime, Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
@@ -134,6 +134,15 @@ class ColumnPermission(Base):
 
     column: Mapped["TableColumn"] = relationship(back_populates="column_permissions")
     user: Mapped["User"] = relationship(back_populates="column_permissions")
+
+
+class TableFavorite(Base):
+    __tablename__ = "table_favorites"
+    __table_args__ = (UniqueConstraint("user_id", "table_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    table_id: Mapped[int] = mapped_column(ForeignKey("data_tables.id"), nullable=False)
 
 
 class ActivityLog(Base):
