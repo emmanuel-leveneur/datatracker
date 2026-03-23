@@ -34,7 +34,7 @@ def test_logs_page_empty_state(admin_client):
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 def test_login_creates_log_entry(client, db, admin_user):
-    client.post("/auth/login", data={"username": "admin", "password": "password123"})
+    client.post("/auth/login", data={"email": "admin@test.com", "password": "password123"})
 
     db.expire_all()
     log = db.query(ActivityLog).filter_by(action="login", username="admin").first()
@@ -48,7 +48,7 @@ def test_register_creates_log_entry(client, db):
     })
 
     db.expire_all()
-    log = db.query(ActivityLog).filter_by(action="register", username="newuser").first()
+    log = db.query(ActivityLog).filter_by(action="register", username="new").first()
     assert log is not None
 
 
@@ -155,21 +155,21 @@ def test_toggle_admin_creates_log(admin_client, db, regular_user):
     db.expire_all()
     log = db.query(ActivityLog).filter_by(action="toggle_admin").first()
     assert log is not None
-    assert log.resource_name == regular_user.username
+    assert log.resource_name == regular_user.email.split("@")[0]
     assert "admin" in log.details.lower()
 
 
 def test_delete_user_creates_log(admin_client, db, regular_user):
-    username = regular_user.username
+    email_prefix = regular_user.email.split("@")[0]
 
     admin_client.post(f"/admin/users/{regular_user.id}/delete")
 
     db.expire_all()
     log = db.query(ActivityLog).filter_by(action="delete_user").first()
     assert log is not None
-    # username dénormalisé — lisible même après suppression
+    # email prefix dénormalisé — lisible même après suppression
     assert log.username == "admin"
-    assert log.resource_name == username
+    assert log.resource_name == email_prefix
 
 
 # ── Admin : permissions ───────────────────────────────────────────────────────

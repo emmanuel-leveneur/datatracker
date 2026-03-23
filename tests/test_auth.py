@@ -32,7 +32,7 @@ def test_register_duplicate_email(client: TestClient, admin_user):
 
 def test_login_success(client: TestClient, admin_user):
     resp = client.post("/auth/login", data={
-        "username": "admin",
+        "email": "admin@test.com",
         "password": "password123",
     })
     assert resp.status_code == 303
@@ -41,7 +41,7 @@ def test_login_success(client: TestClient, admin_user):
 
 def test_login_wrong_password(client: TestClient, admin_user):
     resp = client.post("/auth/login", data={
-        "username": "admin",
+        "email": "admin@test.com",
         "password": "wrongpassword",
     })
     assert resp.status_code == 400
@@ -49,7 +49,7 @@ def test_login_wrong_password(client: TestClient, admin_user):
 
 def test_login_unknown_user(client: TestClient):
     resp = client.post("/auth/login", data={
-        "username": "nobody",
+        "email": "nobody@test.com",
         "password": "password123",
     })
     assert resp.status_code == 400

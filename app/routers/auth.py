@@ -20,18 +20,18 @@ def login_page(request: Request):
 def login(
     request: Request,
     response: Response,
-    username: str = Form(...),
+    email: str = Form(...),
     password: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    user = db.query(User).filter_by(username=username).first()
+    user = db.query(User).filter_by(email=email).first()
     if not user or not verify_password(password, user.hashed_password):
         return templates.TemplateResponse(
             request, "auth/login.html",
             {"error": "Identifiants incorrects"},
             status_code=400,
         )
-    log_action(db, user, "login", "user", resource_name=user.username)
+    log_action(db, user, "login", "user", resource_name=user.email.split("@")[0])
     db.commit()
     resp = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
     create_session(resp, user.id)
@@ -73,7 +73,7 @@ def register(
     db.add(user)
     db.flush()
     log_action(db, user, "register", "user",
-               resource_id=user.id, resource_name=user.username,
+               resource_id=user.id, resource_name=user.email.split("@")[0],
                details="Admin" if is_first else "")
     db.commit()
     return RedirectResponse(url="/auth/login?registered=1", status_code=status.HTTP_303_SEE_OTHER)

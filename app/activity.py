@@ -19,7 +19,7 @@ def log_action(
     """
     db.add(ActivityLog(
         user_id=actor.id,
-        username=actor.username,
+        username=actor.email.split("@")[0],
         action=action,
         resource_type=resource_type,
         resource_id=resource_id,

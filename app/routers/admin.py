@@ -41,7 +41,7 @@ def toggle_admin(
     new_role = not target.is_admin
     target.is_admin = new_role
     log_action(db, current_user, "toggle_admin", "user",
-               resource_id=target.id, resource_name=target.username,
+               resource_id=target.id, resource_name=target.email.split("@")[0],
                details="Rôle admin attribué" if new_role else "Rôle admin retiré")
     db.commit()
     return RedirectResponse(url="/admin/users", status_code=status.HTTP_303_SEE_OTHER)
@@ -59,7 +59,7 @@ def delete_user(
     if target.id == current_user.id:
         raise HTTPException(status_code=400, detail="Impossible de supprimer son propre compte")
     log_action(db, current_user, "delete_user", "user",
-               resource_id=target.id, resource_name=target.username)
+               resource_id=target.id, resource_name=target.email.split("@")[0])
     db.delete(target)
     db.commit()
     return RedirectResponse(url="/admin/users", status_code=status.HTTP_303_SEE_OTHER)
