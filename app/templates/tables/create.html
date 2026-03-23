@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Nouvelle table — DataTracker{% endblock %}
+{% block head %}
+<script>
+  let colIndex = 0;
+
+  function addColumn() {
+    const container = document.getElementById('columns-container');
+    const idx = colIndex++;
+    const div = document.createElement('div');
+    div.className = 'col-row flex flex-wrap items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg';
+    div.innerHTML = `
+      <input type="text" name="col_names" placeholder="Nom de la colonne" required
+        class="flex-1 min-w-[160px] border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <select name="col_types"
+        class="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+        onchange="toggleOptions(this)">
+        {% for ct in column_types %}
+        <option value="{{ ct }}">{{ ct }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" name="col_options" placeholder="Options (virgule séparés)"
+        class="options-field flex-1 min-w-[160px] border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 hidden" />
+      <label class="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
+        <input type="checkbox" name="col_required" value="${idx}" class="rounded" />
+        Obligatoire
+      </label>
+      <button type="button" onclick="this.closest('.col-row').remove()"
+        class="text-red-400 hover:text-red-600 text-lg leading-none px-1" title="Supprimer">&times;</button>
+    `;
+    container.appendChild(div);
+  }
+
+  function toggleOptions(select) {
+    const row = select.closest('.col-row');
+    const optField = row.querySelector('.options-field');
+    if (select.value === 'select') {
+      optField.classList.remove('hidden');
+    } else {
+      optField.classList.add('hidden');
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => addColumn());
+</script>
+{% endblock %}
+{% block content %}
+<div class="max-w-2xl">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/tables/" class="text-gray-400 hover:text-gray-600 text-sm">← Retour</a>
+    <h1 class="text-2xl font-bold text-gray-800">Nouvelle table</h1>
+  </div>
+
+  <form method="post" action="/tables/create" class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-6">
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Nom de la table <span class="text-red-500">*</span></label>
+      <input type="text" name="name" required
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+      <textarea name="description" rows="2"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+    </div>
+
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold text-gray-700">Colonnes</h2>
+        <button type="button" onclick="addColumn()"
+          class="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Ajouter une colonne</button>
+      </div>
+      <div id="columns-container" class="space-y-2"></div>
+    </div>
+
+    <div class="flex gap-3 pt-2">
+      <button type="submit"
+        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm transition">
+        Créer la table
+      </button>
+      <a href="/tables/" class="px-6 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100 border border-gray-300 transition">
+        Annuler
+      </a>
+    </div>
+  </form>
+</div>
+{% endblock %}

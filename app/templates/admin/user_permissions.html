@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Permissions — {{ target.username }}{% endblock %}
+{% block content %}
+<div class="max-w-6xl">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/admin/users" class="text-gray-400 hover:text-gray-600 text-sm">← Utilisateurs</a>
+    <h1 class="text-2xl font-bold text-gray-800">
+      Permissions de <span class="text-blue-600">{{ target.username }}</span>
+    </h1>
+    {% if target.is_admin %}
+    <span class="bg-yellow-100 text-yellow-800 text-xs font-semibold px-2 py-0.5 rounded">Admin</span>
+    {% endif %}
+  </div>
+
+  {% if target.is_admin %}
+  <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-700">
+    Cet utilisateur est administrateur et a automatiquement accès complet à toutes les tables et colonnes.
+    Les permissions ci-dessous n'ont pas d'effet tant qu'il est admin.
+  </div>
+
+  {% elif not all_tables %}
+  <div class="bg-white border border-gray-200 rounded-xl p-8 text-center text-gray-400">
+    Aucune table de données créée.
+  </div>
+
+  {% else %}
+  <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-sm text-blue-700">
+    Les tables dont <strong>{{ target.username }}</strong> est propriétaire apparaissent en grisé — l'accès est toujours complet pour le propriétaire.
+    Pour les autres tables, définissez l'accès table puis affinez colonne par colonne.
+  </div>
+
+  <form method="post" action="/admin/users/{{ target.id }}/permissions">
+    <div class="space-y-6">
+      {% for table in all_tables %}
+      {% set is_owner = (table.created_by_id == target.id) %}
+      <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden
+        {% if is_owner %}opacity-60{% endif %}">
+
+        <!-- Table header -->
+        <div class="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
+          <div class="flex items-center gap-3">
+            <span class="font-semibold text-gray-800">{{ table.name }}</span>
+            {% if is_owner %}
+            <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded border border-green-200">Propriétaire</span>
+            {% endif %}
+            {% if table.description %}
+            <span class="text-xs text-gray-400">{{ table.description }}</span>
+            {% endif %}
+          </div>
+
+          {% if not is_owner %}
+          <div class="flex items-center gap-2">
+            <label class="text-xs text-gray-500 font-medium">Accès table :</label>
+            <select name="table_perm_{{ table.id }}"
+              class="border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="none" {% if table.id not in table_perms %}selected{% endif %}>Aucun accès</option>
+              <option value="read" {% if table.id in table_perms and table_perms[table.id].level.value == 'read' %}selected{% endif %}>Lecture</option>
+              <option value="write" {% if table.id in table_perms and table_perms[table.id].level.value == 'write' %}selected{% endif %}>Lecture/Écriture</option>
+            </select>
+          </div>
+          {% endif %}
+        </div>
+
+        <!-- Columns -->
+        {% if table.columns %}
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-xs divide-y divide-gray-100">
+            <thead>
+              <tr class="bg-gray-50/50">
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">Colonne</th>
+                <th class="px-4 py-2 text-left text-gray-500 font-medium">Type</th>
+                <th class="px-4 py-2 text-center text-red-500 font-medium">Masquée</th>
+                <th class="px-4 py-2 text-center text-amber-500 font-medium">Lecture seule</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              {% for col in table.columns %}
+              {% set cp = col_perms.get(col.id) %}
+              <tr class="hover:bg-gray-50">
+                <td class="px-4 py-2 font-medium text-gray-700">{{ col.name }}</td>
+                <td class="px-4 py-2 text-gray-400">{{ col.col_type.value }}</td>
+                <td class="px-4 py-2 text-center">
+                  {% if not is_owner %}
+                  <input type="checkbox" name="col_hidden_{{ col.id }}"
+                    {% if cp and cp.hidden %}checked{% endif %}
+                    class="rounded text-red-500 focus:ring-red-400 cursor-pointer" />
+                  {% else %}
+                  <span class="text-gray-300">—</span>
+                  {% endif %}
+                </td>
+                <td class="px-4 py-2 text-center">
+                  {% if not is_owner %}
+                  <input type="checkbox" name="col_readonly_{{ col.id }}"
+                    {% if cp and cp.readonly %}checked{% endif %}
+                    class="rounded text-amber-500 focus:ring-amber-400 cursor-pointer" />
+                  {% else %}
+                  <span class="text-gray-300">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="px-4 py-3 text-xs text-gray-400">Aucune colonne.</p>
+        {% endif %}
+
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="mt-6 flex gap-3">
+      <button type="submit"
+        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm transition">
+        Enregistrer les permissions
+      </button>
+      <a href="/admin/users"
+        class="px-6 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100 border border-gray-300 transition">
+        Annuler
+      </a>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Modifier {{ table.name }} — DataTracker{% endblock %}
+{% block head %}
+<script>
+  let newColIndex = 1000;
+
+  function addColumn() {
+    const container = document.getElementById('columns-container');
+    const idx = newColIndex++;
+    const div = document.createElement('div');
+    div.className = 'col-row flex flex-wrap items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg';
+    div.innerHTML = `
+      <input type="hidden" name="col_ids" value="" />
+      <input type="text" name="col_names" placeholder="Nom de la colonne" required
+        class="flex-1 min-w-[160px] border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <select name="col_types"
+        class="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+        onchange="toggleOptions(this)">
+        {% for ct in column_types %}
+        <option value="{{ ct }}">{{ ct }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" name="col_options" placeholder="Options (virgule séparés)"
+        class="options-field flex-1 min-w-[160px] border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 hidden" />
+      <label class="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
+        <input type="checkbox" name="col_required" value="${idx}" class="rounded" />
+        Obligatoire
+      </label>
+      <button type="button" onclick="this.closest('.col-row').remove()"
+        class="text-red-400 hover:text-red-600 text-lg leading-none px-1" title="Supprimer">&times;</button>
+    `;
+    container.appendChild(div);
+  }
+
+  function toggleOptions(select) {
+    const row = select.closest('.col-row');
+    const optField = row.querySelector('.options-field');
+    optField.classList.toggle('hidden', select.value !== 'select');
+  }
+</script>
+{% endblock %}
+{% block content %}
+<div class="max-w-2xl">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/tables/{{ table.id }}" class="text-gray-400 hover:text-gray-600 text-sm">← Retour</a>
+    <h1 class="text-2xl font-bold text-gray-800">Modifier « {{ table.name }} »</h1>
+  </div>
+
+  <form method="post" action="/tables/{{ table.id }}/edit"
+    class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-6">
+
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Nom de la table</label>
+      <input type="text" name="name" value="{{ table.name }}" required
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+      <textarea name="description" rows="2"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none">{{ table.description }}</textarea>
+    </div>
+
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold text-gray-700">Colonnes</h2>
+        <button type="button" onclick="addColumn()"
+          class="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Ajouter une colonne</button>
+      </div>
+      <p class="text-xs text-amber-600 mb-2">⚠ Supprimer une colonne effacera toutes ses données.</p>
+      <div id="columns-container" class="space-y-2">
+        {% for col in table.columns %}
+        <div class="col-row flex flex-wrap items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+          <input type="hidden" name="col_ids" value="{{ col.id }}" />
+          <input type="text" name="col_names" value="{{ col.name }}" required
+            class="flex-1 min-w-[160px] border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          <select name="col_types"
+            class="border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+            onchange="toggleOptions(this)">
+            {% for ct in column_types %}
+            <option value="{{ ct }}" {% if col.col_type.value == ct %}selected{% endif %}>{{ ct }}</option>
+            {% endfor %}
+          </select>
+          <input type="text" name="col_options" value="{{ col.select_options }}"
+            placeholder="Options (virgule séparés)"
+            class="options-field flex-1 min-w-[160px] border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 {% if col.col_type.value != 'select' %}hidden{% endif %}" />
+          <label class="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
+            <input type="checkbox" name="col_required" value="{{ loop.index0 }}" class="rounded"
+              {% if col.required %}checked{% endif %} />
+            Obligatoire
+          </label>
+          <button type="button" onclick="this.closest('.col-row').remove()"
+            class="text-red-400 hover:text-red-600 text-lg leading-none px-1" title="Supprimer">&times;</button>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="flex gap-3 pt-2 border-t border-gray-100">
+      <button type="submit"
+        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm transition">
+        Enregistrer
+      </button>
+      <a href="/tables/{{ table.id }}" class="px-6 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100 border border-gray-300 transition">
+        Annuler
+      </a>
+      <form method="post" action="/tables/{{ table.id }}/delete" class="ml-auto"
+        onsubmit="return confirm('Supprimer cette table et toutes ses données ?')">
+        <button type="submit"
+          class="bg-red-50 hover:bg-red-100 text-red-600 font-semibold px-4 py-2 rounded-lg text-sm border border-red-200 transition">
+          Supprimer la table
+        </button>
+      </form>
+    </div>
+  </form>
+</div>
+{% endblock %}

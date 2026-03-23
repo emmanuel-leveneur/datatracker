@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Importer CSV — {{ table.name }}{% endblock %}
+{% block content %}
+<div class="max-w-2xl">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/tables/{{ table.id }}" class="text-gray-400 hover:text-gray-600 text-sm">← Retour</a>
+    <h1 class="text-2xl font-bold text-gray-800">Importer depuis CSV</h1>
+  </div>
+
+  <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-6">
+
+    {% if success %}
+    <div class="p-3 bg-green-50 border border-green-200 text-green-700 rounded text-sm">{{ success }}</div>
+    {% endif %}
+    {% if errors %}
+    <div class="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">
+      <ul class="list-disc list-inside">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+
+    <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+      <p class="font-semibold mb-1">Format attendu</p>
+      <p>La première ligne du CSV doit contenir les noms des colonnes correspondant à ceux de la table :</p>
+      <code class="mt-1 block text-xs">{{ columns | map(attribute='name') | join(', ') }}</code>
+    </div>
+
+    <form method="post" action="/tables/{{ table.id }}/import" enctype="multipart/form-data" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Fichier CSV</label>
+        <input type="file" name="file" accept=".csv" required
+          class="w-full text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+      </div>
+      <div class="flex gap-3">
+        <button type="submit"
+          class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm transition">
+          Importer
+        </button>
+        <a href="/tables/{{ table.id }}" class="px-6 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100 border border-gray-300 transition">
+          Annuler
+        </a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

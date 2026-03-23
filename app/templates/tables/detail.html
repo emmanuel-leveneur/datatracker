@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ table.name }} — DataTracker{% endblock %}
+{% block content %}
+
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div class="flex items-center gap-3">
+    <a href="/tables/" class="text-gray-400 hover:text-gray-600 text-sm">← Tables</a>
+    <h1 class="text-xl font-bold text-gray-800">{{ table.name }}</h1>
+    {% if table.description %}
+    <span class="text-sm text-gray-400">— {{ table.description }}</span>
+    {% endif %}
+  </div>
+  <div class="flex flex-wrap gap-2">
+    {% if can_write %}
+    <button
+      hx-get="/tables/{{ table.id }}/rows/new"
+      hx-target="#row-form-area"
+      hx-swap="innerHTML"
+      class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition">
+      + Ajouter une ligne
+    </button>
+    <a href="/tables/{{ table.id }}/import"
+      class="bg-green-50 hover:bg-green-100 text-green-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-green-200 transition">
+      Importer CSV
+    </a>
+    {% endif %}
+    <a href="/tables/{{ table.id }}/export/excel"
+      class="bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-gray-200 transition">
+      Exporter Excel
+    </a>
+    {% if is_owner or user.is_admin %}
+    <a href="/tables/{{ table.id }}/edit"
+      class="bg-gray-50 hover:bg-gray-100 text-gray-600 text-sm font-medium px-4 py-1.5 rounded-lg border border-gray-200 transition">
+      Modifier
+    </a>
+    <a href="/tables/{{ table.id }}/permissions"
+      class="bg-yellow-50 hover:bg-yellow-100 text-yellow-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-yellow-200 transition">
+      Droits
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Row form area (HTMX) -->
+<div id="row-form-area" class="mb-4"></div>
+
+<!-- Table data -->
+{% if columns %}
+<div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+  <div class="overflow-x-auto">
+    <div id="table-body">
+      {% include "partials/table_rows.html" %}
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="text-center py-16 text-gray-400 bg-white border border-gray-200 rounded-xl">
+  <p class="text-lg font-medium text-gray-500">Aucune colonne définie</p>
+  {% if is_owner or user.is_admin %}
+  <a href="/tables/{{ table.id }}/edit" class="inline-block mt-3 text-sm text-blue-600 hover:underline">
+    Ajouter des colonnes
+  </a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,77 @@
+<div class="bg-white border border-blue-200 rounded-xl shadow-sm p-5 mb-4">
+  <h3 class="text-sm font-semibold text-gray-700 mb-4">
+    {% if row %}Modifier la ligne{% else %}Ajouter une ligne{% endif %}
+  </h3>
+  <form
+    {% if row %}
+    hx-post="/tables/{{ table.id }}/rows/{{ row.id }}/edit"
+    {% else %}
+    hx-post="/tables/{{ table.id }}/rows/new"
+    {% endif %}
+    hx-target="#table-body"
+    hx-swap="innerHTML"
+    class="space-y-3">
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      {% for col in columns %}
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1">
+          {{ col.name }}
+          {% if col.required %}<span class="text-red-500">*</span>{% endif %}
+          {% if col_readonly.get(col.id) %}<span class="text-gray-400">(lecture seule)</span>{% endif %}
+        </label>
+
+        {% if col_readonly.get(col.id) %}
+          <input type="text" value="{{ cells.get(col.id, '') }}" disabled
+            class="w-full border border-gray-200 rounded px-2 py-1.5 text-sm bg-gray-50 text-gray-400 cursor-not-allowed" />
+        {% elif col.col_type.value == 'boolean' %}
+          <select name="col_{{ col.id }}"
+            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+            <option value="false" {% if cells.get(col.id, '') in ('false', '', 'False', '0') %}selected{% endif %}>Non</option>
+            <option value="true" {% if cells.get(col.id, '') in ('true', 'True', '1') %}selected{% endif %}>Oui</option>
+          </select>
+        {% elif col.col_type.value == 'select' and col.select_options %}
+          <select name="col_{{ col.id }}"
+            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+            <option value="">— Choisir —</option>
+            {% for opt in col.select_options.split(',') %}
+            <option value="{{ opt.strip() }}" {% if cells.get(col.id, '').strip() == opt.strip() %}selected{% endif %}>{{ opt.strip() }}</option>
+            {% endfor %}
+          </select>
+        {% elif col.col_type.value == 'date' %}
+          <input type="date" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
+            {% if col.required %}required{% endif %}
+            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        {% elif col.col_type.value == 'integer' %}
+          <input type="number" step="1" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
+            {% if col.required %}required{% endif %}
+            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        {% elif col.col_type.value == 'float' %}
+          <input type="number" step="any" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
+            {% if col.required %}required{% endif %}
+            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        {% elif col.col_type.value == 'email' %}
+          <input type="email" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
+            {% if col.required %}required{% endif %}
+            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        {% else %}
+          <input type="text" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
+            {% if col.required %}required{% endif %}
+            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="flex gap-2 pt-2">
+      <button type="submit"
+        class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-1.5 rounded-lg transition">
+        {% if row %}Enregistrer{% else %}Ajouter{% endif %}
+      </button>
+      <button type="button" onclick="document.getElementById('row-form-area').innerHTML = ''"
+        class="text-sm text-gray-500 hover:text-gray-700 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition">
+        Annuler
+      </button>
+    </div>
+  </form>
+</div>

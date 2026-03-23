@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Permissions — {{ table.name }}{% endblock %}
+{% block content %}
+<div class="max-w-5xl">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/tables/{{ table.id }}" class="text-gray-400 hover:text-gray-600 text-sm">← Retour</a>
+    <h1 class="text-2xl font-bold text-gray-800">Permissions — {{ table.name }}</h1>
+  </div>
+
+  <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-sm text-blue-700">
+    <p><strong>Propriétaire :</strong> {{ table.owner.username }} — accès complet à toutes les colonnes.</p>
+    <p class="mt-1">Les admins ont également accès complet. Les colonnes marquées <strong>Masquée</strong> ne sont pas visibles par l'utilisateur.</p>
+  </div>
+
+  {% if not all_users %}
+  <div class="bg-white border border-gray-200 rounded-xl p-8 text-center text-gray-400">
+    <p>Aucun autre utilisateur enregistré.</p>
+  </div>
+  {% else %}
+  <form method="post" action="/tables/{{ table.id }}/permissions/bulk">
+    <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide sticky left-0 bg-gray-50">Utilisateur</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                Accès table
+                <span class="block text-gray-400 font-normal normal-case">lecture / écriture</span>
+              </th>
+              {% for col in table.columns %}
+              <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wide min-w-[120px]">
+                {{ col.name }}
+                <span class="block text-gray-400 font-normal normal-case text-xs">({{ col.col_type.value }})</span>
+              </th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            {% for u in all_users %}
+            <tr class="hover:bg-gray-50">
+              <td class="px-4 py-3 font-medium text-gray-800 sticky left-0 bg-white">
+                {{ u.username }}
+                {% if u.is_admin %}<span class="text-xs bg-yellow-100 text-yellow-700 px-1 rounded ml-1">Admin</span>{% endif %}
+              </td>
+              <td class="px-4 py-3">
+                <select name="table_perm_{{ u.id }}"
+                  class="border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  <option value="none" {% if u.id not in table_perms %}selected{% endif %}>Aucun accès</option>
+                  <option value="read" {% if u.id in table_perms and table_perms[u.id].level.value == 'read' %}selected{% endif %}>Lecture</option>
+                  <option value="write" {% if u.id in table_perms and table_perms[u.id].level.value == 'write' %}selected{% endif %}>Lecture/Écriture</option>
+                </select>
+              </td>
+              {% for col in table.columns %}
+              {% set cp = col_perms.get(col.id, {}).get(u.id) %}
+              <td class="px-4 py-3">
+                <div class="flex flex-col items-center gap-1">
+                  <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                    <input type="checkbox" name="col_hidden_{{ col.id }}_{{ u.id }}"
+                      {% if cp and cp.hidden %}checked{% endif %}
+                      class="rounded text-red-500 focus:ring-red-400" />
+                    <span class="text-red-600">Masquée</span>
+                  </label>
+                  <label class="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
+                    <input type="checkbox" name="col_readonly_{{ col.id }}_{{ u.id }}"
+                      {% if cp and cp.readonly %}checked{% endif %}
+                      class="rounded text-amber-500 focus:ring-amber-400" />
+                    <span class="text-amber-600">Lecture seule</span>
+                  </label>
+                </div>
+              </td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="mt-4 flex gap-3">
+      <button type="submit"
+        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm transition">
+        Enregistrer les permissions
+      </button>
+      <a href="/tables/{{ table.id }}" class="px-6 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100 border border-gray-300 transition">
+        Annuler
+      </a>
+    </div>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}
