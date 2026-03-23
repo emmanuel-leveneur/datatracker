@@ -110,6 +110,8 @@
     DataTracker &mdash; Gestion de données personnalisées
   </footer>
 
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <!-- DataTables JS (jQuery requis) -->
   <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -166,5 +168,9 @@
     }
   </script>
   {% block scripts %}{% endblock %}
+  <script>
+    lucide.createIcons();
+    document.body.addEventListener('htmx:afterSwap', function() { lucide.createIcons(); });
+  </script>
 </body>
 </html>

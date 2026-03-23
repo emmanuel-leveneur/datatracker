@@ -41,17 +41,18 @@
           hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/edit"
           hx-target="#row-form-area"
           hx-swap="innerHTML"
-          class="text-blue-600 hover:text-blue-800 text-xs font-medium px-2 py-1 rounded hover:bg-blue-50">
-          Modifier
+          title="Modifier"
+          class="text-blue-500 hover:text-blue-700 p-1.5 rounded hover:bg-blue-50 transition inline-flex">
+          <i data-lucide="pencil" class="w-4 h-4"></i>
         </button>
         <button
           hx-post="/tables/{{ table.id }}/rows/{{ item.row.id }}/delete"
           hx-target="#table-body"
           hx-swap="innerHTML"
           hx-confirm="Mettre cette ligne à la corbeille ?"
-          class="text-red-400 hover:text-red-600 text-xs font-medium px-2 py-1 rounded hover:bg-red-50"
-          title="Mettre à la corbeille">
-          🗑
+          title="Mettre à la corbeille"
+          class="text-red-400 hover:text-red-600 p-1.5 rounded hover:bg-red-50 transition inline-flex">
+          <i data-lucide="trash-2" class="w-4 h-4"></i>
         </button>
       </td>
       {% endif %}

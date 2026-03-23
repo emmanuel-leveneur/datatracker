@@ -32,8 +32,12 @@
     <form method="post" action="/tables/{{ table.id }}/favorite" class="shrink-0">
       <button type="submit"
         title="{% if table.id in favorite_ids %}Retirer des favoris{% else %}Ajouter aux favoris{% endif %}"
-        class="text-xl leading-none hover:scale-110 transition-transform focus:outline-none">
-        {% if table.id in favorite_ids %}⭐{% else %}☆{% endif %}
+        class="hover:scale-110 transition-transform focus:outline-none inline-flex">
+        {% if table.id in favorite_ids %}
+        <i data-lucide="star" class="w-5 h-5 text-yellow-400 fill-yellow-400"></i>
+        {% else %}
+        <i data-lucide="star" class="w-5 h-5 text-gray-300 hover:text-yellow-400 transition-colors"></i>
+        {% endif %}
       </button>
     </form>
   </div>
@@ -69,7 +73,7 @@
 {% if favorites %}
 <section id="section-favorites" class="mb-8">
   <h2 class="text-lg font-semibold text-gray-700 mb-3 flex items-center gap-2">
-    <span>⭐</span> Mes favoris
+    <i data-lucide="star" class="w-5 h-5 text-yellow-400 fill-yellow-400"></i> Mes favoris
   </h2>
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
     {% for table in favorites %}
@@ -83,7 +87,7 @@
 <details class="mb-8 group">
   <summary class="cursor-pointer flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-700 select-none list-none mb-3">
     <span class="transition-transform group-open:rotate-90">▶</span>
-    🗑 Corbeille — {{ trashed_tables | length }} table(s)
+    <i data-lucide="trash-2" class="w-4 h-4"></i> Corbeille — {{ trashed_tables | length }} table(s)
   </summary>
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-3">
     {% for table in trashed_tables %}
@@ -99,16 +103,16 @@
       </div>
       <div class="flex gap-2 mt-auto pt-2 border-t border-red-50">
         <form method="post" action="/tables/{{ table.id }}/restore" class="flex-1">
-          <button type="submit"
-            class="w-full text-center bg-green-50 hover:bg-green-100 text-green-700 text-sm font-medium py-1.5 rounded-lg transition">
-            Restaurer
+          <button type="submit" title="Restaurer"
+            class="w-full flex items-center justify-center gap-1.5 bg-green-50 hover:bg-green-100 text-green-700 text-sm font-medium py-1.5 rounded-lg transition">
+            <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Restaurer
           </button>
         </form>
         <form method="post" action="/tables/{{ table.id }}/delete-permanent"
           onsubmit="return confirm('Supprimer définitivement « {{ table.name }} » et toutes ses données ?')">
-          <button type="submit"
-            class="text-center bg-red-50 hover:bg-red-100 text-red-600 text-sm font-medium px-3 py-1.5 rounded-lg border border-red-200 transition">
-            Supprimer définitivement
+          <button type="submit" title="Supprimer définitivement"
+            class="flex items-center justify-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-medium px-3 py-1.5 rounded-lg border border-red-200 transition">
+            <i data-lucide="trash" class="w-4 h-4"></i>
           </button>
         </form>
       </div>

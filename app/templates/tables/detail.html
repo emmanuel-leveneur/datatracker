@@ -72,7 +72,7 @@
 <details class="mt-6 group">
   <summary class="cursor-pointer flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-700 select-none list-none">
     <span class="transition-transform group-open:rotate-90">▶</span>
-    🗑 Corbeille — {{ trashed_rows_data | length }} ligne(s)
+    <i data-lucide="trash-2" class="w-4 h-4"></i> Corbeille — {{ trashed_rows_data | length }} ligne(s)
   </summary>
   <div class="mt-3 bg-white border border-red-100 rounded-xl shadow-sm overflow-hidden">
     <div class="overflow-x-auto">
@@ -100,16 +100,16 @@
             {% if can_write %}
             <td class="px-4 py-2.5 text-right whitespace-nowrap">
               <form method="post" action="/tables/{{ table.id }}/rows/{{ item.row.id }}/restore" class="inline">
-                <button type="submit"
-                  class="text-green-600 hover:text-green-800 text-xs font-medium px-2 py-1 rounded hover:bg-green-50">
-                  Restaurer
+                <button type="submit" title="Restaurer"
+                  class="text-green-600 hover:text-green-800 p-1.5 rounded hover:bg-green-50 transition inline-flex">
+                  <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
                 </button>
               </form>
               <form method="post" action="/tables/{{ table.id }}/rows/{{ item.row.id }}/delete-permanent" class="inline"
                 onsubmit="return confirm('Supprimer définitivement cette ligne ?')">
-                <button type="submit"
-                  class="text-red-500 hover:text-red-700 text-xs font-medium px-2 py-1 rounded hover:bg-red-50">
-                  Supprimer définitivement
+                <button type="submit" title="Supprimer définitivement"
+                  class="text-red-500 hover:text-red-700 p-1.5 rounded hover:bg-red-50 transition inline-flex">
+                  <i data-lucide="trash" class="w-4 h-4"></i>
                 </button>
               </form>
             </td>
