@@ -141,6 +141,8 @@ class ActivityLog(Base):
     __table_args__ = (
         Index("ix_activity_logs_timestamp", "timestamp"),
         Index("ix_activity_logs_resource_type", "resource_type"),
+        # Pas de FK sur table_id : l'historique survit à la suppression de la table
+        Index("ix_activity_logs_table_id", "table_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -153,3 +155,5 @@ class ActivityLog(Base):
     resource_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     resource_name: Mapped[str] = mapped_column(String(256), default="")
     details: Mapped[str] = mapped_column(Text, default="")
+    # table_id sans FK — permet de filtrer par table sans cascade sur suppression
+    table_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

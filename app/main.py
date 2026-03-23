@@ -4,7 +4,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from app.database import create_tables
 from app.scheduler import start_scheduler, stop_scheduler
-from app.routers import auth, tables, data, export, permissions, admin, logs
+from app.routers import auth, tables, data, export, permissions, admin, logs, tracabilite
 
 
 @asynccontextmanager
@@ -25,6 +25,7 @@ app.include_router(export.router)
 app.include_router(permissions.router)
 app.include_router(admin.router)
 app.include_router(logs.router)
+app.include_router(tracabilite.router)
 
 
 @app.get("/")

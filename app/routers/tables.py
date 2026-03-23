@@ -72,7 +72,7 @@ def create_table(
         db.add(col)
     log_action(db, user, "create_table", "table",
                resource_id=table.id, resource_name=table.name,
-               details=f"{len(col_names)} colonne(s)")
+               details=f"{len(col_names)} colonne(s)", table_id=table.id)
     db.commit()
     return RedirectResponse(url=f"/tables/{table.id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -195,7 +195,7 @@ def edit_table(
             db.add(col)
 
     log_action(db, user, "edit_table", "table",
-               resource_id=table.id, resource_name=name)
+               resource_id=table.id, resource_name=name, table_id=table.id)
     db.commit()
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -212,7 +212,7 @@ def delete_table(
     if table.created_by_id != user.id and not user.is_admin:
         raise HTTPException(status_code=403)
     log_action(db, user, "delete_table", "table",
-               resource_id=table.id, resource_name=table.name)
+               resource_id=table.id, resource_name=table.name, table_id=table.id)
     db.delete(table)
     db.commit()
     return RedirectResponse(url="/tables/", status_code=status.HTTP_303_SEE_OTHER)

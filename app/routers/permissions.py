@@ -95,7 +95,7 @@ async def bulk_set_permissions(
                     db.delete(cp)
 
     log_action(db, user, "update_permissions", "permission",
-               resource_id=table.id, resource_name=table.name)
+               resource_id=table.id, resource_name=table.name, table_id=table.id)
     db.commit()
     return RedirectResponse(
         url=f"/tables/{table_id}/permissions",

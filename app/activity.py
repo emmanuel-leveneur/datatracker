@@ -10,10 +10,12 @@ def log_action(
     resource_id: int | None = None,
     resource_name: str = "",
     details: str = "",
+    table_id: int | None = None,
 ) -> None:
     """
     Enregistre une action dans le journal d'activité.
     À appeler avant db.commit() pour que l'entrée soit dans la même transaction.
+    table_id lie l'entrée à une table spécifique (sans FK) pour la traçabilité.
     """
     db.add(ActivityLog(
         user_id=actor.id,
@@ -23,4 +25,5 @@ def log_action(
         resource_id=resource_id,
         resource_name=resource_name,
         details=details,
+        table_id=table_id,
     ))

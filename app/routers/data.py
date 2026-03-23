@@ -65,7 +65,7 @@ async def create_row(
         cell = CellValue(row_id=row.id, column_id=col.id, value=str(value))
         db.add(cell)
     log_action(db, user, "create_row", "row",
-               resource_id=row.id, resource_name=table.name)
+               resource_id=row.id, resource_name=table.name, table_id=table.id)
     db.commit()
 
     if request.headers.get("HX-Request"):
@@ -155,7 +155,7 @@ async def update_row(
         else:
             db.add(CellValue(row_id=row.id, column_id=col.id, value=str(value)))
     log_action(db, user, "update_row", "row",
-               resource_id=row.id, resource_name=table.name)
+               resource_id=row.id, resource_name=table.name, table_id=table.id)
     db.commit()
 
     if request.headers.get("HX-Request"):
@@ -199,7 +199,7 @@ def delete_row(
     if not row or row.table_id != table_id:
         raise HTTPException(status_code=404)
     log_action(db, user, "delete_row", "row",
-               resource_id=row.id, resource_name=table.name)
+               resource_id=row.id, resource_name=table.name, table_id=table.id)
     db.delete(row)
     db.commit()
 
@@ -280,7 +280,8 @@ async def import_csv(
         imported += 1
 
     log_action(db, user, "import_csv", "row",
-               resource_name=table.name, details=f"{imported} ligne(s) importée(s)")
+               resource_name=table.name, details=f"{imported} ligne(s) importée(s)",
+               table_id=table.id)
     db.commit()
     return templates.TemplateResponse(
         request, "tables/import.html",
