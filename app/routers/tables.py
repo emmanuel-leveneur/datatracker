@@ -4,8 +4,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from app.activity import log_action
 from app.database import get_db
-from app.dependencies import can_access_table, get_current_user, get_table_or_404
-from app.models import ColumnType, DataTable, TableColumn, TableFavorite, TablePermission, User
+from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
+from app.models import ColumnType, DataTable, TableColumn, TableFavorite, TableOwner, TablePermission, User
 
 router = APIRouter(prefix="/tables", tags=["tables"])
 templates = Jinja2Templates(directory="app/templates")
@@ -19,19 +19,25 @@ def list_tables(request: Request, user: User = Depends(get_current_user), db: Se
         tables = db.query(DataTable).filter(DataTable.deleted_at == None).order_by(DataTable.created_at.desc()).all()
         trashed_tables = db.query(DataTable).filter(DataTable.deleted_at != None).order_by(DataTable.deleted_at.desc()).all()
     else:
-        owned = db.query(DataTable).filter(DataTable.created_by_id == user.id, DataTable.deleted_at == None).all()
+        owned_ids = [r[0] for r in db.query(TableOwner.table_id).filter_by(user_id=user.id).all()]
+        owned = db.query(DataTable).filter(DataTable.id.in_(owned_ids), DataTable.deleted_at == None).all()
         shared_ids = [r[0] for r in db.query(TablePermission.table_id).filter_by(user_id=user.id).all()]
         shared = db.query(DataTable).filter(DataTable.id.in_(shared_ids), DataTable.deleted_at == None).all()
         seen = {t.id for t in owned}
         tables = owned + [t for t in shared if t.id not in seen]
         trashed_tables = db.query(DataTable).filter(
-            DataTable.created_by_id == user.id, DataTable.deleted_at != None
+            DataTable.id.in_(owned_ids), DataTable.deleted_at != None
         ).order_by(DataTable.deleted_at.desc()).all()
 
     favorite_ids = {
         f.table_id for f in db.query(TableFavorite).filter_by(user_id=user.id).all()
     }
     favorites = [t for t in tables if t.id in favorite_ids]
+
+    if user.is_admin:
+        owner_table_ids = {t.id for t in tables}
+    else:
+        owner_table_ids = set(owned_ids)
 
     return templates.TemplateResponse(
         request, "tables/list.html",
@@ -41,6 +47,7 @@ def list_tables(request: Request, user: User = Depends(get_current_user), db: Se
             "favorites": favorites,
             "favorite_ids": favorite_ids,
             "trashed_tables": trashed_tables,
+            "owner_table_ids": owner_table_ids,
         },
     )
 
@@ -86,6 +93,7 @@ def create_table(
     table = DataTable(name=name, description=description, created_by_id=user.id)
     db.add(table)
     db.flush()
+    db.add(TableOwner(table_id=table.id, user_id=user.id))
 
     required_set = set(col_required)
     for i, (cname, ctype) in enumerate(zip(col_names, col_types)):
@@ -142,7 +150,7 @@ def table_detail(
         cells = {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
         trashed_rows_data.append({"row": row, "cells": cells})
 
-    is_owner = table.created_by_id == user.id
+    is_owner = is_table_owner(table, user, db)
     can_write = can_access_table(table, user, db, require_write=True)
 
     from app.dependencies import is_column_readonly
@@ -173,7 +181,7 @@ def edit_table_page(
 ):
     if table.deleted_at is not None:
         raise HTTPException(status_code=404)
-    if table.created_by_id != user.id and not user.is_admin:
+    if not is_table_owner(table, user, db) and not user.is_admin:
         raise HTTPException(status_code=403, detail="Accès refusé")
     return templates.TemplateResponse(
         request, "tables/edit.html",
@@ -202,7 +210,7 @@ def edit_table(
     table = db.get(DataTable, table_id)
     if not table:
         raise HTTPException(status_code=404)
-    if table.created_by_id != user.id and not user.is_admin:
+    if not is_table_owner(table, user, db) and not user.is_admin:
         raise HTTPException(status_code=403)
 
     # ── Capture de l'état avant modification ──────────────────────────────
@@ -286,7 +294,7 @@ def trash_table(
     table = db.get(DataTable, table_id)
     if not table:
         raise HTTPException(status_code=404)
-    if table.created_by_id != user.id and not user.is_admin:
+    if not is_table_owner(table, user, db) and not user.is_admin:
         raise HTTPException(status_code=403)
     table.deleted_at = datetime.utcnow()
     log_action(db, user, "trash_table", "table",
@@ -304,7 +312,7 @@ def restore_table(
     table = db.get(DataTable, table_id)
     if not table:
         raise HTTPException(status_code=404)
-    if table.created_by_id != user.id and not user.is_admin:
+    if not is_table_owner(table, user, db) and not user.is_admin:
         raise HTTPException(status_code=403)
     table.deleted_at = None
     log_action(db, user, "restore_table", "table",
@@ -322,7 +330,7 @@ def delete_table_permanent(
     table = db.get(DataTable, table_id)
     if not table:
         raise HTTPException(status_code=404)
-    if table.created_by_id != user.id and not user.is_admin:
+    if not is_table_owner(table, user, db) and not user.is_admin:
         raise HTTPException(status_code=403)
     if table.deleted_at is None:
         raise HTTPException(status_code=400, detail="La table doit d'abord être mise à la corbeille")

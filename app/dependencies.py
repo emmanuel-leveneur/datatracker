@@ -2,7 +2,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from app.auth import get_session_user_id
 from app.database import get_db
-from app.models import User, DataTable, TablePermission, PermissionLevel
+from app.models import User, DataTable, TablePermission, TableOwner, PermissionLevel
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
@@ -43,6 +43,15 @@ def get_table_or_404(table_id: int, db: Session = Depends(get_db)) -> DataTable:
     return table
 
 
+def is_table_owner(table: DataTable, user: User, db: Session) -> bool:
+    """Returns True if the user is a co-owner of the table."""
+    return (
+        db.query(TableOwner)
+        .filter_by(table_id=table.id, user_id=user.id)
+        .first()
+    ) is not None
+
+
 def can_access_table(
     table: DataTable,
     user: User,
@@ -50,7 +59,7 @@ def can_access_table(
     require_write: bool = False,
 ) -> bool:
     """Returns True if the user can access (and optionally write to) the table."""
-    if user.is_admin or table.created_by_id == user.id:
+    if user.is_admin or is_table_owner(table, user, db):
         return True
     perm = (
         db.query(TablePermission)
@@ -68,7 +77,7 @@ def get_visible_columns(table: DataTable, user: User, db: Session) -> list:
     """Returns columns the user can see (respects ColumnPermission.hidden)."""
     from app.models import ColumnPermission
 
-    if user.is_admin or table.created_by_id == user.id:
+    if user.is_admin or is_table_owner(table, user, db):
         return list(table.columns)
 
     visible = []

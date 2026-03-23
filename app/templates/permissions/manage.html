@@ -7,14 +7,54 @@
     <h1 class="text-2xl font-bold text-gray-800">Permissions — {{ table.name }}</h1>
   </div>
 
+  <!-- Section co-propriétaires -->
+  <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-5 mb-6">
+    <h2 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+      <i data-lucide="users" class="w-4 h-4 text-blue-600"></i> Propriétaires
+    </h2>
+    <ul class="flex flex-wrap gap-2 mb-4">
+      {% for o in owner_users %}
+      <li class="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-full px-3 py-1 text-sm text-blue-800">
+        <i data-lucide="user-check" class="w-3.5 h-3.5"></i>
+        {{ o.email.split('@')[0] }}
+        {% if o.is_admin %}<span class="text-xs bg-yellow-100 text-yellow-700 px-1 rounded">Admin</span>{% endif %}
+        {% if owner_users | length > 1 %}
+        <form method="post" action="/tables/{{ table.id }}/owners/{{ o.id }}/remove" class="inline">
+          <button type="submit" title="Retirer propriétaire"
+            class="text-blue-400 hover:text-red-500 ml-1 transition" onclick="return confirm('Retirer {{ o.email.split('@')[0] }} des propriétaires ?')">
+            <i data-lucide="x" class="w-3 h-3"></i>
+          </button>
+        </form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+
+    {% if all_users %}
+    <form method="post" action="/tables/{{ table.id }}/owners" class="flex items-center gap-2">
+      <select name="new_owner_id"
+        class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+        <option value="" disabled selected>Ajouter un propriétaire…</option>
+        {% for u in all_users %}
+        <option value="{{ u.id }}">{{ u.email.split('@')[0] }}{% if u.is_admin %} (Admin){% endif %}</option>
+        {% endfor %}
+      </select>
+      <button type="submit"
+        class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition">
+        Ajouter
+      </button>
+    </form>
+    {% endif %}
+  </div>
+
   <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-sm text-blue-700">
-    <p><strong>Propriétaire :</strong> {{ table.owner.username }} — accès complet à toutes les colonnes.</p>
+    <p>Les propriétaires ont un accès complet à toutes les colonnes et peuvent gérer les permissions.</p>
     <p class="mt-1">Les admins ont également accès complet. Les colonnes marquées <strong>Masquée</strong> ne sont pas visibles par l'utilisateur.</p>
   </div>
 
   {% if not all_users %}
   <div class="bg-white border border-gray-200 rounded-xl p-8 text-center text-gray-400">
-    <p>Aucun autre utilisateur enregistré.</p>
+    <p>Aucun autre utilisateur à configurer.</p>
   </div>
   {% else %}
   <form method="post" action="/tables/{{ table.id }}/permissions/bulk">
@@ -40,7 +80,7 @@
             {% for u in all_users %}
             <tr class="hover:bg-gray-50">
               <td class="px-4 py-3 font-medium text-gray-800 sticky left-0 bg-white">
-                {{ u.username }}
+                {{ u.email.split('@')[0] }}
                 {% if u.is_admin %}<span class="text-xs bg-yellow-100 text-yellow-700 px-1 rounded ml-1">Admin</span>{% endif %}
               </td>
               <td class="px-4 py-3">

@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.models import (
     ColumnPermission, ColumnType, DataTable, PermissionLevel,
-    TableColumn, TablePermission, TableRow, CellValue,
+    TableColumn, TableOwner, TablePermission, TableRow, CellValue,
 )
 from tests.helpers import make_table
 
@@ -197,3 +197,104 @@ def test_delete_table_forbidden_for_non_owner(user_client, db, admin_user):
     resp = user_client.post(f"/tables/{table.id}/delete")
 
     assert resp.status_code == 403
+
+
+# ── Co-propriété ──────────────────────────────────────────────────────────────
+
+def test_add_owner(admin_client, db, admin_user, regular_user):
+    table, _ = make_table(db, admin_user)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/owners",
+        data={"new_owner_id": str(regular_user.id)},
+    )
+
+    assert resp.status_code == 303
+    db.expire_all()
+    owners = db.query(TableOwner).filter_by(table_id=table.id).all()
+    assert any(o.user_id == regular_user.id for o in owners)
+
+
+def test_co_owner_can_access_table(user_client, db, admin_user, regular_user):
+    table, _ = make_table(db, admin_user)
+    db.add(TableOwner(table_id=table.id, user_id=regular_user.id))
+    db.commit()
+
+    resp = user_client.get(f"/tables/{table.id}")
+
+    assert resp.status_code == 200
+
+
+def test_co_owner_can_edit_table(user_client, db, admin_user, regular_user):
+    table, cols = make_table(db, admin_user, columns=[("Col", ColumnType.TEXT)])
+    db.add(TableOwner(table_id=table.id, user_id=regular_user.id))
+    db.commit()
+
+    resp = user_client.post(
+        f"/tables/{table.id}/edit",
+        data={
+            "name": "Renommée", "description": "",
+            "col_ids": [str(cols[0].id)], "col_names": ["Col"],
+            "col_types": ["text"], "col_required": [], "col_options": [""],
+        },
+    )
+
+    assert resp.status_code == 303
+
+
+def test_co_owner_can_manage_permissions(user_client, db, admin_user, regular_user):
+    table, _ = make_table(db, admin_user)
+    db.add(TableOwner(table_id=table.id, user_id=regular_user.id))
+    db.commit()
+
+    resp = user_client.get(f"/tables/{table.id}/permissions")
+
+    assert resp.status_code == 200
+
+
+def test_remove_owner(admin_client, db, admin_user, regular_user):
+    table, _ = make_table(db, admin_user)
+    db.add(TableOwner(table_id=table.id, user_id=regular_user.id))
+    db.commit()
+
+    resp = admin_client.post(f"/tables/{table.id}/owners/{regular_user.id}/remove")
+
+    assert resp.status_code == 303
+    db.expire_all()
+    assert db.query(TableOwner).filter_by(table_id=table.id, user_id=regular_user.id).first() is None
+
+
+def test_cannot_remove_last_owner(admin_client, db, admin_user):
+    table, _ = make_table(db, admin_user)
+
+    resp = admin_client.post(f"/tables/{table.id}/owners/{admin_user.id}/remove")
+
+    assert resp.status_code == 400
+
+
+def test_add_owner_creates_log(admin_client, db, admin_user, regular_user):
+    from app.models import ActivityLog
+    table, _ = make_table(db, admin_user)
+
+    admin_client.post(
+        f"/tables/{table.id}/owners",
+        data={"new_owner_id": str(regular_user.id)},
+    )
+
+    db.expire_all()
+    log = db.query(ActivityLog).filter_by(action="add_owner").first()
+    assert log is not None
+    assert "alice" in log.details
+
+
+def test_remove_owner_creates_log(admin_client, db, admin_user, regular_user):
+    from app.models import ActivityLog
+    table, _ = make_table(db, admin_user)
+    db.add(TableOwner(table_id=table.id, user_id=regular_user.id))
+    db.commit()
+
+    admin_client.post(f"/tables/{table.id}/owners/{regular_user.id}/remove")
+
+    db.expire_all()
+    log = db.query(ActivityLog).filter_by(action="remove_owner").first()
+    assert log is not None

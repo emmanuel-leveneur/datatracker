@@ -4,18 +4,18 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from app.activity import log_action
 from app.database import get_db
-from app.dependencies import get_current_user, get_table_or_404
+from app.dependencies import get_current_user, get_table_or_404, is_table_owner
 from app.models import (
     ColumnPermission, DataTable, PermissionLevel,
-    TablePermission, User,
+    TableOwner, TablePermission, User,
 )
 
 router = APIRouter(prefix="/tables", tags=["permissions"])
 templates = Jinja2Templates(directory="app/templates")
 
 
-def _require_owner_or_admin(table: DataTable, user: User):
-    if table.created_by_id != user.id and not user.is_admin:
+def _require_owner_or_admin(table: DataTable, user: User, db: Session):
+    if not is_table_owner(table, user, db) and not user.is_admin:
         raise HTTPException(status_code=403, detail="Accès refusé")
 
 
@@ -26,9 +26,13 @@ def permissions_page(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _require_owner_or_admin(table, user)
+    _require_owner_or_admin(table, user, db)
 
-    all_users = db.query(User).filter(User.id != user.id).order_by(User.username).all()
+    owner_ids = {to.user_id for to in table.co_owners}
+    all_users = db.query(User).order_by(User.username).all()
+    non_owner_users = [u for u in all_users if u.id not in owner_ids]
+    owner_users = [u for u in all_users if u.id in owner_ids]
+
     table_perms = {tp.user_id: tp for tp in table.permissions}
 
     col_perms: dict[int, dict[int, ColumnPermission]] = {}
@@ -42,7 +46,9 @@ def permissions_page(
         {
             "user": user,
             "table": table,
-            "all_users": all_users,
+            "owner_users": owner_users,
+            "owner_ids": owner_ids,
+            "all_users": non_owner_users,
             "table_perms": table_perms,
             "col_perms": col_perms,
             "perm_levels": [e.value for e in PermissionLevel],
@@ -61,10 +67,11 @@ async def bulk_set_permissions(
     table = db.get(DataTable, table_id)
     if not table:
         raise HTTPException(status_code=404)
-    _require_owner_or_admin(table, user)
+    _require_owner_or_admin(table, user, db)
 
     form = await request.form()
-    all_users = db.query(User).filter(User.id != table.created_by_id).all()
+    owner_ids = {to.user_id for to in table.co_owners}
+    all_users = db.query(User).filter(~User.id.in_(owner_ids)).all()
 
     # Capture state before modification
     old_table_perms = {tp.user_id: tp.level.value for tp in table.permissions}
@@ -124,6 +131,67 @@ async def bulk_set_permissions(
     log_action(db, user, "update_permissions", "permission",
                resource_id=table.id, resource_name=table.name, table_id=table.id,
                details="\n".join(diff) if diff else "Aucune modification")
+    db.commit()
+    return RedirectResponse(
+        url=f"/tables/{table_id}/permissions",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/{table_id}/owners")
+def add_owner(
+    table_id: int,
+    new_owner_id: int = Form(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    _require_owner_or_admin(table, user, db)
+
+    target = db.get(User, new_owner_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    existing = db.query(TableOwner).filter_by(table_id=table_id, user_id=new_owner_id).first()
+    if not existing:
+        db.add(TableOwner(table_id=table_id, user_id=new_owner_id))
+        log_action(db, user, "add_owner", "table",
+                   resource_id=table.id, resource_name=table.name, table_id=table.id,
+                   details=f"Propriétaire ajouté : {target.email.split('@')[0]}")
+        db.commit()
+    return RedirectResponse(
+        url=f"/tables/{table_id}/permissions",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/{table_id}/owners/{owner_id}/remove")
+def remove_owner(
+    table_id: int,
+    owner_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    _require_owner_or_admin(table, user, db)
+
+    owners = db.query(TableOwner).filter_by(table_id=table_id).all()
+    if len(owners) <= 1:
+        raise HTTPException(status_code=400, detail="Impossible de retirer le dernier propriétaire")
+
+    target_ownership = db.query(TableOwner).filter_by(table_id=table_id, user_id=owner_id).first()
+    if not target_ownership:
+        raise HTTPException(status_code=404, detail="Cet utilisateur n'est pas propriétaire")
+
+    target = db.get(User, owner_id)
+    db.delete(target_ownership)
+    log_action(db, user, "remove_owner", "table",
+               resource_id=table.id, resource_name=table.name, table_id=table.id,
+               details=f"Propriétaire retiré : {target.email.split('@')[0] if target else owner_id}")
     db.commit()
     return RedirectResponse(
         url=f"/tables/{table_id}/permissions",

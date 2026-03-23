@@ -7,7 +7,7 @@ from app.database import get_db
 from app.dependencies import require_admin
 from app.models import (
     ColumnPermission, DataTable, PermissionLevel,
-    TablePermission, User,
+    TableOwner, TablePermission, User,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -90,6 +90,11 @@ def user_permissions_page(
         for cp in db.query(ColumnPermission).filter_by(user_id=user_id).all()
     }
 
+    target_owner_ids = {
+        to.table_id
+        for to in db.query(TableOwner).filter_by(user_id=user_id).all()
+    }
+
     return templates.TemplateResponse(
         request, "admin/user_permissions.html",
         {
@@ -99,6 +104,7 @@ def user_permissions_page(
             "table_perms": table_perms,
             "col_perms": col_perms,
             "perm_levels": [e.value for e in PermissionLevel],
+            "target_owner_ids": target_owner_ids,
         },
     )
 
@@ -129,9 +135,14 @@ async def save_user_permissions(
 
     diff = []
 
+    target_owner_ids = {
+        to.table_id
+        for to in db.query(TableOwner).filter_by(user_id=user_id).all()
+    }
+
     for table in all_tables:
-        # L'owner a toujours accès complet, pas besoin de permission
-        if table.created_by_id == user_id:
+        # Les co-propriétaires ont toujours accès complet, pas besoin de permission
+        if table.id in target_owner_ids:
             continue
 
         table_level = form.get(f"table_perm_{table.id}")

@@ -53,3 +53,15 @@ def _run_migrations():
                 if col_name not in existing:
                     conn.execute(text(stmt))
                     conn.commit()
+
+        # Seeding : s'assurer que chaque créateur de table est aussi dans table_owners
+        tables_in_db = {
+            row[0]
+            for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        }
+        if "table_owners" in tables_in_db:
+            conn.execute(text(
+                "INSERT OR IGNORE INTO table_owners (table_id, user_id) "
+                "SELECT id, created_by_id FROM data_tables WHERE created_by_id IS NOT NULL"
+            ))
+            conn.commit()

@@ -33,6 +33,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     tables: Mapped[list["DataTable"]] = relationship(back_populates="owner")
+    owned_tables: Mapped[list["TableOwner"]] = relationship(back_populates="user")
     table_permissions: Mapped[list["TablePermission"]] = relationship(back_populates="user")
     column_permissions: Mapped[list["ColumnPermission"]] = relationship(back_populates="user")
     rows: Mapped[list["TableRow"]] = relationship(back_populates="created_by")
@@ -56,6 +57,9 @@ class DataTable(Base):
         back_populates="table", cascade="all, delete-orphan"
     )
     permissions: Mapped[list["TablePermission"]] = relationship(
+        back_populates="table", cascade="all, delete-orphan"
+    )
+    co_owners: Mapped[list["TableOwner"]] = relationship(
         back_populates="table", cascade="all, delete-orphan"
     )
 
@@ -136,6 +140,18 @@ class ColumnPermission(Base):
 
     column: Mapped["TableColumn"] = relationship(back_populates="column_permissions")
     user: Mapped["User"] = relationship(back_populates="column_permissions")
+
+
+class TableOwner(Base):
+    __tablename__ = "table_owners"
+    __table_args__ = (UniqueConstraint("table_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("data_tables.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+
+    table: Mapped["DataTable"] = relationship(back_populates="co_owners")
+    user: Mapped["User"] = relationship(back_populates="owned_tables")
 
 
 class TableFavorite(Base):

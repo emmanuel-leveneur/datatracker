@@ -25,6 +25,8 @@ ACTION_LABELS = {
     "import_csv": "Import CSV",
     "update_permissions": "Modification des permissions",
     "update_user_permissions": "Permissions utilisateur",
+    "add_owner": "Propriétaire ajouté",
+    "remove_owner": "Propriétaire retiré",
     "toggle_admin": "Modification rôle admin",
     "delete_user": "Suppression d'utilisateur",
     "register": "Inscription",

@@ -32,7 +32,7 @@
   <form method="post" action="/admin/users/{{ target.id }}/permissions">
     <div class="space-y-6">
       {% for table in all_tables %}
-      {% set is_owner = (table.created_by_id == target.id) %}
+      {% set is_owner = (table.id in target_owner_ids) %}
       <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden
         {% if is_owner %}opacity-60{% endif %}">
 

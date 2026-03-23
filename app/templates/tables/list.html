@@ -45,7 +45,7 @@
     <span>{{ table.columns | length }} colonne(s)</span>
     <span>•</span>
     <span>{{ table.rows | length }} ligne(s)</span>
-    {% if table.created_by_id == user.id %}
+    {% if table.id in owner_table_ids %}
     <span class="ml-auto bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Propriétaire</span>
     {% else %}
     <span class="ml-auto bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">Partagée</span>
@@ -56,7 +56,7 @@
       class="flex-1 text-center bg-blue-50 hover:bg-blue-100 text-blue-700 text-sm font-medium py-1.5 rounded-lg transition">
       Ouvrir
     </a>
-    {% if table.created_by_id == user.id or user.is_admin %}
+    {% if table.id in owner_table_ids or user.is_admin %}
     <a href="/tables/{{ table.id }}/edit"
       class="text-center bg-gray-50 hover:bg-gray-100 text-gray-600 text-sm font-medium px-3 py-1.5 rounded-lg transition">
       Modifier
