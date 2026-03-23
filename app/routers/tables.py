@@ -16,16 +16,17 @@ COLUMN_TYPES = [e.value for e in ColumnType]
 @router.get("/", response_class=HTMLResponse)
 def list_tables(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.is_admin:
-        tables = db.query(DataTable).order_by(DataTable.created_at.desc()).all()
+        tables = db.query(DataTable).filter(DataTable.deleted_at == None).order_by(DataTable.created_at.desc()).all()
+        trashed_tables = db.query(DataTable).filter(DataTable.deleted_at != None).order_by(DataTable.deleted_at.desc()).all()
     else:
-        owned = db.query(DataTable).filter_by(created_by_id=user.id).all()
-        shared_ids = (
-            db.query(TablePermission.table_id).filter_by(user_id=user.id).all()
-        )
-        shared_ids = [r[0] for r in shared_ids]
-        shared = db.query(DataTable).filter(DataTable.id.in_(shared_ids)).all()
+        owned = db.query(DataTable).filter(DataTable.created_by_id == user.id, DataTable.deleted_at == None).all()
+        shared_ids = [r[0] for r in db.query(TablePermission.table_id).filter_by(user_id=user.id).all()]
+        shared = db.query(DataTable).filter(DataTable.id.in_(shared_ids), DataTable.deleted_at == None).all()
         seen = {t.id for t in owned}
         tables = owned + [t for t in shared if t.id not in seen]
+        trashed_tables = db.query(DataTable).filter(
+            DataTable.created_by_id == user.id, DataTable.deleted_at != None
+        ).order_by(DataTable.deleted_at.desc()).all()
 
     favorite_ids = {
         f.table_id for f in db.query(TableFavorite).filter_by(user_id=user.id).all()
@@ -34,7 +35,13 @@ def list_tables(request: Request, user: User = Depends(get_current_user), db: Se
 
     return templates.TemplateResponse(
         request, "tables/list.html",
-        {"user": user, "tables": tables, "favorites": favorites, "favorite_ids": favorite_ids},
+        {
+            "user": user,
+            "tables": tables,
+            "favorites": favorites,
+            "favorite_ids": favorite_ids,
+            "trashed_tables": trashed_tables,
+        },
     )
 
 
@@ -109,6 +116,8 @@ def table_detail(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if table.deleted_at is not None:
+        raise HTTPException(status_code=404)
     if not can_access_table(table, user, db):
         raise HTTPException(status_code=403, detail="Accès refusé")
     from app.dependencies import get_visible_columns
@@ -117,11 +126,21 @@ def table_detail(
     visible_cols = get_visible_columns(table, user, db)
     visible_col_ids = {c.id for c in visible_cols}
 
-    rows = db.query(TableRow).filter_by(table_id=table.id).order_by(TableRow.created_at.desc()).all()
+    rows = db.query(TableRow).filter(
+        TableRow.table_id == table.id, TableRow.deleted_at == None
+    ).order_by(TableRow.created_at.desc()).all()
     rows_data = []
     for row in rows:
         cells = {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
         rows_data.append({"row": row, "cells": cells})
+
+    trashed_rows = db.query(TableRow).filter(
+        TableRow.table_id == table.id, TableRow.deleted_at != None
+    ).order_by(TableRow.deleted_at.desc()).all()
+    trashed_rows_data = []
+    for row in trashed_rows:
+        cells = {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
+        trashed_rows_data.append({"row": row, "cells": cells})
 
     is_owner = table.created_by_id == user.id
     can_write = can_access_table(table, user, db, require_write=True)
@@ -136,6 +155,7 @@ def table_detail(
             "table": table,
             "columns": visible_cols,
             "rows_data": rows_data,
+            "trashed_rows_data": trashed_rows_data,
             "is_owner": is_owner,
             "can_write": can_write,
             "col_readonly": col_readonly,
@@ -151,6 +171,8 @@ def edit_table_page(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if table.deleted_at is not None:
+        raise HTTPException(status_code=404)
     if table.created_by_id != user.id and not user.is_admin:
         raise HTTPException(status_code=403, detail="Accès refusé")
     return templates.TemplateResponse(
@@ -255,7 +277,26 @@ def edit_table(
 
 
 @router.post("/{table_id}/delete")
-def delete_table(
+def trash_table(
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from datetime import datetime
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if table.created_by_id != user.id and not user.is_admin:
+        raise HTTPException(status_code=403)
+    table.deleted_at = datetime.utcnow()
+    log_action(db, user, "trash_table", "table",
+               resource_id=table.id, resource_name=table.name, table_id=table.id)
+    db.commit()
+    return RedirectResponse(url="/tables/", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/restore")
+def restore_table(
     table_id: int,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -265,6 +306,26 @@ def delete_table(
         raise HTTPException(status_code=404)
     if table.created_by_id != user.id and not user.is_admin:
         raise HTTPException(status_code=403)
+    table.deleted_at = None
+    log_action(db, user, "restore_table", "table",
+               resource_id=table.id, resource_name=table.name, table_id=table.id)
+    db.commit()
+    return RedirectResponse(url="/tables/", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/delete-permanent")
+def delete_table_permanent(
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if table.created_by_id != user.id and not user.is_admin:
+        raise HTTPException(status_code=403)
+    if table.deleted_at is None:
+        raise HTTPException(status_code=400, detail="La table doit d'abord être mise à la corbeille")
     log_action(db, user, "delete_table", "table",
                resource_id=table.id, resource_name=table.name, table_id=table.id)
     db.delete(table)

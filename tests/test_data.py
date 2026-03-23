@@ -113,7 +113,7 @@ def test_edit_row_forbidden_without_write_permission(user_client, db, admin_user
 
 # ── Suppression de lignes ─────────────────────────────────────────────────────
 
-def test_delete_row(admin_client, db, admin_user):
+def test_delete_row_moves_to_trash(admin_client, db, admin_user):
     table, _ = make_table(db, admin_user)
     row = TableRow(table_id=table.id, created_by_id=admin_user.id)
     db.add(row)
@@ -123,6 +123,37 @@ def test_delete_row(admin_client, db, admin_user):
     resp = admin_client.post(f"/tables/{table.id}/rows/{row_id}/delete")
 
     assert resp.status_code in (200, 303)
+    db.expire_all()
+    r = db.get(TableRow, row_id)
+    assert r is not None
+    assert r.deleted_at is not None
+
+
+def test_restore_row(admin_client, db, admin_user):
+    from datetime import datetime
+    table, _ = make_table(db, admin_user)
+    row = TableRow(table_id=table.id, created_by_id=admin_user.id, deleted_at=datetime.utcnow())
+    db.add(row)
+    db.commit()
+
+    resp = admin_client.post(f"/tables/{table.id}/rows/{row.id}/restore")
+
+    assert resp.status_code == 303
+    db.expire_all()
+    assert db.get(TableRow, row.id).deleted_at is None
+
+
+def test_delete_row_permanent(admin_client, db, admin_user):
+    from datetime import datetime
+    table, _ = make_table(db, admin_user)
+    row = TableRow(table_id=table.id, created_by_id=admin_user.id, deleted_at=datetime.utcnow())
+    db.add(row)
+    db.commit()
+    row_id = row.id
+
+    resp = admin_client.post(f"/tables/{table.id}/rows/{row_id}/delete-permanent")
+
+    assert resp.status_code == 303
     db.expire_all()
     assert db.get(TableRow, row_id) is None
 

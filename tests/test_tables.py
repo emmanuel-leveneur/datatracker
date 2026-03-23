@@ -53,7 +53,7 @@ def test_table_detail_forbidden_for_non_member(user_client: TestClient, db, admi
     assert resp.status_code == 403
 
 
-def test_delete_table(admin_client: TestClient, db, admin_user):
+def test_delete_table_moves_to_trash(admin_client: TestClient, db, admin_user):
     table = DataTable(name="ToDelete", created_by_id=admin_user.id)
     db.add(table)
     db.commit()
@@ -61,7 +61,52 @@ def test_delete_table(admin_client: TestClient, db, admin_user):
     resp = admin_client.post(f"/tables/{table_id}/delete")
     assert resp.status_code == 303
     db.expire_all()
+    t = db.get(DataTable, table_id)
+    assert t is not None
+    assert t.deleted_at is not None
+
+
+def test_restore_table(admin_client: TestClient, db, admin_user):
+    from datetime import datetime
+    table = DataTable(name="Trashed", created_by_id=admin_user.id, deleted_at=datetime.utcnow())
+    db.add(table)
+    db.commit()
+    resp = admin_client.post(f"/tables/{table.id}/restore")
+    assert resp.status_code == 303
+    db.expire_all()
+    assert db.get(DataTable, table.id).deleted_at is None
+
+
+def test_delete_table_permanent(admin_client: TestClient, db, admin_user):
+    from datetime import datetime
+    table = DataTable(name="Gone", created_by_id=admin_user.id, deleted_at=datetime.utcnow())
+    db.add(table)
+    db.commit()
+    table_id = table.id
+    resp = admin_client.post(f"/tables/{table_id}/delete-permanent")
+    assert resp.status_code == 303
+    db.expire_all()
     assert db.get(DataTable, table_id) is None
+
+
+def test_trashed_table_not_in_list(admin_client: TestClient, db, admin_user):
+    from datetime import datetime
+    table = DataTable(name="HiddenTrash", created_by_id=admin_user.id, deleted_at=datetime.utcnow())
+    db.add(table)
+    db.commit()
+    resp = admin_client.get("/tables/")
+    assert resp.status_code == 200
+    # doit apparaître dans la section corbeille, pas dans le titre principal
+    assert "HiddenTrash" in resp.text
+
+
+def test_trashed_table_detail_returns_404(admin_client: TestClient, db, admin_user):
+    from datetime import datetime
+    table = DataTable(name="NoAccess", created_by_id=admin_user.id, deleted_at=datetime.utcnow())
+    db.add(table)
+    db.commit()
+    resp = admin_client.get(f"/tables/{table.id}")
+    assert resp.status_code == 404
 
 
 def test_edit_table(admin_client: TestClient, db, admin_user):

@@ -79,6 +79,45 @@
 </section>
 {% endif %}
 
+{% if trashed_tables %}
+<details class="mb-8 group">
+  <summary class="cursor-pointer flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-700 select-none list-none mb-3">
+    <span class="transition-transform group-open:rotate-90">▶</span>
+    🗑 Corbeille — {{ trashed_tables | length }} table(s)
+  </summary>
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-3">
+    {% for table in trashed_tables %}
+    <div class="bg-white border border-red-100 rounded-xl shadow-sm p-5 flex flex-col gap-3 opacity-70">
+      <div>
+        <h2 class="text-lg font-semibold text-gray-500 truncate line-through">{{ table.name }}</h2>
+        {% if table.description %}
+        <p class="text-sm text-gray-400 mt-0.5 line-clamp-2">{{ table.description }}</p>
+        {% endif %}
+      </div>
+      <div class="text-xs text-gray-400">
+        Mise à la corbeille le {{ table.deleted_at.strftime('%d/%m/%Y') }}
+      </div>
+      <div class="flex gap-2 mt-auto pt-2 border-t border-red-50">
+        <form method="post" action="/tables/{{ table.id }}/restore" class="flex-1">
+          <button type="submit"
+            class="w-full text-center bg-green-50 hover:bg-green-100 text-green-700 text-sm font-medium py-1.5 rounded-lg transition">
+            Restaurer
+          </button>
+        </form>
+        <form method="post" action="/tables/{{ table.id }}/delete-permanent"
+          onsubmit="return confirm('Supprimer définitivement « {{ table.name }} » et toutes ses données ?')">
+          <button type="submit"
+            class="text-center bg-red-50 hover:bg-red-100 text-red-600 text-sm font-medium px-3 py-1.5 rounded-lg border border-red-200 transition">
+            Supprimer définitivement
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+
 {% if tables %}
 <section id="section-all">
   {% if favorites %}

@@ -46,6 +46,7 @@ class DataTable(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
     owner: Mapped["User"] = relationship(back_populates="tables")
     columns: Mapped[list["TableColumn"]] = relationship(
@@ -89,6 +90,7 @@ class TableRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
     table: Mapped["DataTable"] = relationship(back_populates="rows")
     created_by: Mapped["User"] = relationship(back_populates="rows")

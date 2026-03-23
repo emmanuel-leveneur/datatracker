@@ -17,6 +17,7 @@ def cleanup_orphan_rows():
     try:
         orphans = db.execute(
             select(TableRow).where(
+                TableRow.deleted_at == None,
                 not_(
                     exists().where(CellValue.row_id == TableRow.id)
                 )

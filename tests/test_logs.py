@@ -101,7 +101,7 @@ def test_delete_table_creates_log(admin_client, db, admin_user):
     admin_client.post(f"/tables/{table.id}/delete")
 
     db.expire_all()
-    log = db.query(ActivityLog).filter_by(action="delete_table").first()
+    log = db.query(ActivityLog).filter_by(action="trash_table").first()
     assert log is not None
     assert log.resource_name == table_name
 
@@ -128,7 +128,7 @@ def test_delete_row_creates_log(admin_client, db, admin_user):
     admin_client.post(f"/tables/{table.id}/rows/{row.id}/delete")
 
     db.expire_all()
-    log = db.query(ActivityLog).filter_by(action="delete_row").first()
+    log = db.query(ActivityLog).filter_by(action="trash_row").first()
     assert log is not None
 
 

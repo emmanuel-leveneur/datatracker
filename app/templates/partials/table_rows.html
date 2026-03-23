@@ -48,9 +48,10 @@
           hx-post="/tables/{{ table.id }}/rows/{{ item.row.id }}/delete"
           hx-target="#table-body"
           hx-swap="innerHTML"
-          hx-confirm="Supprimer cette ligne ?"
-          class="text-red-500 hover:text-red-700 text-xs font-medium px-2 py-1 rounded hover:bg-red-50">
-          Supprimer
+          hx-confirm="Mettre cette ligne à la corbeille ?"
+          class="text-red-400 hover:text-red-600 text-xs font-medium px-2 py-1 rounded hover:bg-red-50"
+          title="Mettre à la corbeille">
+          🗑
         </button>
       </td>
       {% endif %}

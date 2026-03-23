@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DATABASE_URL = "sqlite:///./datatracker.db"
@@ -31,20 +31,25 @@ def create_tables():
 
 def _run_migrations():
     """Migrations incrémentales pour les colonnes ajoutées après la création initiale."""
-    migrations = [
-        # feat/tracabilite : liaison des logs à une table spécifique
-        "ALTER TABLE activity_logs ADD COLUMN table_id INTEGER",
-    ]
+    # table_name → list of (column_name, ALTER statement)
+    migrations_by_table = {
+        "activity_logs": [
+            ("table_id", "ALTER TABLE activity_logs ADD COLUMN table_id INTEGER"),
+        ],
+        "data_tables": [
+            ("deleted_at", "ALTER TABLE data_tables ADD COLUMN deleted_at DATETIME"),
+        ],
+        "table_rows": [
+            ("deleted_at", "ALTER TABLE table_rows ADD COLUMN deleted_at DATETIME"),
+        ],
+    }
     with engine.connect() as conn:
-        existing = {
-            row[1]
-            for row in conn.execute(
-                __import__("sqlalchemy").text("PRAGMA table_info(activity_logs)")
-            )
-        }
-        for stmt in migrations:
-            # Extrait le nom de colonne depuis "... ADD COLUMN <name> ..."
-            col_name = stmt.split("ADD COLUMN")[1].strip().split()[0]
-            if col_name not in existing:
-                conn.execute(__import__("sqlalchemy").text(stmt))
-                conn.commit()
+        for table_name, columns in migrations_by_table.items():
+            existing = {
+                row[1]
+                for row in conn.execute(text(f"PRAGMA table_info({table_name})"))
+            }
+            for col_name, stmt in columns:
+                if col_name not in existing:
+                    conn.execute(text(stmt))
+                    conn.commit()
