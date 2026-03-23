@@ -146,6 +146,9 @@ async def update_row(
     visible_cols = get_visible_columns(table, user, db)
     existing_cells = {cv.column_id: cv for cv in row.cell_values}
 
+    # Capture old values before modification
+    old_values = {cv.column_id: cv.value for cv in row.cell_values}
+
     for col in visible_cols:
         if is_column_readonly(col, user, db):
             continue
@@ -154,8 +157,19 @@ async def update_row(
             existing_cells[col.id].value = str(value)
         else:
             db.add(CellValue(row_id=row.id, column_id=col.id, value=str(value)))
+
+    diff = []
+    for col in visible_cols:
+        if is_column_readonly(col, user, db):
+            continue
+        new_val = str(form.get(f"col_{col.id}", ""))
+        old_val = old_values.get(col.id, "")
+        if old_val != new_val:
+            diff.append(f'"{col.name}" : "{old_val}" → "{new_val}"')
+
     log_action(db, user, "update_row", "row",
-               resource_id=row.id, resource_name=table.name, table_id=table.id)
+               resource_id=row.id, resource_name=table.name, table_id=table.id,
+               details="\n".join(diff) if diff else "Aucune modification")
     db.commit()
 
     if request.headers.get("HX-Request"):

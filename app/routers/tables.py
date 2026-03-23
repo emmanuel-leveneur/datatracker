@@ -158,6 +158,11 @@ def edit_table(
     if table.created_by_id != user.id and not user.is_admin:
         raise HTTPException(status_code=403)
 
+    # ── Capture de l'état avant modification ──────────────────────────────
+    old_name = table.name
+    old_description = table.description or ""
+    old_cols = {col.id: {"name": col.name, "type": col.col_type.value} for col in table.columns}
+
     table.name = name
     table.description = description
 
@@ -194,8 +199,32 @@ def edit_table(
             )
             db.add(col)
 
+    # ── Construction du diff avant/après ──────────────────────────────────
+    diff = []
+    if old_name != name:
+        diff.append(f'Nom : "{old_name}" → "{name}"')
+    if old_description != (description or ""):
+        diff.append(f'Description : "{old_description}" → "{description or ""}"')
+    for col_id, old in old_cols.items():
+        if str(col_id) not in submitted_ids:
+            diff.append(f'Colonne supprimée : "{old["name"]}" ({old["type"]})')
+    for i, (cid, cname, ctype) in enumerate(zip(col_ids, col_names, col_types)):
+        cname = cname.strip()
+        if not cname:
+            continue
+        if cid and cid in existing_ids:
+            old = old_cols.get(int(cid))
+            if old:
+                if old["name"] != cname:
+                    diff.append(f'Colonne : "{old["name"]}" → "{cname}"')
+                if old["type"] != ctype:
+                    diff.append(f'Type "{cname}" : {old["type"]} → {ctype}')
+        else:
+            diff.append(f'Colonne ajoutée : "{cname}" ({ctype})')
+
     log_action(db, user, "edit_table", "table",
-               resource_id=table.id, resource_name=name, table_id=table.id)
+               resource_id=table.id, resource_name=name, table_id=table.id,
+               details="\n".join(diff) if diff else "Aucune modification")
     db.commit()
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 

@@ -117,20 +117,36 @@ async def save_user_permissions(
     form = await request.form()
     all_tables = db.query(DataTable).all()
 
+    # Capture state before modification
+    old_table_perms = {
+        tp.table_id: tp.level.value
+        for tp in db.query(TablePermission).filter_by(user_id=user_id).all()
+    }
+    old_col_perms = {
+        cp.column_id: {"hidden": cp.hidden, "readonly": cp.readonly}
+        for cp in db.query(ColumnPermission).filter_by(user_id=user_id).all()
+    }
+
+    diff = []
+
     for table in all_tables:
         # L'owner a toujours accès complet, pas besoin de permission
         if table.created_by_id == user_id:
             continue
 
         table_level = form.get(f"table_perm_{table.id}")
-        tp = db.query(TablePermission).filter_by(table_id=table.id, user_id=user_id).first()
+        new_level = table_level if table_level and table_level in [e.value for e in PermissionLevel] else "none"
+        old_level = old_table_perms.get(table.id, "none")
+        if old_level != new_level:
+            diff.append(f'Table "{table.name}" : "{old_level}" → "{new_level}"')
 
-        if table_level and table_level in [e.value for e in PermissionLevel]:
+        tp = db.query(TablePermission).filter_by(table_id=table.id, user_id=user_id).first()
+        if new_level != "none":
             if tp:
-                tp.level = PermissionLevel(table_level)
+                tp.level = PermissionLevel(new_level)
             else:
-                db.add(TablePermission(table_id=table.id, user_id=user_id, level=PermissionLevel(table_level)))
-        else:  # "none"
+                db.add(TablePermission(table_id=table.id, user_id=user_id, level=PermissionLevel(new_level)))
+        else:
             if tp:
                 db.delete(tp)
 
@@ -138,6 +154,19 @@ async def save_user_permissions(
             cp = db.query(ColumnPermission).filter_by(column_id=col.id, user_id=user_id).first()
             hidden = form.get(f"col_hidden_{col.id}") == "on"
             readonly = form.get(f"col_readonly_{col.id}") == "on"
+
+            old_cp = old_col_perms.get(col.id, {"hidden": False, "readonly": False})
+            if old_cp["hidden"] != hidden or old_cp["readonly"] != readonly:
+                old_desc = ", ".join(filter(None, [
+                    "masquée" if old_cp["hidden"] else "",
+                    "lecture seule" if old_cp["readonly"] else "",
+                ])) or "aucune restriction"
+                new_desc = ", ".join(filter(None, [
+                    "masquée" if hidden else "",
+                    "lecture seule" if readonly else "",
+                ])) or "aucune restriction"
+                diff.append(f'Colonne "{col.name}" ({table.name}) : "{old_desc}" → "{new_desc}"')
+
             if hidden or readonly:
                 if cp:
                     cp.hidden = hidden
@@ -149,7 +178,8 @@ async def save_user_permissions(
                     db.delete(cp)
 
     log_action(db, current_user, "update_user_permissions", "permission",
-               resource_id=target.id, resource_name=target.username)
+               resource_id=target.id, resource_name=target.username,
+               details="\n".join(diff) if diff else "Aucune modification")
     db.commit()
     return RedirectResponse(
         url=f"/admin/users/{user_id}/permissions",
