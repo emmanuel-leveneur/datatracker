@@ -223,13 +223,13 @@
     text:    [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
     integer: [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
     float:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
-    date:    [{v:"eq",l:"="}, {v:"before",l:"avant"}, {v:"after",l:"après"}, {v:"today",l:"aujourd'hui"}, {v:"yesterday",l:"hier"}, {v:"tomorrow",l:"demain"}],
+    date:    [{v:"eq",l:"="}, {v:"before",l:"avant"}, {v:"after",l:"après"}, {v:"before_today",l:"avant aujourd'hui"}, {v:"after_today",l:"après aujourd'hui"}, {v:"today_or_before",l:"aujourd'hui ou avant"}, {v:"today_or_after",l:"aujourd'hui ou après"}, {v:"today",l:"aujourd'hui"}, {v:"yesterday",l:"hier"}, {v:"tomorrow",l:"demain"}],
     select:  [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"in",l:"dans (virgules)"}, {v:"not_in",l:"pas dans (virgules)"}],
     boolean: [{v:"is_true",l:"est vrai"}, {v:"is_false",l:"est faux"}],
     email:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
   };
 
-  var NO_VALUE_OPS = ["today", "yesterday", "tomorrow", "is_true", "is_false"];
+  var NO_VALUE_OPS = ["today", "yesterday", "tomorrow", "is_true", "is_false", "before_today", "after_today", "today_or_before", "today_or_after"];
 
   var inputCls = "border border-gray-300 rounded px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400";
 

@@ -104,6 +104,56 @@ class TestEvaluateCondition:
         columns = {c.id: c for c in cols}
         assert not _evaluate_condition({"col_id": col.id, "operator": "gt", "value": "0"}, {col.id: ""}, columns)
 
+    def test_date_before_today(self, db, admin_user):
+        from datetime import date, timedelta
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col = TableColumn(id=999, name="Échéance", col_type=ColumnType.DATE)
+        columns = {999: col}
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        assert _evaluate_condition({"col_id": 999, "operator": "before_today"}, {999: yesterday}, columns)
+        assert not _evaluate_condition({"col_id": 999, "operator": "before_today"}, {999: tomorrow}, columns)
+        assert not _evaluate_condition({"col_id": 999, "operator": "before_today"}, {999: date.today().isoformat()}, columns)
+
+    def test_date_after_today(self, db, admin_user):
+        from datetime import date, timedelta
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col = TableColumn(id=998, name="Deadline", col_type=ColumnType.DATE)
+        columns = {998: col}
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        assert _evaluate_condition({"col_id": 998, "operator": "after_today"}, {998: tomorrow}, columns)
+        assert not _evaluate_condition({"col_id": 998, "operator": "after_today"}, {998: yesterday}, columns)
+        assert not _evaluate_condition({"col_id": 998, "operator": "after_today"}, {998: date.today().isoformat()}, columns)
+
+    def test_date_today_or_before(self, db, admin_user):
+        from datetime import date, timedelta
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col = TableColumn(id=997, name="Date", col_type=ColumnType.DATE)
+        columns = {997: col}
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        today = date.today().isoformat()
+        assert _evaluate_condition({"col_id": 997, "operator": "today_or_before"}, {997: yesterday}, columns)
+        assert _evaluate_condition({"col_id": 997, "operator": "today_or_before"}, {997: today}, columns)
+        assert not _evaluate_condition({"col_id": 997, "operator": "today_or_before"}, {997: tomorrow}, columns)
+
+    def test_date_today_or_after(self, db, admin_user):
+        from datetime import date, timedelta
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col = TableColumn(id=996, name="Date", col_type=ColumnType.DATE)
+        columns = {996: col}
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        today = date.today().isoformat()
+        assert _evaluate_condition({"col_id": 996, "operator": "today_or_after"}, {996: tomorrow}, columns)
+        assert _evaluate_condition({"col_id": 996, "operator": "today_or_after"}, {996: today}, columns)
+        assert not _evaluate_condition({"col_id": 996, "operator": "today_or_after"}, {996: yesterday}, columns)
+
 
 class TestEvaluateAlert:
     def test_single_condition_true(self, db, admin_user, table_with_cols):

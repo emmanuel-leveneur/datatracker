@@ -17,12 +17,17 @@ OPERATOR_LABELS: dict[str, str] = {
     "contains": "contient", "not_contains": "ne contient pas",
     "before": "avant", "after": "après",
     "today": "est aujourd'hui", "yesterday": "était hier", "tomorrow": "sera demain",
+    "before_today": "avant aujourd'hui", "after_today": "après aujourd'hui",
+    "today_or_before": "aujourd'hui ou avant", "today_or_after": "aujourd'hui ou après",
     "in": "est dans", "not_in": "n'est pas dans",
     "is_true": "est vrai", "is_false": "est faux",
 }
 
 # Opérateurs qui n'ont pas de valeur cible (comparaison dynamique)
-NO_VALUE_OPERATORS = {"today", "yesterday", "tomorrow", "is_true", "is_false"}
+NO_VALUE_OPERATORS = {
+    "today", "yesterday", "tomorrow", "is_true", "is_false",
+    "before_today", "after_today", "today_or_before", "today_or_after",
+}
 
 
 def _evaluate_condition(condition: dict, cells: dict[int, str], columns: dict[int, TableColumn]) -> bool:
@@ -62,9 +67,13 @@ def _evaluate_condition(condition: dict, cells: dict[int, str], columns: dict[in
         except ValueError:
             raw_date = None
         today = date.today()
-        if operator == "today":     return raw_date == today
-        if operator == "yesterday": return raw_date == today - timedelta(days=1)
-        if operator == "tomorrow":  return raw_date == today + timedelta(days=1)
+        if operator == "today":          return raw_date == today
+        if operator == "yesterday":      return raw_date == today - timedelta(days=1)
+        if operator == "tomorrow":       return raw_date == today + timedelta(days=1)
+        if operator == "before_today":   return raw_date < today
+        if operator == "after_today":    return raw_date > today
+        if operator == "today_or_before": return raw_date <= today
+        if operator == "today_or_after":  return raw_date >= today
         if raw_date is None:
             return False
         try:
