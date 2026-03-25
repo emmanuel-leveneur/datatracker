@@ -1,6 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Mes tables — DataTracker{% endblock %}
 {% block content %}
+<!-- Overlay suppression permanente -->
+<div id="delete-overlay" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+  <div class="bg-white rounded-2xl shadow-2xl p-8 w-80 flex flex-col items-center gap-4">
+    <i data-lucide="loader" class="w-8 h-8 text-red-500 animate-spin"></i>
+    <div class="text-base font-semibold text-gray-700">Suppression en cours…</div>
+    <div class="text-sm text-gray-400">Veuillez patienter</div>
+  </div>
+</div>
+
 <div class="flex items-center justify-between gap-3 mb-6">
   <h1 class="text-2xl font-bold text-gray-800 shrink-0">Mes tables</h1>
   <div class="flex items-center gap-3 flex-1 justify-end">
@@ -113,7 +122,7 @@
           </button>
         </form>
         <form method="post" action="/tables/{{ table.id }}/delete-permanent"
-          onsubmit="return confirm('Supprimer définitivement « {{ table.name }} » et toutes ses données ?')">
+          data-table-name="{{ table.name }}" class="delete-permanent-form">
           <button type="submit" title="Supprimer définitivement"
             class="flex items-center justify-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-medium px-3 py-1.5 rounded-lg border border-red-200 transition">
             <i data-lucide="trash" class="w-4 h-4"></i>
@@ -153,6 +162,20 @@
 
 {% block scripts %}
 <script>
+(function () {
+  // Suppression permanente : confirmation + overlay
+  document.querySelectorAll('.delete-permanent-form').forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      var name = form.dataset.tableName || 'cette table';
+      if (!confirm('Supprimer définitivement « ' + name + ' » et toutes ses données ?')) {
+        e.preventDefault();
+        return;
+      }
+      document.getElementById('delete-overlay').classList.remove('hidden');
+    });
+  });
+})();
+
 (function () {
   var input = document.getElementById('table-search');
   if (!input) return;

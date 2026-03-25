@@ -159,7 +159,7 @@
 
     <!-- Actions -->
     <div class="flex gap-3">
-      <button type="submit"
+      <button id="import-submit-btn" type="submit"
               class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-lg transition flex items-center gap-2">
         <i data-lucide="table-2" class="w-4 h-4"></i>
         Créer la table et importer
@@ -170,6 +170,25 @@
       </a>
     </div>
   </form>
+</div>
+
+<!-- Overlay de progression d'import -->
+<div id="import-overlay" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+  <div class="bg-white rounded-2xl shadow-2xl p-8 w-96 flex flex-col items-center gap-5">
+    <div class="flex items-center gap-3 w-full">
+      <i data-lucide="loader" class="w-5 h-5 text-blue-600 animate-spin shrink-0"></i>
+      <span id="overlay-message" class="text-sm font-medium text-gray-700">Démarrage de l'import…</span>
+    </div>
+    <div class="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+      <div id="overlay-bar"
+           class="h-full bg-blue-600 rounded-full transition-all duration-300 ease-out"
+           style="width: 0%"></div>
+    </div>
+    <div class="flex justify-between w-full text-xs text-gray-400">
+      <span id="overlay-detail"></span>
+      <span id="overlay-percent">0 %</span>
+    </div>
+  </div>
 </div>
 
 {% endblock %}
@@ -189,5 +208,82 @@ function toggleColRow(idx, ignored) {
     });
   }
 }
+
+(function () {
+  var form = document.querySelector('form[action="/import-auto/confirm"]');
+  var overlay = document.getElementById('import-overlay');
+  var bar = document.getElementById('overlay-bar');
+  var msg = document.getElementById('overlay-message');
+  var pct = document.getElementById('overlay-percent');
+  var detail = document.getElementById('overlay-detail');
+  var btn = document.getElementById('import-submit-btn');
+  if (!form || !overlay) return;
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+
+    // Désactiver le bouton pour éviter le double-submit
+    btn.disabled = true;
+    overlay.classList.remove('hidden');
+
+    // Sérialiser le formulaire (gère les champs multiples comme col_name[])
+    var params = new URLSearchParams();
+    new FormData(form).forEach(function (v, k) { params.append(k, v); });
+
+    try {
+      var response = await fetch('/import-auto/confirm-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+      });
+
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+
+        // Traiter chaque ligne SSE complète
+        var lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (var line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          var evt;
+          try { evt = JSON.parse(line.slice(6)); } catch (_) { continue; }
+
+          if (evt.progress !== undefined) {
+            bar.style.width = evt.progress + '%';
+            pct.textContent = evt.progress + ' %';
+          }
+          if (evt.message) {
+            msg.textContent = evt.message;
+            detail.textContent = '';
+          }
+          if (evt.done && evt.redirect) {
+            bar.style.width = '100%';
+            pct.textContent = '100 %';
+            msg.textContent = 'Import terminé !';
+            setTimeout(function () { window.location.href = evt.redirect; }, 500);
+            return;
+          }
+          if (evt.error) {
+            overlay.classList.add('hidden');
+            btn.disabled = false;
+            alert('Erreur lors de l\'import :\n' + evt.error);
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      overlay.classList.add('hidden');
+      btn.disabled = false;
+      alert('Erreur de connexion : ' + err.message);
+    }
+  });
+})();
 </script>
 {% endblock %}
