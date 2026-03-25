@@ -7,6 +7,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+class AlertScope(str, enum.Enum):
+    PRIVATE = "private"
+    GLOBAL = "global"
+
+
 class ColumnType(str, enum.Enum):
     TEXT = "text"
     INTEGER = "integer"
@@ -161,6 +166,56 @@ class TableFavorite(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     table_id: Mapped[int] = mapped_column(ForeignKey("data_tables.id"), nullable=False)
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    table_id: Mapped[int] = mapped_column(Integer, nullable=False)  # pas de FK — survit à suppression table
+    created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    scope: Mapped[AlertScope] = mapped_column(Enum(AlertScope), default=AlertScope.PRIVATE)
+    conditions: Mapped[str] = mapped_column(Text, default="[]")  # JSON
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    created_by: Mapped["User"] = relationship()
+    states: Mapped[list["AlertState"]] = relationship(back_populates="alert", cascade="all, delete-orphan")
+
+
+class AlertState(Base):
+    __tablename__ = "alert_states"
+    __table_args__ = (UniqueConstraint("alert_id", "row_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    alert_id: Mapped[int] = mapped_column(ForeignKey("alerts.id"), nullable=False)
+    row_id: Mapped[int] = mapped_column(Integer, nullable=False)  # pas de FK — survit à suppression ligne
+    is_triggered: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    alert: Mapped["Alert"] = relationship(back_populates="states")
+
+
+class AlertNotification(Base):
+    __tablename__ = "alert_notifications"
+    __table_args__ = (
+        Index("ix_alert_notifications_user_id", "user_id"),
+        Index("ix_alert_notifications_created_at", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    alert_id: Mapped[int | None] = mapped_column(Integer, nullable=True)   # pas de FK — survit à suppression alerte
+    alert_name: Mapped[str] = mapped_column(String(128), default="")       # dénormalisé
+    row_id: Mapped[int | None] = mapped_column(Integer, nullable=True)     # pas de FK
+    table_id: Mapped[int | None] = mapped_column(Integer, nullable=True)   # pas de FK
+    table_name: Mapped[str] = mapped_column(String(128), default="")       # dénormalisé
+    message: Mapped[str] = mapped_column(Text, default="")
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    user: Mapped["User"] = relationship()
 
 
 class ActivityLog(Base):

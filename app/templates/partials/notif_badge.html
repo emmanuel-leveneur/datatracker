@@ -1,0 +1,5 @@
+{% if count > 0 %}
+<span class="w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center font-bold leading-none">
+  {{ count if count <= 99 else "99+" }}
+</span>
+{% endif %}

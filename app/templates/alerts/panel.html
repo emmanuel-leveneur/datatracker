@@ -1,0 +1,279 @@
+<!-- Panneau alertes (partial HTMX — pas d'extends base.html) -->
+<div class="flex items-center justify-between p-4 border-b bg-white sticky top-0 z-10">
+  <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-base">
+    <i data-lucide="bell" class="w-4 h-4 text-blue-600"></i>
+    Alertes
+    <span class="text-xs font-normal text-gray-400">({{ table.name }})</span>
+  </h2>
+  <button onclick="closeAlertsPanel()" class="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100 transition">
+    <i data-lucide="x" class="w-4 h-4"></i>
+  </button>
+</div>
+
+{% if flash_success %}
+<div class="mx-4 mt-3 p-2.5 bg-green-50 border border-green-200 text-green-700 rounded text-sm">
+  {{ flash_success }}
+</div>
+{% endif %}
+
+<!-- Liste des alertes existantes -->
+<div class="flex-1 overflow-y-auto p-4 space-y-2">
+  {% if alerts %}
+    {% for alert in alerts %}
+    <div class="border rounded-lg p-3 {% if alert.is_active %}bg-white border-gray-200{% else %}bg-gray-50 border-gray-100 opacity-60{% endif %}">
+      <div class="flex items-start justify-between gap-2">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="font-medium text-gray-800 text-sm truncate">{{ alert.name }}</span>
+            {% if alert.scope.value == 'global' %}
+            <span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Global</span>
+            {% else %}
+            <span class="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Privée</span>
+            {% endif %}
+            {% if not alert.is_active %}
+            <span class="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">Inactive</span>
+            {% endif %}
+          </div>
+          <!-- Conditions résumées -->
+          {% set conds = alert.conditions | from_json %}
+          {% set col_map = {} %}
+          {% for col in columns %}{% set _ = col_map.update({col.id: col.name}) %}{% endfor %}
+          <div class="mt-1 text-xs text-gray-500">
+            {% for c in conds %}
+              {% if not loop.first %}<span class="text-blue-500 font-medium">{{ c.logic }}</span>{% endif %}
+              <span>{{ col_map.get(c.col_id, '?') }} {{ c.operator }}{% if c.value %} {{ c.value }}{% endif %}</span>
+            {% endfor %}
+          </div>
+          <div class="mt-1.5 text-xs text-gray-400">
+            Par {{ alert.created_by.email.split('@')[0] }} — {{ alert.created_at.strftime('%d/%m/%Y') }}
+          </div>
+        </div>
+        <!-- Actions (créateur ou admin) -->
+        {% if user.is_admin or alert.created_by_id == user.id %}
+        <div class="flex items-center gap-1 shrink-0">
+          <form method="post" action="/tables/{{ table.id }}/alerts/{{ alert.id }}/toggle"
+                hx-post="/tables/{{ table.id }}/alerts/{{ alert.id }}/toggle"
+                hx-target="#alerts-panel-content" hx-swap="innerHTML">
+            <button type="submit"
+              title="{{ 'Désactiver' if alert.is_active else 'Activer' }}"
+              class="p-1.5 rounded hover:bg-gray-100 transition {% if alert.is_active %}text-green-600{% else %}text-gray-400{% endif %}">
+              <i data-lucide="{{ 'toggle-right' if alert.is_active else 'toggle-left' }}" class="w-4 h-4"></i>
+            </button>
+          </form>
+          <form method="post" action="/tables/{{ table.id }}/alerts/{{ alert.id }}/delete"
+                hx-post="/tables/{{ table.id }}/alerts/{{ alert.id }}/delete"
+                hx-target="#alerts-panel-content" hx-swap="innerHTML"
+                hx-confirm="Supprimer l'alerte « {{ alert.name }} » ?">
+            <button type="submit" title="Supprimer"
+              class="p-1.5 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+  <p class="text-sm text-gray-400 text-center py-4">Aucune alerte définie sur cette table.</p>
+  {% endif %}
+</div>
+
+<!-- Formulaire nouvelle alerte -->
+<div class="border-t p-4 bg-gray-50">
+  {% if not columns %}
+  <p class="text-xs text-gray-400 text-center">Ajoutez des colonnes à la table pour créer des alertes.</p>
+  {% else %}
+  <button id="btn-new-alert"
+    onclick="document.getElementById('alert-form-container').classList.toggle('hidden'); this.classList.toggle('hidden')"
+    class="w-full flex items-center justify-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-800 bg-white border border-blue-200 hover:border-blue-400 py-2 rounded-lg transition">
+    <i data-lucide="plus-circle" class="w-4 h-4"></i> Nouvelle alerte
+  </button>
+
+  <div id="alert-form-container" class="{{ '' if form_open else 'hidden' }} mt-3">
+    {% if form_errors %}
+    <div class="mb-3 p-2.5 bg-red-50 border border-red-200 text-red-700 rounded text-xs space-y-1">
+      {% for err in form_errors %}
+      <div>{{ err }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <form hx-post="/tables/{{ table.id }}/alerts"
+          hx-target="#alerts-panel-content"
+          hx-swap="innerHTML"
+          onsubmit="return validateAlertForm()"
+          class="space-y-3">
+
+      <!-- Nom -->
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1">Nom de l'alerte <span class="text-red-400">*</span></label>
+        <input type="text" name="name" placeholder="Ex: Montant élevé"
+          class="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          required maxlength="128">
+      </div>
+
+      <!-- Portée -->
+      {% if is_owner or user.is_admin %}
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1">Portée</label>
+        <select name="scope"
+          class="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+          <option value="private">Privée (moi uniquement)</option>
+          <option value="global">Globale (tous les utilisateurs)</option>
+        </select>
+      </div>
+      {% else %}
+      <input type="hidden" name="scope" value="private">
+      {% endif %}
+
+      <!-- Conditions -->
+      <div>
+        <div class="flex items-center justify-between mb-1.5">
+          <label class="text-xs font-medium text-gray-600">Conditions <span class="text-red-400">*</span></label>
+          <button type="button" onclick="addCondition()"
+            class="text-xs text-blue-600 hover:underline flex items-center gap-1">
+            <i data-lucide="plus" class="w-3 h-3"></i> Ajouter
+          </button>
+        </div>
+        <div id="conditions-list" class="space-y-2"></div>
+        <p id="max-cond-msg" class="text-xs text-gray-400 mt-1 hidden">Maximum 5 conditions atteint.</p>
+      </div>
+
+      <!-- Actions -->
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1">Actions</label>
+        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" name="notify_inapp" value="1" checked
+            class="rounded border-gray-300 text-blue-600">
+          Notification in-app
+        </label>
+      </div>
+
+      <div class="flex gap-2 pt-1">
+        <button type="submit"
+          class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded-lg transition">
+          Créer l'alerte
+        </button>
+        <button type="button"
+          onclick="document.getElementById('alert-form-container').classList.add('hidden'); document.getElementById('btn-new-alert').classList.remove('hidden')"
+          class="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-100 transition">
+          Annuler
+        </button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+(function() {
+  var activeConditions = 0;
+  var totalCreated = 0;
+  var MAX_CONDITIONS = 5;
+
+  var COLUMNS_DATA = {{ columns_json | safe }};
+
+  var OPERATORS = {
+    text:    [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
+    integer: [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
+    float:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
+    date:    [{v:"eq",l:"="}, {v:"before",l:"avant"}, {v:"after",l:"après"}, {v:"today",l:"aujourd'hui"}, {v:"yesterday",l:"hier"}, {v:"tomorrow",l:"demain"}],
+    select:  [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"in",l:"dans (virgules)"}, {v:"not_in",l:"pas dans (virgules)"}],
+    boolean: [{v:"is_true",l:"est vrai"}, {v:"is_false",l:"est faux"}],
+    email:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
+  };
+
+  var NO_VALUE_OPS = ["today", "yesterday", "tomorrow", "is_true", "is_false"];
+
+  var inputCls = "border border-gray-300 rounded px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400";
+
+  window.addCondition = function(defColId, defOp, defVal) {
+    if (activeConditions >= MAX_CONDITIONS) return;
+    var idx = totalCreated++;
+    activeConditions++;
+    var isFirst = (activeConditions === 1);
+
+    var colOptions = COLUMNS_DATA.map(function(c) {
+      return '<option value="' + c.id + '"' + (defColId == c.id ? ' selected' : '') + '>' + c.name + '</option>';
+    }).join('');
+
+    var firstCol = COLUMNS_DATA.find(function(c) { return c.id == (defColId || (COLUMNS_DATA[0] && COLUMNS_DATA[0].id)); });
+    var colType = firstCol ? firstCol.type : 'text';
+    var ops = OPERATORS[colType] || OPERATORS.text;
+    var opOptions = ops.map(function(op) {
+      return '<option value="' + op.v + '"' + (defOp == op.v ? ' selected' : '') + '>' + op.l + '</option>';
+    }).join('');
+
+    var logicHtml = isFirst
+      ? '<input type="hidden" name="logics" value="AND">'
+      : '<select name="logics" class="' + inputCls + ' w-full mb-1">' +
+          '<option value="AND">ET</option><option value="OR">OU</option>' +
+        '</select>';
+
+    var html = '<div class="condition-row bg-white border border-gray-200 rounded-lg p-2.5 space-y-1.5" data-idx="' + idx + '">' +
+      logicHtml +
+      '<select name="col_ids" class="' + inputCls + ' w-full" onchange="updateOperators(this,' + idx + ')">' +
+        colOptions +
+      '</select>' +
+      '<select name="operators" class="' + inputCls + ' w-full" id="op-' + idx + '" onchange="updateValueField(this,' + idx + ')">' +
+        opOptions +
+      '</select>' +
+      '<input type="text" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" placeholder="Valeur" class="' + inputCls + ' w-full">' +
+      '<button type="button" onclick="removeCondition(' + idx + ')" class="text-xs text-red-500 hover:underline">Supprimer</button>' +
+    '</div>';
+
+    document.getElementById('conditions-list').insertAdjacentHTML('beforeend', html);
+    updateValueField(document.getElementById('op-' + idx), idx);
+    document.getElementById('max-cond-msg').classList.toggle('hidden', activeConditions < MAX_CONDITIONS);
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  };
+
+  window.updateOperators = function(colSelect, idx) {
+    var colId = parseInt(colSelect.value);
+    var col = COLUMNS_DATA.find(function(c) { return c.id === colId; });
+    var colType = col ? col.type : 'text';
+    var ops = OPERATORS[colType] || OPERATORS.text;
+    var opSelect = document.getElementById('op-' + idx);
+    opSelect.innerHTML = ops.map(function(op) {
+      return '<option value="' + op.v + '">' + op.l + '</option>';
+    }).join('');
+    updateValueField(opSelect, idx);
+  };
+
+  window.updateValueField = function(opSelect, idx) {
+    var valInput = document.getElementById('val-' + idx);
+    if (!valInput) return;
+    if (NO_VALUE_OPS.indexOf(opSelect.value) !== -1) {
+      valInput.style.display = 'none';
+      valInput.value = '';
+    } else {
+      valInput.style.display = '';
+    }
+  };
+
+  window.removeCondition = function(idx) {
+    var row = document.querySelector('.condition-row[data-idx="' + idx + '"]');
+    if (row) { row.remove(); activeConditions--; }
+    document.getElementById('max-cond-msg').classList.toggle('hidden', activeConditions < MAX_CONDITIONS);
+  };
+
+  window.validateAlertForm = function() {
+    if (activeConditions === 0) {
+      alert('Ajoutez au moins une condition.');
+      return false;
+    }
+    return true;
+  };
+
+  {% if form_open %}
+  // Re-ouvrir le bouton "Nouvelle alerte" en mode hidden si le formulaire est déjà ouvert
+  var btnNew = document.getElementById('btn-new-alert');
+  if (btnNew) btnNew.classList.add('hidden');
+  {% endif %}
+
+  // Première condition par défaut
+  if (COLUMNS_DATA.length > 0) addCondition();
+})();
+</script>

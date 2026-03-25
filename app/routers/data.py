@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from app.activity import log_action
+from app.alerts import evaluate_alerts_for_row, get_alerted_row_ids
 from app.database import get_db
 from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
@@ -86,6 +87,8 @@ async def create_row(
     log_action(db, user, "create_row", "row",
                resource_id=row.id, resource_name=table.name, table_id=table.id,
                details=details)
+    db.flush()
+    evaluate_alerts_for_row(db, row, table)
     db.commit()
 
     if request.headers.get("HX-Request"):
@@ -109,6 +112,7 @@ async def create_row(
                 "user": user,
                 "can_write": can_write,
                 "col_readonly": col_readonly,
+                "alerted_row_ids": get_alerted_row_ids(db, table_id),
             },
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -192,6 +196,8 @@ async def update_row(
     log_action(db, user, "update_row", "row",
                resource_id=row.id, resource_name=table.name, table_id=table.id,
                details="\n".join(diff) if diff else "Aucune modification")
+    db.flush()
+    evaluate_alerts_for_row(db, row, table)
     db.commit()
 
     if request.headers.get("HX-Request"):
@@ -215,6 +221,7 @@ async def update_row(
                 "user": user,
                 "can_write": can_write,
                 "col_readonly": col_readonly,
+                "alerted_row_ids": get_alerted_row_ids(db, table_id),
             },
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -264,6 +271,7 @@ def trash_row(
                 "user": user,
                 "can_write": can_write,
                 "col_readonly": col_readonly,
+                "alerted_row_ids": get_alerted_row_ids(db, table_id),
             },
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -367,6 +375,8 @@ async def import_csv(
             col = col_map.get(csv_col.strip().lower())
             if col and not is_column_readonly(col, user, db):
                 db.add(CellValue(row_id=row.id, column_id=col.id, value=value or ""))
+        db.flush()
+        evaluate_alerts_for_row(db, row, table)
         imported += 1
 
     log_action(db, user, "import_csv", "row",
