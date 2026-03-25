@@ -57,6 +57,12 @@
   </div>
 </div>
 
+<!-- Écouteur refresh table (déclenché par HX-Trigger: refreshTable depuis le panneau alertes) -->
+<div hx-get="/tables/{{ table.id }}/rows"
+     hx-target="#table-body"
+     hx-swap="innerHTML"
+     hx-trigger="refreshTable from:body"></div>
+
 <!-- Row form area (HTMX) -->
 <div id="row-form-area" class="mb-4"></div>
 

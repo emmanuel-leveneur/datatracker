@@ -20,8 +20,10 @@
   <tbody class="divide-y divide-gray-100 bg-white">
     {% if rows_data %}
     {% for item in rows_data %}
-    {% set is_alerted = alerted_row_ids is defined and item.row.id in alerted_row_ids %}
-    <tr class="hover:bg-gray-50 transition" id="row-{{ item.row.id }}">
+    {% set is_alerted = alerted_rows is defined and item.row.id in alerted_rows %}
+    {% set row_data = alerted_rows[item.row.id] if is_alerted else None %}
+    <tr class="hover:bg-gray-50 transition" id="row-{{ item.row.id }}"
+        {% if is_alerted and row_data.row_style %}style="{{ row_data.row_style }}"{% endif %}>
       <!-- Indicateur alerte -->
       <td class="w-8 px-2 py-2.5 text-center">
         {% if is_alerted %}
@@ -31,7 +33,10 @@
         {% endif %}
       </td>
       {% for col in columns %}
-      <td class="px-4 py-2.5 text-gray-700 whitespace-nowrap max-w-[200px] truncate" title="{{ item.cells.get(col.id, '') }}">
+      {% set cell_style = row_data.cell_styles.get(col.id, '') if (is_alerted and row_data) else '' %}
+      <td class="px-4 py-2.5 text-gray-700 whitespace-nowrap max-w-[200px] truncate"
+          title="{{ item.cells.get(col.id, '') }}"
+          {% if cell_style %}style="{{ cell_style }}"{% endif %}>
         {% set val = item.cells.get(col.id, '') %}
         {% if col.col_type.value == 'boolean' %}
           {% if val == 'true' or val == '1' or val == 'True' %}

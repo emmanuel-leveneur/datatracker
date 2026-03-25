@@ -42,6 +42,9 @@ def _run_migrations():
         "table_rows": [
             ("deleted_at", "ALTER TABLE table_rows ADD COLUMN deleted_at DATETIME"),
         ],
+        "alerts": [
+            ("actions", "ALTER TABLE alerts ADD COLUMN actions TEXT DEFAULT '{}'"),
+        ],
     }
     with engine.connect() as conn:
         for table_name, columns in migrations_by_table.items():

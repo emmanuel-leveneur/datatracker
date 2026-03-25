@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from app.activity import log_action
-from app.alerts import evaluate_alerts_for_row, get_alerted_row_ids
+from app.alerts import evaluate_alerts_for_row, get_alert_row_data
 from app.database import get_db
 from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
@@ -28,6 +28,43 @@ def _row_details(row, columns) -> str:
     ]
     created = row.created_at.strftime("%d/%m/%Y %H:%M") if row.created_at else ""
     return f"Ligne #{row.id} avec {', '.join(parts)} créée le {created}"
+
+
+@router.get("/{table_id}/rows", response_class=HTMLResponse)
+def get_rows(
+    request: Request,
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retourne le partial table_rows.html (utilisé pour le refresh HTMX après création d'alerte)."""
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+    visible = get_visible_columns(table, user, db)
+    visible_ids = {c.id for c in visible}
+    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
+    rows = db.query(TableRow).filter(
+        TableRow.table_id == table_id, TableRow.deleted_at == None
+    ).order_by(TableRow.created_at.desc()).all()
+    rows_data = [
+        {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
+        for r in rows
+    ]
+    return templates.TemplateResponse(
+        request, "partials/table_rows.html",
+        {
+            "table": table,
+            "columns": visible,
+            "rows_data": rows_data,
+            "user": user,
+            "can_write": can_access_table(table, user, db, require_write=True),
+            "col_readonly": col_readonly,
+            "alerted_rows": get_alert_row_data(db, table_id),
+        },
+    )
 
 
 @router.get("/{table_id}/rows/new", response_class=HTMLResponse)
@@ -112,7 +149,7 @@ async def create_row(
                 "user": user,
                 "can_write": can_write,
                 "col_readonly": col_readonly,
-                "alerted_row_ids": get_alerted_row_ids(db, table_id),
+                "alerted_rows": get_alert_row_data(db, table_id),
             },
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -221,7 +258,7 @@ async def update_row(
                 "user": user,
                 "can_write": can_write,
                 "col_readonly": col_readonly,
-                "alerted_row_ids": get_alerted_row_ids(db, table_id),
+                "alerted_rows": get_alert_row_data(db, table_id),
             },
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -271,7 +308,7 @@ def trash_row(
                 "user": user,
                 "can_write": can_write,
                 "col_readonly": col_readonly,
-                "alerted_row_ids": get_alerted_row_ids(db, table_id),
+                "alerted_rows": get_alert_row_data(db, table_id),
             },
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)

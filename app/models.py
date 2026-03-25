@@ -176,7 +176,8 @@ class Alert(Base):
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     scope: Mapped[AlertScope] = mapped_column(Enum(AlertScope), default=AlertScope.PRIVATE)
-    conditions: Mapped[str] = mapped_column(Text, default="[]")  # JSON
+    conditions: Mapped[str] = mapped_column(Text, default="[]")   # JSON
+    actions: Mapped[str] = mapped_column(Text, default="{}")      # JSON
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

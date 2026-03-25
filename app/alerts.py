@@ -174,30 +174,41 @@ def evaluate_alerts_for_row(db: Session, row: TableRow, table: DataTable) -> Non
         if is_triggered_now:
             state.last_triggered_at = datetime.utcnow()
 
-        # Notifier uniquement si passage False → True
+        # Notifier uniquement si passage False → True ET notify_inapp activé
         if is_triggered_now and not was_triggered:
             try:
-                conditions = json.loads(alert.conditions)
+                actions = json.loads(alert.actions or "{}")
             except Exception:
-                conditions = []
-            message = _build_message(alert.name, conditions, col_names, table.name, row.id)
-            user_ids = _get_user_ids_to_notify(alert, table.id, db)
-            for uid in user_ids:
-                db.add(AlertNotification(
-                    user_id=uid,
-                    alert_id=alert.id,
-                    alert_name=alert.name,
-                    row_id=row.id,
-                    table_id=table.id,
-                    table_name=table.name,
-                    message=message,
-                ))
+                actions = {}
+            if actions.get("notify_inapp", True):
+                try:
+                    conditions = json.loads(alert.conditions)
+                except Exception:
+                    conditions = []
+                message = _build_message(alert.name, conditions, col_names, table.name, row.id)
+                user_ids = _get_user_ids_to_notify(alert, table.id, db)
+                for uid in user_ids:
+                    db.add(AlertNotification(
+                        user_id=uid,
+                        alert_id=alert.id,
+                        alert_name=alert.name,
+                        row_id=row.id,
+                        table_id=table.id,
+                        table_name=table.name,
+                        message=message,
+                    ))
 
 
-def get_alerted_row_ids(db: Session, table_id: int) -> set[int]:
-    """Retourne les IDs des lignes actuellement en alerte pour une table."""
-    states = (
-        db.query(AlertState.row_id)
+def get_alert_row_data(db: Session, table_id: int) -> dict[int, dict]:
+    """
+    Retourne un dict {row_id: {"row_style": str, "cell_styles": {col_id: str}}}
+    pour toutes les lignes actuellement en alerte sur une table.
+    Si plusieurs alertes s'appliquent à la même ligne, la première couleur trouvée gagne.
+    """
+    rows: dict[int, dict] = {}
+
+    pairs = (
+        db.query(AlertState, Alert)
         .join(Alert, AlertState.alert_id == Alert.id)
         .filter(
             Alert.table_id == table_id,
@@ -206,4 +217,40 @@ def get_alerted_row_ids(db: Session, table_id: int) -> set[int]:
         )
         .all()
     )
-    return {s.row_id for s in states}
+
+    for state, alert in pairs:
+        row_id = state.row_id
+        if row_id not in rows:
+            rows[row_id] = {"row_style": "", "cell_styles": {}}
+
+        try:
+            actions = json.loads(alert.actions or "{}")
+        except Exception:
+            actions = {}
+
+        hl = actions.get("highlight", {})
+        if not hl.get("enabled"):
+            continue
+
+        color = hl.get("color", "#fbbf24")
+        mode = hl.get("mode", "row")
+
+        if mode == "row":
+            if not rows[row_id]["row_style"]:
+                rows[row_id]["row_style"] = f"background-color:{color}"
+        elif mode == "cells":
+            try:
+                conditions = json.loads(alert.conditions or "[]")
+            except Exception:
+                conditions = []
+            for cond in conditions:
+                col_id = cond.get("col_id")
+                if col_id and col_id not in rows[row_id]["cell_styles"]:
+                    rows[row_id]["cell_styles"][col_id] = f"background-color:{color}"
+
+    return rows
+
+
+def get_alerted_row_ids(db: Session, table_id: int) -> set[int]:
+    """Wrapper conservé pour compatibilité."""
+    return set(get_alert_row_data(db, table_id).keys())

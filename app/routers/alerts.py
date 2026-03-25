@@ -1,12 +1,14 @@
 import json
+import re
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from app.alerts import evaluate_alerts_for_row
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
-from app.models import Alert, AlertNotification, AlertScope, AlertState, DataTable, User
+from app.models import Alert, AlertNotification, AlertScope, AlertState, DataTable, TableRow, User
 
 router = APIRouter(tags=["alerts"])
 templates = Jinja2Templates(directory="app/templates")
@@ -114,24 +116,55 @@ async def create_alert(
         ctx["form_open"] = True
         return templates.TemplateResponse(request, "alerts/panel.html", ctx)
 
+    # Actions
+    notify_inapp = form.get("notify_inapp") == "1"
+    hl_enabled = form.get("highlight_enabled") == "1"
+    hl_mode = str(form.get("highlight_mode", "row"))
+    hl_color = str(form.get("highlight_color", "#fbbf24"))
+    if not re.match(r'^#[0-9a-fA-F]{6}$', hl_color):
+        hl_color = "#fbbf24"
+    actions = {
+        "notify_inapp": notify_inapp,
+        "highlight": {
+            "enabled": hl_enabled,
+            "mode": hl_mode if hl_mode in ("row", "cells") else "row",
+            "color": hl_color,
+        },
+    }
+
     alert = Alert(
         table_id=table_id,
         created_by_id=user.id,
         name=name,
         scope=AlertScope(scope_val),
         conditions=json.dumps(conditions),
+        actions=json.dumps(actions),
         is_active=True,
     )
     db.add(alert)
     db.commit()
 
+    # Évaluation immédiate sur toutes les lignes existantes
+    # pour que les couleurs apparaissent sans attendre une modification
+    rows = db.query(TableRow).filter(
+        TableRow.table_id == table_id,
+        TableRow.deleted_at == None,
+    ).all()
+    for row in rows:
+        evaluate_alerts_for_row(db, row, table)
+    if rows:
+        db.commit()
+
     ctx = _panel_context(table, user, db)
     ctx["flash_success"] = f"Alerte « {name} » créée."
-    return templates.TemplateResponse(request, "alerts/panel.html", ctx)
+    response = templates.TemplateResponse(request, "alerts/panel.html", ctx)
+    response.headers["HX-Trigger"] = "refreshTable"
+    return response
 
 
-@router.post("/tables/{table_id}/alerts/{alert_id}/toggle")
+@router.post("/tables/{table_id}/alerts/{alert_id}/toggle", response_class=HTMLResponse)
 def toggle_alert(
+    request: Request,
     table_id: int,
     alert_id: int,
     user: User = Depends(get_current_user),
@@ -141,14 +174,27 @@ def toggle_alert(
     _check_alert_owner(alert, user)
     alert.is_active = not alert.is_active
     db.commit()
-    return RedirectResponse(
-        url=f"/tables/{table_id}/alerts/panel",
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
+
+    # Réévaluer toutes les lignes pour mettre à jour les états (couleurs + notifications)
+    table = db.get(DataTable, table_id)
+    if table:
+        rows = db.query(TableRow).filter(
+            TableRow.table_id == table_id, TableRow.deleted_at == None
+        ).all()
+        for row in rows:
+            evaluate_alerts_for_row(db, row, table)
+        if rows:
+            db.commit()
+
+    ctx = _panel_context(db.get(DataTable, table_id), user, db)
+    response = templates.TemplateResponse(request, "alerts/panel.html", ctx)
+    response.headers["HX-Trigger"] = "refreshTable"
+    return response
 
 
-@router.post("/tables/{table_id}/alerts/{alert_id}/delete")
+@router.post("/tables/{table_id}/alerts/{alert_id}/delete", response_class=HTMLResponse)
 def delete_alert(
+    request: Request,
     table_id: int,
     alert_id: int,
     user: User = Depends(get_current_user),
@@ -156,16 +202,17 @@ def delete_alert(
 ):
     alert = _get_alert_or_404(alert_id, db)
     _check_alert_owner(alert, user)
-    # Nullify alert_id in notifications (notifications survivent)
     db.query(AlertNotification).filter(AlertNotification.alert_id == alert_id).update(
         {AlertNotification.alert_id: None}
     )
     db.delete(alert)
     db.commit()
-    return RedirectResponse(
-        url=f"/tables/{table_id}/alerts/panel",
-        status_code=status.HTTP_303_SEE_OTHER,
-    )
+
+    table = db.get(DataTable, table_id)
+    ctx = _panel_context(table, user, db)
+    response = templates.TemplateResponse(request, "alerts/panel.html", ctx)
+    response.headers["HX-Trigger"] = "refreshTable"
+    return response
 
 
 # ── Notifications ─────────────────────────────────────────────────────────────

@@ -154,7 +154,7 @@ def table_detail(
     can_write = can_access_table(table, user, db, require_write=True)
 
     from app.dependencies import is_column_readonly
-    from app.alerts import get_alerted_row_ids
+    from app.alerts import get_alert_row_data
     col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
 
     return templates.TemplateResponse(
@@ -169,7 +169,7 @@ def table_detail(
             "can_write": can_write,
             "col_readonly": col_readonly,
             "column_types": COLUMN_TYPES,
-            "alerted_row_ids": get_alerted_row_ids(db, table.id),
+            "alerted_rows": get_alert_row_data(db, table.id),
         },
     )
 
