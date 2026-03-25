@@ -228,9 +228,6 @@ def get_alert_row_data(db: Session, table_id: int, user_id: int | None = None) -
         except Exception:
             actions = {}
 
-        if actions.get("notify_inapp", True):
-            rows[row_id]["has_notification"] = True
-
         hl = actions.get("highlight", {})
         if not hl.get("enabled"):
             continue
@@ -254,6 +251,20 @@ def get_alert_row_data(db: Session, table_id: int, user_id: int | None = None) -
                 col_id = cond.get("col_id")
                 if col_id and col_id not in rows[row_id]["cell_styles"]:
                     rows[row_id]["cell_styles"][col_id] = f"background-color:{color}"
+
+    # Badge cloche : visible uniquement si l'utilisateur a une notification non lue sur cette ligne
+    if user_id is not None and rows:
+        unread_row_ids = {
+            n.row_id
+            for n in db.query(AlertNotification.row_id).filter(
+                AlertNotification.user_id == user_id,
+                AlertNotification.table_id == table_id,
+                AlertNotification.is_read == False,
+                AlertNotification.row_id != None,
+            ).all()
+        }
+        for row_id in rows:
+            rows[row_id]["has_notification"] = row_id in unread_row_ids
 
     return rows
 
