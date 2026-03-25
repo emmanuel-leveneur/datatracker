@@ -156,23 +156,41 @@ function closeAlertsPanel() {
 (function() {
   var canWrite = {{ 'true' if can_write else 'false' }};
   var nbCols   = {{ columns | length }};
+  // Colonne 0 = alerte (non exportable) ; colonnes data = 1..nbCols ; actions = nbCols+1
+
+  // Boutons avec exclusion de la colonne alerte des exports
+  var exportOpts = { columns: ':not(.dt-no-export)' };
+  var DETAIL_BUTTONS = [
+    { extend: 'copy',   text: 'Copier',    exportOptions: exportOpts },
+    { extend: 'csv',    text: 'CSV',       exportOptions: exportOpts },
+    { extend: 'excel',  text: 'Excel',     exportOptions: exportOpts },
+    { extend: 'pdf',    text: 'PDF',       exportOptions: exportOpts },
+    { extend: 'print',  text: 'Imprimer',  exportOptions: exportOpts },
+    { extend: 'colvis', text: 'Colonnes',  columns: ':not(.dt-no-export)' }
+  ];
 
   function initMainTable() {
     if (!document.getElementById('main-table')) return;
     if ($.fn.DataTable.isDataTable('#main-table')) {
       $('#main-table').DataTable().destroy();
     }
+    // Col 0 = alerte, toujours non triable/cherchable
+    // Col -1 (actions) = non triable/cherchable si canWrite
+    var colDefs = [{ orderable: false, searchable: false, targets: 0 }];
+    if (canWrite) colDefs.push({ orderable: false, searchable: false, targets: -1 });
+
     var cfg = {
       dom: 'Bfrtip',
-      buttons: DT_BUTTONS,
+      buttons: DETAIL_BUTTONS,
       language: DT_LANG_FR,
+      columnDefs: colDefs,
       initComplete: function() {
-        dtColFilters(this.api(), canWrite ? [nbCols] : []);
+        // Skip col 0 (alerte) et la colonne actions
+        var skip = [0];
+        if (canWrite) skip.push(nbCols + 1);
+        dtColFilters(this.api(), skip);
       }
     };
-    if (canWrite) {
-      cfg.columnDefs = [{ orderable: false, searchable: false, targets: -1 }];
-    }
     $('#main-table').DataTable(cfg);
   }
 

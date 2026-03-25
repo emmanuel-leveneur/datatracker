@@ -1,6 +1,8 @@
 <table id="main-table" class="min-w-full divide-y divide-gray-200 text-sm">
   <thead class="bg-gray-50">
     <tr>
+      <!-- Colonne alerte : non exportable, non triable -->
+      <th class="dt-no-export w-8 px-2 py-3"></th>
       {% for col in columns %}
       <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
         {{ col.name }}
@@ -20,8 +22,15 @@
     {% for item in rows_data %}
     {% set is_alerted = alerted_row_ids is defined and item.row.id in alerted_row_ids %}
     <tr class="transition {% if is_alerted %}bg-amber-50 hover:bg-amber-100{% else %}hover:bg-gray-50{% endif %}"
-        id="row-{{ item.row.id }}"
-        {% if is_alerted %}title="Cette ligne déclenche une ou plusieurs alertes"{% endif %}>
+        id="row-{{ item.row.id }}">
+      <!-- Indicateur alerte -->
+      <td class="w-8 px-2 py-2.5 text-center">
+        {% if is_alerted %}
+        <span class="text-amber-500 inline-flex" title="Cette ligne déclenche une ou plusieurs alertes">
+          <i data-lucide="bell-ring" class="w-4 h-4"></i>
+        </span>
+        {% endif %}
+      </td>
       {% for col in columns %}
       <td class="px-4 py-2.5 text-gray-700 whitespace-nowrap max-w-[200px] truncate" title="{{ item.cells.get(col.id, '') }}">
         {% set val = item.cells.get(col.id, '') %}
@@ -40,11 +49,6 @@
       {% endfor %}
       {% if can_write %}
       <td class="px-4 py-2.5 text-right whitespace-nowrap">
-        {% if is_alerted %}
-        <span class="text-amber-500 inline-flex p-1 mr-1" title="Ligne en alerte">
-          <i data-lucide="bell-ring" class="w-4 h-4"></i>
-        </span>
-        {% endif %}
         <button
           hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/edit"
           hx-target="#row-form-area"
@@ -68,7 +72,7 @@
     {% endfor %}
     {% else %}
     <tr>
-      <td colspan="{{ columns | length + (1 if can_write else 0) }}" class="px-4 py-10 text-center text-gray-400">
+      <td colspan="{{ columns | length + 1 + (1 if can_write else 0) }}" class="px-4 py-10 text-center text-gray-400">
         Aucune donnée. {% if can_write %}Ajoutez une première ligne.{% endif %}
       </td>
     </tr>
@@ -76,6 +80,7 @@
   </tbody>
   <tfoot>
     <tr>
+      <th></th><!-- colonne alerte -->
       {% for col in columns %}<th></th>{% endfor %}
       {% if can_write %}<th></th>{% endif %}
     </tr>
