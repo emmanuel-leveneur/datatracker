@@ -27,7 +27,8 @@
       <!-- Indicateur alerte -->
       <td class="w-8 px-2 py-2.5 text-center">
         {% if is_alerted and row_data.has_notification %}
-        <span class="text-amber-500 inline-flex" title="Cette ligne déclenche une ou plusieurs alertes">
+        <span class="text-amber-500 inline-flex"
+              title="{% if row_data.notification_names %}{{ row_data.notification_names | join(' · ') }}{% else %}Alerte non lue{% endif %}">
           <i data-lucide="bell-ring" class="w-4 h-4"></i>
         </span>
         {% endif %}

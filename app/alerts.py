@@ -262,18 +262,25 @@ def get_alert_row_data(db: Session, table_id: int, user_id: int | None = None) -
                     rows[row_id]["cell_styles"][col_id] = f"background-color:{color}"
 
     # Badge cloche : visible uniquement si l'utilisateur a une notification non lue sur cette ligne
+    # On remonte aussi les noms des alertes responsables pour la tooltip.
     if user_id is not None and rows:
-        unread_row_ids = {
-            n.row_id
-            for n in db.query(AlertNotification.row_id).filter(
-                AlertNotification.user_id == user_id,
-                AlertNotification.table_id == table_id,
-                AlertNotification.is_read == False,
-                AlertNotification.row_id != None,
-            ).all()
-        }
+        unread_notifs = db.query(AlertNotification.row_id, AlertNotification.alert_name).filter(
+            AlertNotification.user_id == user_id,
+            AlertNotification.table_id == table_id,
+            AlertNotification.is_read == False,
+            AlertNotification.row_id != None,
+        ).all()
+        # Grouper les noms d'alertes par row_id (dédoublonnés)
+        notif_names: dict[int, list[str]] = {}
+        for row_id, alert_name in unread_notifs:
+            if row_id not in notif_names:
+                notif_names[row_id] = []
+            if alert_name and alert_name not in notif_names[row_id]:
+                notif_names[row_id].append(alert_name)
         for row_id in rows:
-            rows[row_id]["has_notification"] = row_id in unread_row_ids
+            names = notif_names.get(row_id, [])
+            rows[row_id]["has_notification"] = bool(names)
+            rows[row_id]["notification_names"] = names
 
     return rows
 
