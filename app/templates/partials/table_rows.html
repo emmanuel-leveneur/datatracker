@@ -21,8 +21,7 @@
     {% if rows_data %}
     {% for item in rows_data %}
     {% set is_alerted = alerted_row_ids is defined and item.row.id in alerted_row_ids %}
-    <tr class="transition {% if is_alerted %}bg-amber-50 hover:bg-amber-100{% else %}hover:bg-gray-50{% endif %}"
-        id="row-{{ item.row.id }}">
+    <tr class="hover:bg-gray-50 transition" id="row-{{ item.row.id }}">
       <!-- Indicateur alerte -->
       <td class="w-8 px-2 py-2.5 text-center">
         {% if is_alerted %}
