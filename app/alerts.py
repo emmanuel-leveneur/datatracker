@@ -221,12 +221,15 @@ def get_alert_row_data(db: Session, table_id: int) -> dict[int, dict]:
     for state, alert in pairs:
         row_id = state.row_id
         if row_id not in rows:
-            rows[row_id] = {"row_style": "", "cell_styles": {}}
+            rows[row_id] = {"row_style": "", "cell_styles": {}, "has_notification": False}
 
         try:
             actions = json.loads(alert.actions or "{}")
         except Exception:
             actions = {}
+
+        if actions.get("notify_inapp", True):
+            rows[row_id]["has_notification"] = True
 
         hl = actions.get("highlight", {})
         if not hl.get("enabled"):

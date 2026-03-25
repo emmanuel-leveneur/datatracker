@@ -26,7 +26,7 @@
         {% if is_alerted and row_data.row_style %}style="{{ row_data.row_style }}"{% endif %}>
       <!-- Indicateur alerte -->
       <td class="w-8 px-2 py-2.5 text-center">
-        {% if is_alerted %}
+        {% if is_alerted and row_data.has_notification %}
         <span class="text-amber-500 inline-flex" title="Cette ligne déclenche une ou plusieurs alertes">
           <i data-lucide="bell-ring" class="w-4 h-4"></i>
         </span>
