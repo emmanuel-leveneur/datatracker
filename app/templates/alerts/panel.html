@@ -43,11 +43,16 @@
           <!-- Conditions résumées -->
           {% set conds = alert.conditions | from_json %}
           {% set col_map = {} %}
-          {% for col in columns %}{% set _ = col_map.update({col.id: col.name}) %}{% endfor %}
+          {% set col_type_map = {} %}
+          {% for col in columns %}{% set _ = col_map.update({col.id: col.name}) %}{% set _ = col_type_map.update({col.id: col.col_type.value}) %}{% endfor %}
           <div class="mt-1 text-xs text-gray-500">
             {% for c in conds %}
               {% if not loop.first %}<span class="text-blue-500 font-medium">{{ c.logic }}</span>{% endif %}
-              <span>{{ col_map.get(c.col_id, '?') }} {{ c.operator }}{% if c.value %} {{ c.value }}{% endif %}</span>
+              {% set cval = c.value %}
+              {% if col_type_map.get(c.col_id) == 'date' and cval and cval | length >= 10 %}
+                {% set cval = cval[8:10] ~ '/' ~ cval[5:7] ~ '/' ~ cval[0:4] %}
+              {% endif %}
+              <span>{{ col_map.get(c.col_id, '?') }} {{ c.operator }}{% if cval %} {{ cval }}{% endif %}</span>
             {% endfor %}
           </div>
           <div class="mt-1.5 text-xs text-gray-400">
@@ -228,6 +233,17 @@
 
   var inputCls = "border border-gray-300 rounded px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400";
 
+  // Mémorise le type de colonne par condition (pour le changement dynamique d'input)
+  var condColTypes = {};
+
+  function buildValInput(idx, colType, defVal) {
+    var cls = inputCls + ' w-full';
+    if (colType === 'date') {
+      return '<input type="date" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" class="' + cls + '">';
+    }
+    return '<input type="text" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" placeholder="Valeur" class="' + cls + '">';
+  }
+
   window.addCondition = function(defColId, defOp, defVal) {
     if (activeConditions >= MAX_CONDITIONS) return;
     var idx = totalCreated++;
@@ -240,6 +256,7 @@
 
     var firstCol = COLUMNS_DATA.find(function(c) { return c.id == (defColId || (COLUMNS_DATA[0] && COLUMNS_DATA[0].id)); });
     var colType = firstCol ? firstCol.type : 'text';
+    condColTypes[idx] = colType;
     var ops = OPERATORS[colType] || OPERATORS.text;
     var opOptions = ops.map(function(op) {
       return '<option value="' + op.v + '"' + (defOp == op.v ? ' selected' : '') + '>' + op.l + '</option>';
@@ -259,7 +276,7 @@
       '<select name="operators" class="' + inputCls + ' w-full" id="op-' + idx + '" onchange="updateValueField(this,' + idx + ')">' +
         opOptions +
       '</select>' +
-      '<input type="text" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" placeholder="Valeur" class="' + inputCls + ' w-full">' +
+      buildValInput(idx, colType, defVal) +
       '<button type="button" onclick="removeCondition(' + idx + ')" class="text-xs text-red-500 hover:underline">Supprimer</button>' +
     '</div>';
 
@@ -279,6 +296,16 @@
     opSelect.innerHTML = ops.map(function(op) {
       return '<option value="' + op.v + '">' + op.l + '</option>';
     }).join('');
+    // Remplacer le champ valeur si le type de colonne a changé
+    if (condColTypes[idx] !== colType) {
+      condColTypes[idx] = colType;
+      var oldInput = document.getElementById('val-' + idx);
+      if (oldInput) {
+        var tmp = document.createElement('div');
+        tmp.innerHTML = buildValInput(idx, colType, '');
+        oldInput.parentNode.replaceChild(tmp.firstChild, oldInput);
+      }
+    }
     updateValueField(opSelect, idx);
   };
 

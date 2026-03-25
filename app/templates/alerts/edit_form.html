@@ -139,6 +139,17 @@
   var NO_VALUE_OPS = ["today", "yesterday", "tomorrow", "is_true", "is_false"];
   var inputCls = "border border-gray-300 rounded px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400";
 
+  // Mémorise le type de colonne par condition (pour le changement dynamique d'input)
+  var condColTypes = {};
+
+  function buildValInput(idx, colType, defVal) {
+    var cls = inputCls + ' w-full';
+    if (colType === 'date') {
+      return '<input type="date" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" class="' + cls + '">';
+    }
+    return '<input type="text" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" placeholder="Valeur" class="' + cls + '">';
+  }
+
   window.addCondition = function(defColId, defOp, defVal, defLogic) {
     if (activeConditions >= MAX_CONDITIONS) return;
     var idx = totalCreated++;
@@ -151,6 +162,7 @@
 
     var firstCol = COLUMNS_DATA.find(function(c) { return c.id == (defColId || (COLUMNS_DATA[0] && COLUMNS_DATA[0].id)); });
     var colType = firstCol ? firstCol.type : 'text';
+    condColTypes[idx] = colType;
     var ops = OPERATORS[colType] || OPERATORS.text;
     var opOptions = ops.map(function(op) {
       return '<option value="' + op.v + '"' + (defOp == op.v ? ' selected' : '') + '>' + op.l + '</option>';
@@ -165,7 +177,7 @@
       logicHtml +
       '<select name="col_ids" class="' + inputCls + ' w-full" onchange="updateOperators(this,' + idx + ')">' + colOptions + '</select>' +
       '<select name="operators" class="' + inputCls + ' w-full" id="op-' + idx + '" onchange="updateValueField(this,' + idx + ')">' + opOptions + '</select>' +
-      '<input type="text" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" placeholder="Valeur" class="' + inputCls + ' w-full">' +
+      buildValInput(idx, colType, defVal) +
       '<button type="button" onclick="removeCondition(' + idx + ')" class="text-xs text-red-500 hover:underline">Supprimer</button>' +
     '</div>';
 
@@ -178,9 +190,20 @@
   window.updateOperators = function(colSelect, idx) {
     var colId = parseInt(colSelect.value);
     var col = COLUMNS_DATA.find(function(c) { return c.id === colId; });
-    var ops = OPERATORS[col ? col.type : 'text'] || OPERATORS.text;
+    var colType = col ? col.type : 'text';
+    var ops = OPERATORS[colType] || OPERATORS.text;
     var opSelect = document.getElementById('op-' + idx);
     opSelect.innerHTML = ops.map(function(op) { return '<option value="' + op.v + '">' + op.l + '</option>'; }).join('');
+    // Remplacer le champ valeur si le type de colonne a changé
+    if (condColTypes[idx] !== colType) {
+      condColTypes[idx] = colType;
+      var oldInput = document.getElementById('val-' + idx);
+      if (oldInput) {
+        var tmp = document.createElement('div');
+        tmp.innerHTML = buildValInput(idx, colType, '');
+        oldInput.parentNode.replaceChild(tmp.firstChild, oldInput);
+      }
+    }
     updateValueField(opSelect, idx);
   };
 

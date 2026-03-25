@@ -34,10 +34,11 @@
       </td>
       {% for col in columns %}
       {% set cell_style = row_data.cell_styles.get(col.id, '') if (is_alerted and row_data) else '' %}
+      {% set val = item.cells.get(col.id, '') %}
+      {% set val_display = val[8:10] ~ '/' ~ val[5:7] ~ '/' ~ val[0:4] if (col.col_type.value == 'date' and val and val | length >= 10) else val %}
       <td class="px-4 py-2.5 text-gray-700 whitespace-nowrap max-w-[200px] truncate"
-          title="{{ item.cells.get(col.id, '') }}"
+          title="{{ val_display }}"
           {% if cell_style %}style="{{ cell_style }}"{% endif %}>
-        {% set val = item.cells.get(col.id, '') %}
         {% if col.col_type.value == 'boolean' %}
           {% if val == 'true' or val == '1' or val == 'True' %}
             <span class="inline-flex items-center gap-1 text-green-600"><span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span>Oui</span>
@@ -46,6 +47,8 @@
           {% endif %}
         {% elif col.col_type.value == 'email' and val %}
           <a href="mailto:{{ val }}" class="text-blue-600 hover:underline">{{ val }}</a>
+        {% elif col.col_type.value == 'date' and val and val | length >= 10 %}
+          {{ val[8:10] }}/{{ val[5:7] }}/{{ val[0:4] }}
         {% else %}
           {{ val }}
         {% endif %}

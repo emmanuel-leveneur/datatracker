@@ -111,8 +111,14 @@
           {% for item in trashed_rows_data %}
           <tr class="opacity-60 hover:opacity-100 transition">
             {% for col in columns %}
-            <td class="px-4 py-2.5 text-gray-500 whitespace-nowrap max-w-[200px] truncate line-through">
-              {{ item.cells.get(col.id, '') }}
+            {% set dval = item.cells.get(col.id, '') %}
+            <td class="px-4 py-2.5 text-gray-500 whitespace-nowrap max-w-[200px] truncate line-through"
+                title="{% if col.col_type.value == 'date' and dval and dval | length >= 10 %}{{ dval[8:10] }}/{{ dval[5:7] }}/{{ dval[0:4] }}{% else %}{{ dval }}{% endif %}">
+              {% if col.col_type.value == 'date' and dval and dval | length >= 10 %}
+                {{ dval[8:10] }}/{{ dval[5:7] }}/{{ dval[0:4] }}
+              {% else %}
+                {{ dval }}
+              {% endif %}
             </td>
             {% endfor %}
             {% if can_write %}
