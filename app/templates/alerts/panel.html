@@ -57,6 +57,14 @@
         <!-- Actions (créateur ou admin) -->
         {% if user.is_admin or alert.created_by_id == user.id %}
         <div class="flex items-center gap-1 shrink-0">
+          <button
+            hx-get="/tables/{{ table.id }}/alerts/{{ alert.id }}/edit-form"
+            hx-target="#alerts-panel-content"
+            hx-swap="innerHTML"
+            title="Modifier"
+            class="p-1.5 rounded hover:bg-blue-50 text-blue-400 hover:text-blue-600 transition">
+            <i data-lucide="pencil" class="w-4 h-4"></i>
+          </button>
           <form method="post" action="/tables/{{ table.id }}/alerts/{{ alert.id }}/toggle"
                 hx-post="/tables/{{ table.id }}/alerts/{{ alert.id }}/toggle"
                 hx-target="#alerts-panel-content" hx-swap="innerHTML">

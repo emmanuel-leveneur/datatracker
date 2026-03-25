@@ -162,6 +162,121 @@ async def create_alert(
     return response
 
 
+@router.get("/tables/{table_id}/alerts/{alert_id}/edit-form", response_class=HTMLResponse)
+def edit_alert_form(
+    request: Request,
+    table_id: int,
+    alert_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    alert = _get_alert_or_404(alert_id, db)
+    _check_alert_owner(alert, user)
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    columns_json = json.dumps([
+        {"id": col.id, "name": col.name, "type": col.col_type.value}
+        for col in table.columns
+    ])
+    return templates.TemplateResponse(request, "alerts/edit_form.html", {
+        "table": table,
+        "user": user,
+        "alert": alert,
+        "columns": table.columns,
+        "columns_json": columns_json,
+        "is_owner": is_table_owner(table, user, db),
+        "conditions_json": alert.conditions,
+        "actions_json": alert.actions or "{}",
+    })
+
+
+@router.post("/tables/{table_id}/alerts/{alert_id}/edit", response_class=HTMLResponse)
+async def update_alert(
+    request: Request,
+    table_id: int,
+    alert_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    alert = _get_alert_or_404(alert_id, db)
+    _check_alert_owner(alert, user)
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+
+    form = await request.form()
+    name = str(form.get("name", "")).strip()
+    scope_val = str(form.get("scope", "private"))
+    col_ids = form.getlist("col_ids")
+    operators = form.getlist("operators")
+    values = form.getlist("values")
+    logics = form.getlist("logics")
+
+    errors: list[str] = []
+    if not name:
+        errors.append("Le nom de l'alerte est obligatoire.")
+    conditions = _build_conditions(col_ids, operators, values, logics)
+    if not conditions:
+        errors.append("Au moins une condition est requise.")
+
+    if scope_val == "global" and not (user.is_admin or is_table_owner(table, user, db)):
+        scope_val = "private"
+
+    if errors:
+        columns_json = json.dumps([
+            {"id": col.id, "name": col.name, "type": col.col_type.value}
+            for col in table.columns
+        ])
+        return templates.TemplateResponse(request, "alerts/edit_form.html", {
+            "table": table,
+            "user": user,
+            "alert": alert,
+            "columns": table.columns,
+            "columns_json": columns_json,
+            "is_owner": is_table_owner(table, user, db),
+            "conditions_json": json.dumps(conditions) if conditions else alert.conditions,
+            "actions_json": alert.actions or "{}",
+            "form_errors": errors,
+        })
+
+    notify_inapp = form.get("notify_inapp") == "1"
+    hl_enabled = form.get("highlight_enabled") == "1"
+    hl_mode = str(form.get("highlight_mode", "row"))
+    hl_color = str(form.get("highlight_color", "#fbbf24"))
+    if not re.match(r'^#[0-9a-fA-F]{6}$', hl_color):
+        hl_color = "#fbbf24"
+    actions = {
+        "notify_inapp": notify_inapp,
+        "highlight": {
+            "enabled": hl_enabled,
+            "mode": hl_mode if hl_mode in ("row", "cells") else "row",
+            "color": hl_color,
+        },
+    }
+
+    alert.name = name
+    alert.scope = AlertScope(scope_val)
+    alert.conditions = json.dumps(conditions)
+    alert.actions = json.dumps(actions)
+    db.commit()
+
+    # Réévaluation sur toutes les lignes existantes
+    rows = db.query(TableRow).filter(
+        TableRow.table_id == table_id, TableRow.deleted_at == None
+    ).all()
+    for row in rows:
+        evaluate_alerts_for_row(db, row, table)
+    if rows:
+        db.commit()
+
+    ctx = _panel_context(table, user, db)
+    ctx["flash_success"] = f"Alerte « {name} » mise à jour."
+    response = templates.TemplateResponse(request, "alerts/panel.html", ctx)
+    response.headers["HX-Trigger"] = "refreshTable"
+    return response
+
+
 @router.post("/tables/{table_id}/alerts/{alert_id}/toggle", response_class=HTMLResponse)
 def toggle_alert(
     request: Request,

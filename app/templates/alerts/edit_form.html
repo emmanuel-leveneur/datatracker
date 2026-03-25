@@ -1,0 +1,210 @@
+<!-- Formulaire de modification d'alerte (partial HTMX dans #alerts-panel-content) -->
+<div class="flex items-center justify-between p-4 border-b bg-white sticky top-0 z-10">
+  <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-base">
+    <i data-lucide="pencil" class="w-4 h-4 text-blue-600"></i>
+    Modifier l'alerte
+  </h2>
+  <button
+    hx-get="/tables/{{ table.id }}/alerts/panel"
+    hx-target="#alerts-panel-content"
+    hx-swap="innerHTML"
+    class="text-gray-400 hover:text-gray-600 p-1 rounded hover:bg-gray-100 transition">
+    <i data-lucide="x" class="w-4 h-4"></i>
+  </button>
+</div>
+
+<div class="flex-1 overflow-y-auto p-4">
+  {% if form_errors %}
+  <div class="mb-3 p-2.5 bg-red-50 border border-red-200 text-red-700 rounded text-xs space-y-1">
+    {% for err in form_errors %}<div>{{ err }}</div>{% endfor %}
+  </div>
+  {% endif %}
+
+  <form hx-post="/tables/{{ table.id }}/alerts/{{ alert.id }}/edit"
+        hx-target="#alerts-panel-content"
+        hx-swap="innerHTML"
+        onsubmit="return validateAlertForm()"
+        class="space-y-3">
+
+    <!-- Nom -->
+    <div>
+      <label class="block text-xs font-medium text-gray-600 mb-1">Nom <span class="text-red-400">*</span></label>
+      <input type="text" name="name" value="{{ alert.name }}" required maxlength="128"
+        class="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+    </div>
+
+    <!-- Portée -->
+    {% if is_owner or user.is_admin %}
+    <div>
+      <label class="block text-xs font-medium text-gray-600 mb-1">Portée</label>
+      <select name="scope"
+        class="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+        <option value="private" {% if alert.scope.value == 'private' %}selected{% endif %}>Privée (moi uniquement)</option>
+        <option value="global"  {% if alert.scope.value == 'global'  %}selected{% endif %}>Globale (tous les utilisateurs)</option>
+      </select>
+    </div>
+    {% else %}
+    <input type="hidden" name="scope" value="{{ alert.scope.value }}">
+    {% endif %}
+
+    <!-- Conditions -->
+    <div>
+      <div class="flex items-center justify-between mb-1.5">
+        <label class="text-xs font-medium text-gray-600">Conditions <span class="text-red-400">*</span></label>
+        <button type="button" onclick="addCondition()"
+          class="text-xs text-blue-600 hover:underline flex items-center gap-1">
+          <i data-lucide="plus" class="w-3 h-3"></i> Ajouter
+        </button>
+      </div>
+      <div id="conditions-list" class="space-y-2"></div>
+      <p id="max-cond-msg" class="text-xs text-gray-400 mt-1 hidden">Maximum 5 conditions atteint.</p>
+    </div>
+
+    <!-- Actions -->
+    {% set act = actions_json | from_json %}
+    <div>
+      <label class="block text-xs font-medium text-gray-600 mb-1">Actions</label>
+      <div class="space-y-2">
+        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" name="notify_inapp" value="1"
+            {% if act.notify_inapp is not defined or act.notify_inapp %}checked{% endif %}
+            class="rounded border-gray-300 text-blue-600">
+          Notification in-app
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" name="highlight_enabled" value="1"
+            {% if act.highlight and act.highlight.enabled %}checked{% endif %}
+            class="rounded border-gray-300 text-blue-600"
+            onchange="document.getElementById('highlight-opts').classList.toggle('hidden', !this.checked)">
+          Mise en couleur
+        </label>
+        <div id="highlight-opts" class="{{ '' if (act.highlight and act.highlight.enabled) else 'hidden' }} pl-5 space-y-2">
+          <div class="flex gap-4">
+            <label class="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+              <input type="radio" name="highlight_mode" value="row"
+                {% if not act.highlight or act.highlight.mode == 'row' %}checked{% endif %}
+                class="text-blue-600"> Ligne entière
+            </label>
+            <label class="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+              <input type="radio" name="highlight_mode" value="cells"
+                {% if act.highlight and act.highlight.mode == 'cells' %}checked{% endif %}
+                class="text-blue-600"> Cellules de la condition
+            </label>
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="text-xs text-gray-600">Couleur</label>
+            <input type="color" name="highlight_color"
+              value="{{ act.highlight.color if act.highlight and act.highlight.color else '#fbbf24' }}"
+              class="w-8 h-8 rounded cursor-pointer border border-gray-200 p-0.5 bg-white">
+            <span class="text-xs text-gray-400">Cliquez pour choisir</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex gap-2 pt-1">
+      <button type="submit"
+        class="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded-lg transition">
+        Enregistrer
+      </button>
+      <button type="button"
+        hx-get="/tables/{{ table.id }}/alerts/panel"
+        hx-target="#alerts-panel-content"
+        hx-swap="innerHTML"
+        class="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-100 transition">
+        Annuler
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+(function() {
+  var activeConditions = 0;
+  var totalCreated = 0;
+  var MAX_CONDITIONS = 5;
+
+  var COLUMNS_DATA = {{ columns_json | safe }};
+  var EXISTING_CONDITIONS = {{ conditions_json | safe }};
+
+  var OPERATORS = {
+    text:    [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
+    integer: [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
+    float:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
+    date:    [{v:"eq",l:"="}, {v:"before",l:"avant"}, {v:"after",l:"après"}, {v:"today",l:"aujourd'hui"}, {v:"yesterday",l:"hier"}, {v:"tomorrow",l:"demain"}],
+    select:  [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"in",l:"dans (virgules)"}, {v:"not_in",l:"pas dans (virgules)"}],
+    boolean: [{v:"is_true",l:"est vrai"}, {v:"is_false",l:"est faux"}],
+    email:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
+  };
+  var NO_VALUE_OPS = ["today", "yesterday", "tomorrow", "is_true", "is_false"];
+  var inputCls = "border border-gray-300 rounded px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400";
+
+  window.addCondition = function(defColId, defOp, defVal, defLogic) {
+    if (activeConditions >= MAX_CONDITIONS) return;
+    var idx = totalCreated++;
+    activeConditions++;
+    var isFirst = (activeConditions === 1);
+
+    var colOptions = COLUMNS_DATA.map(function(c) {
+      return '<option value="' + c.id + '"' + (defColId == c.id ? ' selected' : '') + '>' + c.name + '</option>';
+    }).join('');
+
+    var firstCol = COLUMNS_DATA.find(function(c) { return c.id == (defColId || (COLUMNS_DATA[0] && COLUMNS_DATA[0].id)); });
+    var colType = firstCol ? firstCol.type : 'text';
+    var ops = OPERATORS[colType] || OPERATORS.text;
+    var opOptions = ops.map(function(op) {
+      return '<option value="' + op.v + '"' + (defOp == op.v ? ' selected' : '') + '>' + op.l + '</option>';
+    }).join('');
+
+    var logicVal = defLogic || 'AND';
+    var logicHtml = isFirst
+      ? '<input type="hidden" name="logics" value="AND">'
+      : '<select name="logics" class="' + inputCls + ' w-full mb-1"><option value="AND"' + (logicVal=='AND'?' selected':'') + '>ET</option><option value="OR"' + (logicVal=='OR'?' selected':'') + '>OU</option></select>';
+
+    var html = '<div class="condition-row bg-white border border-gray-200 rounded-lg p-2.5 space-y-1.5" data-idx="' + idx + '">' +
+      logicHtml +
+      '<select name="col_ids" class="' + inputCls + ' w-full" onchange="updateOperators(this,' + idx + ')">' + colOptions + '</select>' +
+      '<select name="operators" class="' + inputCls + ' w-full" id="op-' + idx + '" onchange="updateValueField(this,' + idx + ')">' + opOptions + '</select>' +
+      '<input type="text" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" placeholder="Valeur" class="' + inputCls + ' w-full">' +
+      '<button type="button" onclick="removeCondition(' + idx + ')" class="text-xs text-red-500 hover:underline">Supprimer</button>' +
+    '</div>';
+
+    document.getElementById('conditions-list').insertAdjacentHTML('beforeend', html);
+    updateValueField(document.getElementById('op-' + idx), idx);
+    document.getElementById('max-cond-msg').classList.toggle('hidden', activeConditions < MAX_CONDITIONS);
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  };
+
+  window.updateOperators = function(colSelect, idx) {
+    var colId = parseInt(colSelect.value);
+    var col = COLUMNS_DATA.find(function(c) { return c.id === colId; });
+    var ops = OPERATORS[col ? col.type : 'text'] || OPERATORS.text;
+    var opSelect = document.getElementById('op-' + idx);
+    opSelect.innerHTML = ops.map(function(op) { return '<option value="' + op.v + '">' + op.l + '</option>'; }).join('');
+    updateValueField(opSelect, idx);
+  };
+
+  window.updateValueField = function(opSelect, idx) {
+    var valInput = document.getElementById('val-' + idx);
+    if (!valInput) return;
+    valInput.style.display = NO_VALUE_OPS.indexOf(opSelect.value) !== -1 ? 'none' : '';
+    if (NO_VALUE_OPS.indexOf(opSelect.value) !== -1) valInput.value = '';
+  };
+
+  window.removeCondition = function(idx) {
+    var row = document.querySelector('.condition-row[data-idx="' + idx + '"]');
+    if (row) { row.remove(); activeConditions--; }
+    document.getElementById('max-cond-msg').classList.toggle('hidden', activeConditions < MAX_CONDITIONS);
+  };
+
+  window.validateAlertForm = function() {
+    if (activeConditions === 0) { alert('Ajoutez au moins une condition.'); return false; }
+    return true;
+  };
+
+  // Pré-remplissage des conditions existantes
+  EXISTING_CONDITIONS.forEach(function(c, i) {
+    addCondition(c.col_id, c.operator, c.value, i > 0 ? c.logic : null);
+  });
+})();
+</script>
