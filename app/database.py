@@ -1,7 +1,11 @@
+import os
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-DATABASE_URL = "sqlite:///./datatracker.db"
+# Base de données sur le filesystem natif WSL pour éviter les erreurs I/O SQLite sur NTFS
+_DB_PATH = os.path.join(os.path.expanduser("~"), "datatracker.db")
+DATABASE_URL = f"sqlite:///{_DB_PATH}"
 
 engine = create_engine(
     DATABASE_URL,
