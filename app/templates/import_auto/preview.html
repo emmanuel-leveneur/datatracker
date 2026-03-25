@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Vérifier l'import — DataTracker{% endblock %}
+{% block content %}
+
+<div class="max-w-5xl">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/import-auto/" class="text-gray-400 hover:text-gray-600 text-sm">← Retour</a>
+    <h1 class="text-xl font-bold text-gray-800">Vérifier l'import</h1>
+    <span class="text-sm text-gray-400">{{ filename }}</span>
+  </div>
+
+  {% if warning %}
+  <div class="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-sm flex items-start gap-2">
+    <i data-lucide="triangle-alert" class="w-4 h-4 shrink-0 mt-0.5"></i>
+    {{ warning }}
+  </div>
+  {% endif %}
+
+  <form action="/import-auto/confirm" method="post">
+    <input type="hidden" name="payload_json" value="{{ payload_json | e }}">
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+      <!-- Nom de la table -->
+      <div class="lg:col-span-2 bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+          Nom de la table
+        </label>
+        <input type="text" name="table_name" value="{{ default_name }}" required maxlength="128"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+      </div>
+      <!-- Résumé -->
+      <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex flex-col justify-center">
+        <div class="text-2xl font-bold text-gray-800">{{ total_rows }}</div>
+        <div class="text-xs text-gray-400">ligne(s) à importer</div>
+        <div class="text-2xl font-bold text-gray-800 mt-2">{{ headers | length }}</div>
+        <div class="text-xs text-gray-400">colonne(s) détectée(s)</div>
+      </div>
+    </div>
+
+    <!-- Sélecteur de feuille Excel -->
+    {% if is_excel and sheet_names | length > 1 %}
+    <div class="mb-4 bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+      <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+        Feuille Excel
+      </label>
+      <p class="text-xs text-gray-400 mb-2">Pour changer de feuille, retournez à l'étape précédente et re-uploadez en sélectionnant la feuille souhaitée.</p>
+      <div class="flex gap-2 flex-wrap">
+        {% for name in sheet_names %}
+        <span class="text-xs px-2 py-1 rounded-full {% if loop.index0 == sheet_index %}bg-blue-100 text-blue-700 font-medium{% else %}bg-gray-100 text-gray-500{% endif %}">
+          {{ name }}{% if loop.index0 == sheet_index %} ✓{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Tableau de configuration des colonnes -->
+    <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden mb-5">
+      <div class="px-4 py-3 border-b bg-gray-50 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-gray-700">Configuration des colonnes</h2>
+        <span class="text-xs text-gray-400">Modifiez les noms et types si nécessaire</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-50 border-b">
+            <tr>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-8">
+                <span title="Ignorer la colonne">Excl.</span>
+              </th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Nom de la colonne</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Type détecté</th>
+              <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Exemples de valeurs</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            {% for i in range(headers | length) %}
+            {% set col_type = col_types[i] %}
+            <tr class="hover:bg-gray-50 transition" id="col-row-{{ i }}">
+              <!-- Exclure -->
+              <td class="px-3 py-2.5 text-center">
+                <input type="checkbox" name="col_ignore" value="{{ i }}"
+                       onchange="toggleColRow({{ i }}, this.checked)"
+                       class="rounded border-gray-300 text-red-500">
+              </td>
+              <!-- Nom -->
+              <td class="px-3 py-2.5">
+                <input type="text" name="col_name" value="{{ headers[i] }}" maxlength="128"
+                       class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+              </td>
+              <!-- Type -->
+              <td class="px-3 py-2.5">
+                <select name="col_type"
+                        class="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                  {% for t in all_types %}
+                  <option value="{{ t }}" {% if t == col_type.value %}selected{% endif %}>
+                    {{ {"text":"Texte","integer":"Entier","float":"Décimal","date":"Date","boolean":"Oui/Non","email":"Email","select":"Liste"}[t] }}
+                  </option>
+                  {% endfor %}
+                </select>
+              </td>
+              <!-- Exemples -->
+              <td class="px-3 py-2.5 text-gray-500 text-xs">
+                {% set examples = [] %}
+                {% for row in preview_rows %}
+                  {% if row[i] and row[i] not in examples %}
+                    {% set _ = examples.append(row[i]) %}
+                  {% endif %}
+                {% endfor %}
+                <span class="line-clamp-1">{{ examples[:3] | join(' · ') or '—' }}</span>
+                {% if col_type.value == 'select' and select_options[i] %}
+                <div class="mt-0.5 text-gray-400">
+                  Liste : {{ select_options[i].split(',')[:5] | join(', ') }}{% if select_options[i].split(',') | length > 5 %}…{% endif %}
+                </div>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Aperçu des données -->
+    <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden mb-6">
+      <div class="px-4 py-3 border-b bg-gray-50">
+        <h2 class="text-sm font-semibold text-gray-700">
+          Aperçu des données
+          <span class="font-normal text-gray-400">({{ preview_rows | length }} première{{ 's' if preview_rows | length > 1 }} ligne{{ 's' if preview_rows | length > 1 }})</span>
+        </h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-xs">
+          <thead class="bg-gray-50 border-b">
+            <tr>
+              {% for h in headers %}
+              <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{{ h }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            {% for row in preview_rows %}
+            <tr class="hover:bg-gray-50">
+              {% for i in range(headers | length) %}
+              <td class="px-3 py-2 text-gray-600 whitespace-nowrap max-w-[180px] truncate">
+                {{ row[i] if i < row | length else '' }}
+              </td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if total_rows > preview_rows | length %}
+      <div class="px-4 py-2 border-t bg-gray-50 text-xs text-gray-400">
+        … et {{ total_rows - (preview_rows | length) }} ligne(s) supplémentaire(s)
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Actions -->
+    <div class="flex gap-3">
+      <button type="submit"
+              class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-lg transition flex items-center gap-2">
+        <i data-lucide="table-2" class="w-4 h-4"></i>
+        Créer la table et importer
+      </button>
+      <a href="/import-auto/"
+         class="px-5 py-2.5 text-sm text-gray-600 hover:text-gray-800 border border-gray-300 rounded-lg hover:bg-gray-100 transition">
+        Annuler
+      </a>
+    </div>
+  </form>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function toggleColRow(idx, ignored) {
+  var row = document.getElementById('col-row-' + idx);
+  if (ignored) {
+    row.classList.add('opacity-40');
+    row.querySelectorAll('input:not([type=checkbox]), select').forEach(function(el) {
+      el.disabled = true;
+    });
+  } else {
+    row.classList.remove('opacity-40');
+    row.querySelectorAll('input:not([type=checkbox]), select').forEach(function(el) {
+      el.disabled = false;
+    });
+  }
+}
+</script>
+{% endblock %}

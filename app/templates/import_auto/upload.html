@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Importer un fichier — DataTracker{% endblock %}
+{% block content %}
+
+<div class="max-w-lg mx-auto">
+  <div class="flex items-center gap-3 mb-6">
+    <a href="/tables/" class="text-gray-400 hover:text-gray-600 text-sm">← Tables</a>
+    <h1 class="text-xl font-bold text-gray-800">Créer une table depuis un fichier</h1>
+  </div>
+
+  {% if error %}
+  <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+    <form action="/import-auto/analyze" method="post" enctype="multipart/form-data" id="upload-form">
+      <!-- Zone de dépôt -->
+      <div id="drop-zone"
+           class="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition"
+           onclick="document.getElementById('file-input').click()">
+        <div class="flex justify-center mb-3">
+          <div class="w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center">
+            <i data-lucide="file-up" class="w-7 h-7 text-blue-500"></i>
+          </div>
+        </div>
+        <p class="text-sm font-medium text-gray-700">Glissez votre fichier ici</p>
+        <p class="text-xs text-gray-400 mt-1">ou cliquez pour sélectionner</p>
+        <p class="text-xs text-gray-400 mt-3">CSV (tout séparateur) · Excel (.xlsx)</p>
+        <p class="text-xs text-gray-300 mt-1">Max 10 Mo · 10 000 lignes</p>
+      </div>
+
+      <input type="file" id="file-input" name="file" accept=".csv,.xlsx,.xls,.xlsm,.txt"
+             class="hidden" onchange="onFileSelected(this)">
+      <input type="hidden" name="sheet_index" value="0">
+
+      <!-- Fichier sélectionné -->
+      <div id="file-info" class="hidden mt-4 flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+        <i data-lucide="file-text" class="w-5 h-5 text-blue-500 shrink-0"></i>
+        <span id="file-name" class="text-sm text-gray-700 truncate flex-1"></span>
+        <span id="file-size" class="text-xs text-gray-400 shrink-0"></span>
+      </div>
+
+      <button type="submit" id="submit-btn"
+              class="mt-5 w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg transition"
+              disabled>
+        Analyser le fichier
+      </button>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+var dropZone = document.getElementById('drop-zone');
+var fileInput = document.getElementById('file-input');
+var submitBtn = document.getElementById('submit-btn');
+var fileInfo  = document.getElementById('file-info');
+var fileName  = document.getElementById('file-name');
+var fileSize  = document.getElementById('file-size');
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' o';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' Ko';
+  return (bytes / 1024 / 1024).toFixed(1) + ' Mo';
+}
+
+function onFileSelected(input) {
+  if (!input.files.length) return;
+  var f = input.files[0];
+  fileName.textContent = f.name;
+  fileSize.textContent = formatSize(f.size);
+  fileInfo.classList.remove('hidden');
+  submitBtn.disabled = false;
+}
+
+// Drag & drop
+dropZone.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  dropZone.classList.add('border-blue-400', 'bg-blue-50/30');
+});
+dropZone.addEventListener('dragleave', function() {
+  dropZone.classList.remove('border-blue-400', 'bg-blue-50/30');
+});
+dropZone.addEventListener('drop', function(e) {
+  e.preventDefault();
+  dropZone.classList.remove('border-blue-400', 'bg-blue-50/30');
+  var dt = new DataTransfer();
+  dt.items.add(e.dataTransfer.files[0]);
+  fileInput.files = dt.files;
+  onFileSelected(fileInput);
+});
+</script>
+{% endblock %}
