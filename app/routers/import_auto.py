@@ -8,8 +8,9 @@ import json
 import os
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import insert as sa_insert
 from sqlalchemy.orm import Session
 
 from app.activity import log_action
@@ -249,13 +250,20 @@ async def confirm_import(
 
     db.flush()  # un seul flush pour obtenir tous les IDs
 
-    cell_values: list[CellValue] = []
+    cell_dicts: list[dict] = []
     for row, row_data in row_objects:
         for col_obj, col_def in zip(col_objects, final_cols):
             raw_val = row_data[col_def["orig_index"]] if col_def["orig_index"] < len(row_data) else ''
-            cell_values.append(CellValue(row_id=row.id, column_id=col_obj.id, value=normalize_value(raw_val, col_def["type"])))
+            cell_dicts.append({
+                "row_id": row.id,
+                "column_id": col_obj.id,
+                "value": normalize_value(raw_val, col_def["type"]),
+            })
 
-    db.add_all(cell_values)
+    # Insertion par lots pour éviter les erreurs I/O SQLite sur filesystem Windows/WSL
+    _CHUNK = 500
+    for i in range(0, len(cell_dicts), _CHUNK):
+        db.execute(sa_insert(CellValue), cell_dicts[i:i + _CHUNK])
     nb_inserted = len(row_objects)
 
     log_action(
@@ -271,3 +279,139 @@ async def confirm_import(
     db.commit()
 
     return RedirectResponse(url=f"/tables/{table.id}", status_code=303)
+
+
+# ── Étape 2 (SSE) : confirmation avec progression temps réel ──────────────────
+
+@router.post("/confirm-stream")
+async def confirm_import_stream(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Même logique que /confirm mais envoie des événements SSE pour la progression."""
+    form = await request.form()
+
+    table_name = str(form.get("table_name", "")).strip() or "Import"
+    table_name = _unique_table_name(db, table_name)
+    payload_json = str(form.get("payload_json", "{}"))
+
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        return RedirectResponse(url="/import-auto/", status_code=303)
+
+    headers: list[str] = payload.get("headers", [])
+    rows: list[list[str]] = payload.get("rows", [])
+    stored_types: list[str] = payload.get("col_types", [])
+    stored_options: list[str] = payload.get("select_options", [])
+
+    if not headers:
+        return RedirectResponse(url="/import-auto/", status_code=303)
+
+    col_names_override = form.getlist("col_name")
+    col_types_override = form.getlist("col_type")
+    col_ignore = set(form.getlist("col_ignore"))
+
+    final_cols: list[dict] = []
+    for i, header in enumerate(headers):
+        if str(i) in col_ignore:
+            continue
+        name = col_names_override[i].strip() if i < len(col_names_override) else header
+        type_val = col_types_override[i] if i < len(col_types_override) else stored_types[i] if i < len(stored_types) else "text"
+        try:
+            ct = ColumnType(type_val)
+        except ValueError:
+            ct = ColumnType.TEXT
+        opts = stored_options[i] if i < len(stored_options) else ''
+        final_cols.append({"orig_index": i, "name": name or header, "type": ct, "options": opts})
+
+    if not final_cols:
+        return RedirectResponse(url="/import-auto/", status_code=303)
+
+    def _evt(data: dict) -> str:
+        return f"data: {json.dumps(data)}\n\n"
+
+    async def generate():
+        try:
+            yield _evt({"progress": 5, "message": "Création de la table…"})
+
+            table = DataTable(name=table_name, created_by_id=user.id)
+            db.add(table)
+            db.flush()
+            db.add(TableOwner(table_id=table.id, user_id=user.id))
+
+            yield _evt({"progress": 15, "message": "Création des colonnes…"})
+
+            col_objects: list[TableColumn] = []
+            for order, col_def in enumerate(final_cols):
+                tc = TableColumn(
+                    table_id=table.id,
+                    name=col_def["name"],
+                    col_type=col_def["type"],
+                    order=order,
+                    required=False,
+                    select_options=col_def["options"] if col_def["type"] == ColumnType.SELECT else "",
+                )
+                db.add(tc)
+                col_objects.append(tc)
+            db.flush()
+
+            total_rows = len(rows[:MAX_ROWS])
+            yield _evt({"progress": 20, "message": f"Insertion de {total_rows:,} lignes…"})
+
+            row_objects: list[tuple] = []
+            for row_data in rows[:MAX_ROWS]:
+                row = TableRow(table_id=table.id, created_by_id=user.id)
+                db.add(row)
+                row_objects.append((row, row_data))
+            db.flush()
+
+            cell_dicts: list[dict] = []
+            for row, row_data in row_objects:
+                for col_obj, col_def in zip(col_objects, final_cols):
+                    raw_val = row_data[col_def["orig_index"]] if col_def["orig_index"] < len(row_data) else ''
+                    cell_dicts.append({
+                        "row_id": row.id,
+                        "column_id": col_obj.id,
+                        "value": normalize_value(raw_val, col_def["type"]),
+                    })
+
+            _CHUNK = 500
+            nb_cols = max(len(final_cols), 1)
+            total_cells = len(cell_dicts)
+
+            if total_cells == 0:
+                yield _evt({"progress": 95, "message": "Finalisation…"})
+            else:
+                for i in range(0, total_cells, _CHUNK):
+                    db.execute(sa_insert(CellValue), cell_dicts[i:i + _CHUNK])
+                    done_cells = min(i + _CHUNK, total_cells)
+                    done_rows = done_cells // nb_cols
+                    progress = 25 + int(done_cells / total_cells * 70)
+                    yield _evt({
+                        "progress": min(progress, 95),
+                        "message": f"{done_rows:,} / {total_rows:,} lignes importées…",
+                    })
+
+            log_action(
+                db, user,
+                action="import_auto",
+                resource_type="table",
+                resource_id=table.id,
+                resource_name=table_name,
+                details=f"{total_rows} ligne(s), {len(final_cols)} colonne(s) importées depuis fichier",
+                table_id=table.id,
+            )
+            db.commit()
+
+            yield _evt({"progress": 100, "done": True, "redirect": f"/tables/{table.id}"})
+
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            yield _evt({"error": str(e)})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")

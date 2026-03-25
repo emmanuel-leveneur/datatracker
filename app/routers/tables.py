@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.orm import Session
 from app.activity import log_action
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
-from app.models import ColumnType, DataTable, TableColumn, TableFavorite, TableOwner, TablePermission, User
+from app.models import CellValue, ColumnType, DataTable, TableColumn, TableFavorite, TableOwner, TablePermission, TableRow, User
 
 router = APIRouter(prefix="/tables", tags=["tables"])
 templates = Jinja2Templates(directory="app/templates")
@@ -338,6 +339,17 @@ def delete_table_permanent(
         raise HTTPException(status_code=400, detail="La table doit d'abord être mise à la corbeille")
     log_action(db, user, "delete_table", "table",
                resource_id=table.id, resource_name=table.name, table_id=table.id)
-    db.delete(table)
+
+    # Suppression en masse via SQL pour éviter N DELETE ORM sur les cellules et lignes.
+    # Les IDs sont matérialisés en Python pour éviter les sous-requêtes temporaires SQLite
+    # qui causent des erreurs I/O sur filesystem Windows/WSL.
+    row_ids = [r[0] for r in db.execute(select(TableRow.id).where(TableRow.table_id == table.id)).fetchall()]
+    if row_ids:
+        _CHUNK = 500
+        for i in range(0, len(row_ids), _CHUNK):
+            db.execute(sa_delete(CellValue).where(CellValue.row_id.in_(row_ids[i:i + _CHUNK])))
+    db.execute(sa_delete(TableRow).where(TableRow.table_id == table.id))
+
+    db.delete(table)  # supprime colonnes, permissions, owners via cascade ORM (peu nombreux)
     db.commit()
     return RedirectResponse(url="/tables/", status_code=status.HTTP_303_SEE_OTHER)
