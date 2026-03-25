@@ -199,7 +199,7 @@ def evaluate_alerts_for_row(db: Session, row: TableRow, table: DataTable) -> Non
                     ))
 
 
-def get_alert_row_data(db: Session, table_id: int) -> dict[int, dict]:
+def get_alert_row_data(db: Session, table_id: int, user_id: int | None = None) -> dict[int, dict]:
     """
     Retourne un dict {row_id: {"row_style": str, "cell_styles": {col_id: str}}}
     pour toutes les lignes actuellement en alerte sur une table.
@@ -233,6 +233,10 @@ def get_alert_row_data(db: Session, table_id: int) -> dict[int, dict]:
 
         hl = actions.get("highlight", {})
         if not hl.get("enabled"):
+            continue
+
+        # Portée : privée → uniquement le créateur ; globale → tout le monde
+        if alert.scope == AlertScope.PRIVATE and user_id is not None and alert.created_by_id != user_id:
             continue
 
         color = hl.get("color", "#fbbf24")

@@ -169,7 +169,7 @@ def table_detail(
             "can_write": can_write,
             "col_readonly": col_readonly,
             "column_types": COLUMN_TYPES,
-            "alerted_rows": get_alert_row_data(db, table.id),
+            "alerted_rows": get_alert_row_data(db, table.id, user.id),
         },
     )
 

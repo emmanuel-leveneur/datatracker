@@ -62,7 +62,7 @@ def get_rows(
             "user": user,
             "can_write": can_access_table(table, user, db, require_write=True),
             "col_readonly": col_readonly,
-            "alerted_rows": get_alert_row_data(db, table_id),
+            "alerted_rows": get_alert_row_data(db, table_id, user.id),
         },
     )
 
@@ -149,7 +149,7 @@ async def create_row(
                 "user": user,
                 "can_write": can_write,
                 "col_readonly": col_readonly,
-                "alerted_rows": get_alert_row_data(db, table_id),
+                "alerted_rows": get_alert_row_data(db, table_id, user.id),
             },
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -258,7 +258,7 @@ async def update_row(
                 "user": user,
                 "can_write": can_write,
                 "col_readonly": col_readonly,
-                "alerted_rows": get_alert_row_data(db, table_id),
+                "alerted_rows": get_alert_row_data(db, table_id, user.id),
             },
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -308,7 +308,7 @@ def trash_row(
                 "user": user,
                 "can_write": can_write,
                 "col_readonly": col_readonly,
-                "alerted_rows": get_alert_row_data(db, table_id),
+                "alerted_rows": get_alert_row_data(db, table_id, user.id),
             },
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
