@@ -69,6 +69,7 @@
           hx-post="/tables/{{ table.id }}/rows/{{ item.row.id }}/delete?page={{ page | default(1) }}"
           hx-target="#table-body"
           hx-swap="innerHTML"
+          hx-include="#filters-zone"
           hx-confirm="Mettre cette ligne à la corbeille ?"
           title="Mettre à la corbeille"
           class="text-red-400 hover:text-red-600 p-1.5 rounded hover:bg-red-50 transition inline-flex">
@@ -88,8 +89,23 @@
   </tbody>
   <tfoot>
     <tr>
-      <th></th><!-- colonne alerte -->
-      {% for col in columns %}<th></th>{% endfor %}
+      <th></th><!-- colonne alerte : pas de filtre -->
+      {% for col in columns %}
+      <th class="px-2 py-2">
+        <input
+          type="text"
+          name="col_{{ col.id }}"
+          value="{{ (col_filters | default({})).get(col.id | string, '') }}"
+          placeholder="Filtrer…"
+          autocomplete="off"
+          hx-get="/tables/{{ table.id }}/rows"
+          hx-target="#table-body"
+          hx-trigger="input changed delay:350ms"
+          hx-include="#filters-zone"
+          class="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-600 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400 font-normal"
+        />
+      </th>
+      {% endfor %}
       {% if can_write %}<th></th>{% endif %}
     </tr>
   </tfoot>
@@ -98,24 +114,30 @@
 {% set _total_pages = total_pages | default(1) %}
 {% set _page = page | default(1) %}
 {% set _total_count = total_count | default(0) %}
-{% if _total_pages > 1 %}
-<div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50 text-sm">
-  <span class="text-gray-500">
-    {{ _total_count }} ligne(s) &nbsp;·&nbsp; page {{ _page }} / {{ _total_pages }}
-  </span>
+<div class="flex items-center justify-between px-4 py-2.5 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
+  <span>{{ _total_count }} ligne(s){% if _total_pages > 1 %} &nbsp;·&nbsp; page {{ _page }} / {{ _total_pages }}{% endif %}</span>
+  {% if _total_pages > 1 %}
   <div class="flex items-center gap-2">
     {% if _page > 1 %}
-    <a href="/tables/{{ table.id }}?page={{ _page - 1 }}"
-       class="px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition text-xs">
+    <button
+      hx-get="/tables/{{ table.id }}/rows"
+      hx-target="#table-body"
+      hx-include="#filters-zone"
+      hx-vals='{"page": {{ _page - 1 }}}'
+      class="px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition">
       ← Précédent
-    </a>
+    </button>
     {% endif %}
     {% if _page < _total_pages %}
-    <a href="/tables/{{ table.id }}?page={{ _page + 1 }}"
-       class="px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition text-xs">
+    <button
+      hx-get="/tables/{{ table.id }}/rows"
+      hx-target="#table-body"
+      hx-include="#filters-zone"
+      hx-vals='{"page": {{ _page + 1 }}}'
+      class="px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition">
       Suivant →
-    </a>
+    </button>
     {% endif %}
   </div>
+  {% endif %}
 </div>
-{% endif %}

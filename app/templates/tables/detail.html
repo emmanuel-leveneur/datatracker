@@ -68,10 +68,27 @@
 
 <!-- Table data -->
 {% if columns %}
-<div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-  <div class="overflow-x-auto">
-    <div id="table-body">
-      {% include "partials/table_rows.html" %}
+<div id="filters-zone">
+  <!-- Recherche globale -->
+  <div class="mb-3">
+    <input
+      type="search"
+      name="q"
+      value="{{ q | default('') }}"
+      placeholder="Rechercher dans toutes les colonnes…"
+      autocomplete="off"
+      hx-get="/tables/{{ table.id }}/rows"
+      hx-target="#table-body"
+      hx-trigger="input changed delay:350ms, search"
+      hx-include="#filters-zone"
+      class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+    />
+  </div>
+  <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+    <div class="overflow-x-auto">
+      <div id="table-body">
+        {% include "partials/table_rows.html" %}
+      </div>
     </div>
   </div>
 </div>
@@ -192,18 +209,13 @@ function closeAlertsPanel() {
     if (canWrite) colDefs.push({ orderable: false, searchable: false, targets: -1 });
 
     var cfg = {
-      dom: 'Bfrtip',
+      dom: 'Brt',
       buttons: DETAIL_BUTTONS,
       language: DT_LANG_FR,
       order: [],
-      paging: false,       // pagination gérée côté serveur
+      paging: false,      // pagination gérée côté serveur
+      searching: false,   // recherche gérée côté serveur
       columnDefs: colDefs,
-      initComplete: function() {
-        // Skip col 0 (alerte) et la colonne actions
-        var skip = [0];
-        if (canWrite) skip.push(nbCols + 1);
-        dtColFilters(this.api(), skip);
-      }
     };
     $('#main-table').DataTable(cfg);
   }

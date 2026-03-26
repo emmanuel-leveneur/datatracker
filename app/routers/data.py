@@ -19,27 +19,63 @@ templates = Jinja2Templates(directory="app/templates")
 PAGE_SIZE = 100  # lignes affichées par page
 
 
-def _rows_template_ctx(db: Session, table, user, page: int = 1) -> dict:
-    """Construit le contexte commun pour le rendu de partials/table_rows.html."""
+def _rows_template_ctx(
+    db: Session,
+    table,
+    user,
+    page: int = 1,
+    q: str = "",
+    col_filters: dict | None = None,
+) -> dict:
+    """Construit le contexte commun pour le rendu de partials/table_rows.html.
+
+    q            : recherche globale sur toutes les colonnes visibles
+    col_filters  : dict {str(col_id): valeur} pour filtres par colonne
+    """
+    col_filters = col_filters or {}
     visible = get_visible_columns(table, user, db)
     visible_ids = {c.id for c in visible}
     col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
 
-    total_count: int = db.query(TableRow).filter(
+    # Construction du filtre progressif via sous-requêtes
+    base = db.query(TableRow).filter(
         TableRow.table_id == table.id, TableRow.deleted_at == None
-    ).count()
+    )
 
-    rows = db.query(TableRow).options(
+    if q:
+        matching_subq = db.query(CellValue.row_id).filter(
+            CellValue.value.ilike(f"%{q}%"),
+            CellValue.column_id.in_(visible_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val or not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_ids:
+            continue
+        col_subq = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col_id,
+            CellValue.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    total_count: int = base.count()
+    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = min(max(1, page), total_pages)
+
+    rows = base.options(
         subqueryload(TableRow.cell_values)
-    ).filter(
-        TableRow.table_id == table.id, TableRow.deleted_at == None
     ).order_by(TableRow.created_at.desc()).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE).all()
 
     rows_data = [
         {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
         for r in rows
     ]
-    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
 
     return {
         "table": table,
@@ -53,6 +89,8 @@ def _rows_template_ctx(db: Session, table, user, page: int = 1) -> dict:
         "total_pages": total_pages,
         "total_count": total_count,
         "page_size": PAGE_SIZE,
+        "q": q,
+        "col_filters": col_filters,
     }
 
 
@@ -69,23 +107,30 @@ def _row_details(row, columns) -> str:
     return f"Ligne #{row.id} avec {', '.join(parts)} créée le {created}"
 
 
+def _parse_col_filters(params: dict) -> dict:
+    """Extrait les filtres par colonne d'un dict de paramètres (query ou form)."""
+    return {k[4:]: str(v) for k, v in params.items() if k.startswith("col_") and v}
+
+
 @router.get("/{table_id}/rows", response_class=HTMLResponse)
 def get_rows(
     request: Request,
     table_id: int,
     page: int = Query(1, ge=1),
+    q: str = Query(""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Retourne le partial table_rows.html (utilisé pour le refresh HTMX après création d'alerte)."""
+    """Retourne le partial table_rows.html (HTMX : refresh, recherche, filtre colonne, pagination)."""
     table = db.get(DataTable, table_id)
     if not table:
         raise HTTPException(status_code=404)
     if not can_access_table(table, user, db):
         raise HTTPException(status_code=403)
+    col_filters = _parse_col_filters(dict(request.query_params))
     return templates.TemplateResponse(
         request, "partials/table_rows.html",
-        _rows_template_ctx(db, table, user, page),
+        _rows_template_ctx(db, table, user, page, q, col_filters),
     )
 
 
@@ -151,10 +196,12 @@ async def create_row(
     db.commit()
 
     if request.headers.get("HX-Request"):
-        # Page 1 : la nouvelle ligne apparaît en tête (tri created_at desc)
+        # Page 1 : la nouvelle ligne apparaît en tête (tri created_at desc) ; filtres préservés
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            _rows_template_ctx(db, table, user, page=1),
+            _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -242,15 +289,17 @@ async def update_row(
     db.commit()
 
     if request.headers.get("HX-Request"):
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            _rows_template_ctx(db, table, user, page=1),
+            _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{table_id}/rows/{row_id}/delete")
-def trash_row(
+async def trash_row(
     request: Request,
     table_id: int,
     row_id: int,
@@ -274,9 +323,12 @@ def trash_row(
     db.commit()
 
     if request.headers.get("HX-Request"):
+        form = await request.form()
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            _rows_template_ctx(db, table, user, page=page),
+            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 

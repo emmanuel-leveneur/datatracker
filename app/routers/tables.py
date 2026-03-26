@@ -124,6 +124,7 @@ PAGE_SIZE = 100  # lignes affichées par page
 def table_detail(
     request: Request,
     page: int = Query(1, ge=1),
+    q: str = Query(""),
     table: DataTable = Depends(get_table_or_404),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -138,16 +139,41 @@ def table_detail(
     visible_cols = get_visible_columns(table, user, db)
     visible_col_ids = {c.id for c in visible_cols}
 
-    total_count: int = db.query(TableRow).filter(
-        TableRow.table_id == table.id, TableRow.deleted_at == None
-    ).count()
-    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
-    page = min(page, total_pages)
+    # Filtres par colonne depuis les query params (?col_123=val)
+    col_filters = {k[4:]: v for k, v in request.query_params.items() if k.startswith("col_") and v}
 
-    rows = db.query(TableRow).options(
-        subqueryload(TableRow.cell_values)
-    ).filter(
+    base = db.query(TableRow).filter(
         TableRow.table_id == table.id, TableRow.deleted_at == None
+    )
+    if q:
+        from app.models import CellValue as CV
+        matching_subq = db.query(CV.row_id).filter(
+            CV.value.ilike(f"%{q}%"),
+            CV.column_id.in_(visible_col_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_col_ids:
+            continue
+        from app.models import CellValue as CV
+        col_subq = db.query(CV.row_id).filter(
+            CV.column_id == col_id,
+            CV.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    total_count: int = base.count()
+    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = min(max(1, page), total_pages)
+
+    rows = base.options(
+        subqueryload(TableRow.cell_values)
     ).order_by(TableRow.created_at.desc()).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE).all()
 
     rows_data = [
@@ -189,6 +215,8 @@ def table_detail(
             "total_pages": total_pages,
             "total_count": total_count,
             "page_size": PAGE_SIZE,
+            "q": q,
+            "col_filters": col_filters,
         },
     )
 
