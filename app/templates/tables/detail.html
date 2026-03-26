@@ -52,6 +52,24 @@
 <!-- Panneau alertes -->
 <div id="alerts-overlay" class="fixed inset-0 bg-black bg-opacity-30 z-30 hidden" onclick="closeAlertsPanel()"></div>
 <div id="alerts-panel" class="fixed inset-y-0 right-0 w-80 bg-white shadow-2xl z-40 hidden flex flex-col overflow-hidden">
+  <!-- Overlay de traitement (affiché pendant save/toggle) -->
+  <div id="alert-saving-overlay" class="hidden absolute inset-0 bg-white bg-opacity-95 z-50 flex flex-col items-center justify-center gap-4">
+    <svg class="animate-spin w-9 h-9 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+    </svg>
+    <div class="text-center px-6">
+      <p class="text-sm font-semibold text-gray-700">Enregistrement en cours…</p>
+      <p class="text-xs text-gray-400 mt-1">Évaluation des alertes sur toutes les lignes de la table</p>
+    </div>
+    <!-- Messages progressifs — révélés par JS après délai -->
+    <p id="alert-msg-1" class="text-xs text-gray-400 italic px-6 text-center opacity-0 transition-opacity duration-700">
+      L'évaluation peut prendre quelques secondes selon le volume de données.
+    </p>
+    <p id="alert-msg-2" class="text-xs text-amber-500 italic px-6 text-center opacity-0 transition-opacity duration-700">
+      Toujours en cours… merci de patienter.
+    </p>
+  </div>
   <div id="alerts-panel-content" class="flex flex-col h-full overflow-hidden">
     <!-- chargé par HTMX -->
   </div>
@@ -192,6 +210,53 @@ function clearAllFilters(tableId) {
     swap: 'innerHTML'
   });
 }
+// Overlay de traitement des alertes
+(function() {
+  var _t1 = null, _t2 = null;
+
+  function showAlertOverlay() {
+    var o = document.getElementById('alert-saving-overlay');
+    if (!o) return;
+    // Réinitialise les messages progressifs
+    var m1 = document.getElementById('alert-msg-1');
+    var m2 = document.getElementById('alert-msg-2');
+    if (m1) m1.style.opacity = '0';
+    if (m2) m2.style.opacity = '0';
+    o.classList.remove('hidden');
+    // Message 1 après 3s
+    _t1 = setTimeout(function() {
+      if (m1) m1.style.opacity = '1';
+    }, 3000);
+    // Message 2 après 8s
+    _t2 = setTimeout(function() {
+      if (m2) m2.style.opacity = '1';
+    }, 8000);
+  }
+
+  function hideAlertOverlay() {
+    clearTimeout(_t1); clearTimeout(_t2);
+    var o = document.getElementById('alert-saving-overlay');
+    if (o) o.classList.add('hidden');
+  }
+
+  // Afficher avant chaque POST HTMX depuis le panneau alertes
+  document.body.addEventListener('htmx:beforeRequest', function(e) {
+    var elt = e.detail.elt;
+    if (elt && elt.closest && elt.closest('#alerts-panel-content') &&
+        e.detail.requestConfig && e.detail.requestConfig.verb === 'post') {
+      showAlertOverlay();
+    }
+  });
+  // Masquer dès que la réponse est swappée (ou en cas d'erreur)
+  document.body.addEventListener('htmx:afterSwap', function(e) {
+    if (e.detail.target && e.detail.target.id === 'alerts-panel-content') {
+      hideAlertOverlay();
+    }
+  });
+  document.body.addEventListener('htmx:responseError', hideAlertOverlay);
+  document.body.addEventListener('htmx:sendError', hideAlertOverlay);
+})();
+
 function openAlertsPanel() {
   document.getElementById('alerts-panel').classList.remove('hidden');
   document.getElementById('alerts-overlay').classList.remove('hidden');
