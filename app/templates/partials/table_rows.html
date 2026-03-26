@@ -115,29 +115,30 @@
 {% set _page = page | default(1) %}
 {% set _total_count = total_count | default(0) %}
 <div class="flex items-center justify-between px-4 py-2.5 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
-  <span>{{ _total_count }} ligne(s){% if _total_pages > 1 %} &nbsp;·&nbsp; page {{ _page }} / {{ _total_pages }}{% endif %}</span>
+  <span>{{ _total_count }} ligne(s)</span>
   {% if _total_pages > 1 %}
-  <div class="flex items-center gap-2">
-    {% if _page > 1 %}
-    <button
-      hx-get="/tables/{{ table.id }}/rows"
-      hx-target="#table-body"
-      hx-include="#filters-zone"
-      hx-vals='{"page": {{ _page - 1 }}}'
-      class="px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition">
-      ← Précédent
-    </button>
-    {% endif %}
-    {% if _page < _total_pages %}
-    <button
-      hx-get="/tables/{{ table.id }}/rows"
-      hx-target="#table-body"
-      hx-include="#filters-zone"
-      hx-vals='{"page": {{ _page + 1 }}}'
-      class="px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition">
-      Suivant →
-    </button>
-    {% endif %}
+  <div class="flex items-center gap-1">
+    {% set ns = namespace(prev=0) %}
+    {% for p in range(1, _total_pages + 1) %}
+      {% if p == 1 or p == _total_pages or (p >= _page - 2 and p <= _page + 2) %}
+        {% if ns.prev > 0 and p - ns.prev > 1 %}
+        <span class="px-1 text-gray-400 select-none">…</span>
+        {% endif %}
+        {% if p == _page %}
+        <span class="px-2.5 py-1 rounded bg-blue-600 text-white font-semibold select-none">{{ p }}</span>
+        {% else %}
+        <button
+          hx-get="/tables/{{ table.id }}/rows"
+          hx-target="#table-body"
+          hx-include="#filters-zone"
+          hx-vals='{"page": {{ p }}}'
+          class="px-2.5 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition">
+          {{ p }}
+        </button>
+        {% endif %}
+        {% set ns.prev = p %}
+      {% endif %}
+    {% endfor %}
   </div>
   {% endif %}
 </div>
