@@ -214,6 +214,46 @@
 
 {% block scripts %}
 <script>
+// ── Autocomplete relation ──────────────────────────────────────────────────
+function selectRelation(li) {
+  var wrapper = li.closest('.relation-autocomplete');
+  if (!wrapper) return;
+  wrapper.querySelector('.relation-hidden-input').value = li.dataset.value;
+  wrapper.querySelector('.relation-text-input').value = li.dataset.label;
+  var sug = wrapper.querySelector('.relation-suggestions');
+  if (sug) sug.classList.add('hidden');
+}
+
+// Vider la valeur cachée dès que l'utilisateur retape (force une nouvelle sélection)
+document.addEventListener('input', function(e) {
+  if (e.target.classList.contains('relation-text-input')) {
+    var wrapper = e.target.closest('.relation-autocomplete');
+    if (wrapper) wrapper.querySelector('.relation-hidden-input').value = '';
+  }
+});
+
+// Fermer les suggestions quand le focus quitte le widget (délai pour laisser le clic s'enregistrer)
+document.addEventListener('focusout', function(e) {
+  if (!e.target.classList.contains('relation-text-input')) return;
+  var wrapper = e.target.closest('.relation-autocomplete');
+  if (!wrapper) return;
+  setTimeout(function() {
+    if (!wrapper.contains(document.activeElement)) {
+      var sug = wrapper.querySelector('.relation-suggestions');
+      if (sug) sug.classList.add('hidden');
+    }
+  }, 150);
+});
+
+// Afficher / masquer la liste après chaque swap HTMX
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  var target = e.detail.target;
+  if (target && target.classList.contains('relation-suggestions')) {
+    target.classList.toggle('hidden', target.children.length === 0);
+  }
+});
+// ──────────────────────────────────────────────────────────────────────────
+
 function clearAllFilters(tableId) {
   var gs = document.getElementById('global-search');
   if (gs) gs.value = '';

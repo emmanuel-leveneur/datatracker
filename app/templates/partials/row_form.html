@@ -55,6 +55,27 @@
           <input type="email" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
             {% if col.required %}required{% endif %}
             class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        {% elif col.col_type.value == 'relation' %}
+          {%- set _ns = namespace(cur_label='') -%}
+          {%- for _v, _l in (relation_options | default({})).get(col.id, []) -%}
+            {%- if _v == cells.get(col.id, '') -%}{%- set _ns.cur_label = _l -%}{%- endif -%}
+          {%- endfor -%}
+          <div class="relation-autocomplete relative">
+            <input type="hidden" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
+              class="relation-hidden-input" />
+            <input type="text"
+              name="q"
+              value="{{ _ns.cur_label or cells.get(col.id, '') }}"
+              placeholder="Rechercher…"
+              autocomplete="off"
+              class="relation-text-input w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              hx-get="/tables/{{ table.id }}/relation-search?col_id={{ col.id }}"
+              hx-target="next .relation-suggestions"
+              hx-trigger="focus, input changed delay:300ms"
+              hx-include="this"
+            />
+            <div class="relation-suggestions absolute z-20 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-0.5 max-h-48 overflow-y-auto hidden"></div>
+          </div>
         {% else %}
           <input type="text" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
             {% if col.required %}required{% endif %}

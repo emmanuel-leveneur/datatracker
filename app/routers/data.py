@@ -178,6 +178,92 @@ def _parse_col_filters(params: dict) -> dict:
     return {k[4:]: str(v) for k, v in params.items() if k.startswith("col_") and v}
 
 
+_RELATION_SEARCH_LIMIT = 50
+
+
+@router.get("/{table_id}/relation-search", response_class=HTMLResponse)
+def relation_search(
+    request: Request,
+    table_id: int,
+    col_id: int = Query(...),
+    q: str = Query(""),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retourne des suggestions HTML pour l'autocomplete d'une colonne relation."""
+    import html as html_lib
+    from app.models import TableColumn
+
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    col = db.get(TableColumn, col_id)
+    if not col or col.table_id != table_id or col.col_type.value != "relation":
+        return HTMLResponse("")
+    if not col.related_table_id or not col.related_display_col_id:
+        return HTMLResponse("")
+
+    base = db.query(TableRow).filter(
+        TableRow.table_id == col.related_table_id,
+        TableRow.deleted_at == None,
+    )
+    if q and q.strip():
+        matching = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col.related_display_col_id,
+            CellValue.value.ilike(f"%{q.strip()}%"),
+        ).subquery()
+        base = base.filter(TableRow.id.in_(matching))
+
+    rows = (
+        base.options(subqueryload(TableRow.cell_values))
+        .limit(_RELATION_SEARCH_LIMIT + 1)
+        .all()
+    )
+    truncated = len(rows) > _RELATION_SEARCH_LIMIT
+    rows = rows[:_RELATION_SEARCH_LIMIT]
+
+    results = []
+    for row in rows:
+        label = f"#{row.id}"
+        value = str(row.id)
+        for cv in row.cell_values:
+            if cv.column_id == col.related_display_col_id:
+                label = cv.value or label
+            if col.related_value_col_id and cv.column_id == col.related_value_col_id:
+                value = cv.value
+        if col.related_value_col_id and not value:
+            continue
+        results.append({"value": value, "label": label})
+    results.sort(key=lambda x: x["label"].lower())
+
+    def _li(r: dict) -> str:
+        v = html_lib.escape(r["value"])
+        l = html_lib.escape(r["label"])
+        value_badge = (
+            f'<span class="text-xs text-gray-400 shrink-0 ml-1">{v}</span>'
+            if col.related_value_col_id and r["value"] != r["label"]
+            else ""
+        )
+        return (
+            f'<li data-value="{v}" data-label="{l}" onclick="selectRelation(this)" '
+            f'class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex items-center justify-between gap-2">'
+            f'<span class="truncate">{l}</span>{value_badge}</li>'
+        )
+
+    items = "".join(_li(r) for r in results)
+    footer = (
+        f'<li class="px-3 py-1.5 text-xs text-gray-400 italic border-t border-gray-100">'
+        f'Affichage limité à {_RELATION_SEARCH_LIMIT} résultats — affinez la recherche</li>'
+        if truncated else ""
+    )
+    if not items:
+        return HTMLResponse(
+            '<p class="px-3 py-2 text-sm text-gray-400 italic">Aucun résultat</p>'
+        )
+    return HTMLResponse(f'<ul class="divide-y divide-gray-50">{items}{footer}</ul>')
+
+
 @router.get("/{table_id}/rows", response_class=HTMLResponse)
 def get_rows(
     request: Request,
