@@ -10,7 +10,22 @@
     <span class="text-sm text-gray-400">— {{ table.description }}</span>
     {% endif %}
   </div>
-  <div class="flex flex-wrap gap-2">
+  <div class="flex flex-wrap gap-2 items-center">
+    {% if columns %}
+    <input
+      id="global-search"
+      type="search"
+      name="q"
+      value="{{ q | default('') }}"
+      placeholder="Rechercher…"
+      autocomplete="off"
+      hx-get="/tables/{{ table.id }}/rows"
+      hx-target="#table-body"
+      hx-trigger="input changed delay:350ms, search"
+      hx-include="#filters-zone, #global-search"
+      class="w-64 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+    />
+    {% endif %}
     {% if can_write %}
     <button
       hx-get="/tables/{{ table.id }}/rows/new"
@@ -87,47 +102,35 @@
 <!-- Table data -->
 {% if columns %}
 <div id="filters-zone">
-  <!-- Recherche globale + contrôles -->
-  <div class="mb-3 flex items-center gap-2">
-    <input
-      id="global-search"
-      type="search"
-      name="q"
-      value="{{ q | default('') }}"
-      placeholder="Rechercher dans toutes les colonnes…"
-      autocomplete="off"
-      hx-get="/tables/{{ table.id }}/rows"
-      hx-target="#table-body"
-      hx-trigger="input changed delay:350ms, search"
-      hx-include="#filters-zone"
-      class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-    />
-    <!-- Sélecteur de taille de page -->
-    <div class="flex items-center gap-1.5 shrink-0">
-      <label class="text-xs text-gray-500 whitespace-nowrap">Lignes&nbsp;:</label>
-      <select
-        name="page_size"
-        hx-get="/tables/{{ table.id }}/rows"
-        hx-target="#table-body"
-        hx-trigger="change"
-        hx-include="#filters-zone"
-        class="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
-        {% for ps in allowed_page_sizes | default([25, 50, 100, 250, 500]) %}
-        <option value="{{ ps }}" {% if ps == page_size %}selected{% endif %}>{{ ps }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    {% if q or col_filters %}
+  {% if q or col_filters %}
+  <div class="mb-2 flex justify-end">
     <button
-      id="clear-filters-btn"
       type="button"
       onclick="clearAllFilters('{{ table.id }}')"
-      class="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition whitespace-nowrap">
+      class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition whitespace-nowrap">
       <i data-lucide="x" class="w-4 h-4"></i> Effacer les filtres
     </button>
-    {% endif %}
   </div>
+  {% endif %}
   <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+    <!-- Barre outils : boutons DataTables (gauche) + page_size (droite) -->
+    <div id="dt-toolbar" class="flex items-center gap-2 px-3 py-2 border-b border-gray-100 min-h-[44px]">
+      <!-- Les boutons DT sont déplacés ici par JS après init -->
+      <div class="ml-auto flex items-center gap-1.5 shrink-0">
+        <label class="text-xs text-gray-500 whitespace-nowrap">Lignes&nbsp;:</label>
+        <select
+          name="page_size"
+          hx-get="/tables/{{ table.id }}/rows"
+          hx-target="#table-body"
+          hx-trigger="change"
+          hx-include="#filters-zone, #global-search"
+          class="border border-gray-300 rounded px-2 py-1 text-sm text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+          {% for ps in allowed_page_sizes | default([25, 50, 100, 250, 500]) %}
+          <option value="{{ ps }}" {% if ps == page_size %}selected{% endif %}>{{ ps }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
     <div class="overflow-x-auto">
       <div id="table-body">
         {% include "partials/table_rows.html" %}
@@ -212,15 +215,14 @@
 {% block scripts %}
 <script>
 function clearAllFilters(tableId) {
-  // Vide la recherche globale
   var gs = document.getElementById('global-search');
   if (gs) gs.value = '';
-  // Vide tous les filtres de colonnes dans le thead
   document.querySelectorAll('#main-table thead input[type="search"]').forEach(function(inp) {
     inp.value = '';
   });
-  // Lance le rechargement sans filtres
-  htmx.ajax('GET', '/tables/' + tableId + '/rows', {
+  var ps = document.querySelector('#filters-zone [name="page_size"]');
+  var psVal = ps ? ps.value : '25';
+  htmx.ajax('GET', '/tables/' + tableId + '/rows?page_size=' + psVal, {
     target: '#table-body',
     swap: 'innerHTML'
   });
@@ -307,8 +309,6 @@ function closeAlertsPanel() {
     if ($.fn.DataTable.isDataTable('#main-table')) {
       $('#main-table').DataTable().destroy();
     }
-    // Col 0 = alerte, toujours non triable/cherchable
-    // Col -1 (actions) = non triable/cherchable si canWrite
     var colDefs = [{ orderable: false, searchable: false, targets: 0 }];
     if (canWrite) colDefs.push({ orderable: false, searchable: false, targets: -1 });
 
@@ -317,11 +317,19 @@ function closeAlertsPanel() {
       buttons: DETAIL_BUTTONS,
       language: DT_LANG_FR,
       order: [],
-      paging: false,      // pagination gérée côté serveur
-      searching: false,   // recherche gérée côté serveur
+      paging: false,
+      searching: false,
       columnDefs: colDefs,
     };
-    $('#main-table').DataTable(cfg);
+    var dt = $('#main-table').DataTable(cfg);
+
+    // Déplace les boutons DT dans la barre d'outils persistante
+    var $toolbar = $('#dt-toolbar');
+    if ($toolbar.length) {
+      var $existingBtns = $toolbar.find('.dt-buttons');
+      if ($existingBtns.length) $existingBtns.remove();
+      $toolbar.prepend(dt.buttons().container());
+    }
   }
 
   $(document).ready(initMainTable);

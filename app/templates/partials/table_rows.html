@@ -31,7 +31,7 @@
           hx-get="/tables/{{ table.id }}/rows"
           hx-target="#table-body"
           hx-trigger="input changed delay:350ms, search"
-          hx-include="#filters-zone"
+          hx-include="#filters-zone, #global-search"
           class="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-600 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400 font-normal"
         />
       </th>
@@ -91,7 +91,7 @@
           hx-post="/tables/{{ table.id }}/rows/{{ item.row.id }}/delete?page={{ page | default(1) }}"
           hx-target="#table-body"
           hx-swap="innerHTML"
-          hx-include="#filters-zone"
+          hx-include="#filters-zone, #global-search"
           hx-confirm="Mettre cette ligne à la corbeille ?"
           title="Mettre à la corbeille"
           class="text-red-400 hover:text-red-600 p-1.5 rounded hover:bg-red-50 transition inline-flex">
@@ -130,7 +130,7 @@
         <button
           hx-get="/tables/{{ table.id }}/rows"
           hx-target="#table-body"
-          hx-include="#filters-zone"
+          hx-include="#filters-zone, #global-search"
           hx-vals='{"page": {{ p }}}'
           class="px-2.5 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition">
           {{ p }}
