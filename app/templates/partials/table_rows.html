@@ -66,7 +66,7 @@
           <i data-lucide="pencil" class="w-4 h-4"></i>
         </button>
         <button
-          hx-post="/tables/{{ table.id }}/rows/{{ item.row.id }}/delete"
+          hx-post="/tables/{{ table.id }}/rows/{{ item.row.id }}/delete?page={{ page | default(1) }}"
           hx-target="#table-body"
           hx-swap="innerHTML"
           hx-confirm="Mettre cette ligne à la corbeille ?"
@@ -94,3 +94,28 @@
     </tr>
   </tfoot>
 </table>
+
+{% set _total_pages = total_pages | default(1) %}
+{% set _page = page | default(1) %}
+{% set _total_count = total_count | default(0) %}
+{% if _total_pages > 1 %}
+<div class="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50 text-sm">
+  <span class="text-gray-500">
+    {{ _total_count }} ligne(s) &nbsp;·&nbsp; page {{ _page }} / {{ _total_pages }}
+  </span>
+  <div class="flex items-center gap-2">
+    {% if _page > 1 %}
+    <a href="/tables/{{ table.id }}?page={{ _page - 1 }}"
+       class="px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition text-xs">
+      ← Précédent
+    </a>
+    {% endif %}
+    {% if _page < _total_pages %}
+    <a href="/tables/{{ table.id }}?page={{ _page + 1 }}"
+       class="px-3 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition text-xs">
+      Suivant →
+    </a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}

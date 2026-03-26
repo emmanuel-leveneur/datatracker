@@ -1,9 +1,9 @@
 import csv
 import io
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, subqueryload
 from app.activity import log_action
 from app.alerts import evaluate_alerts_for_row, get_alert_row_data
 from app.database import get_db
@@ -15,6 +15,45 @@ from app.models import CellValue, DataTable, TableRow, User
 
 router = APIRouter(prefix="/tables", tags=["data"])
 templates = Jinja2Templates(directory="app/templates")
+
+PAGE_SIZE = 100  # lignes affichées par page
+
+
+def _rows_template_ctx(db: Session, table, user, page: int = 1) -> dict:
+    """Construit le contexte commun pour le rendu de partials/table_rows.html."""
+    visible = get_visible_columns(table, user, db)
+    visible_ids = {c.id for c in visible}
+    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
+
+    total_count: int = db.query(TableRow).filter(
+        TableRow.table_id == table.id, TableRow.deleted_at == None
+    ).count()
+
+    rows = db.query(TableRow).options(
+        subqueryload(TableRow.cell_values)
+    ).filter(
+        TableRow.table_id == table.id, TableRow.deleted_at == None
+    ).order_by(TableRow.created_at.desc()).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE).all()
+
+    rows_data = [
+        {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
+        for r in rows
+    ]
+    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+
+    return {
+        "table": table,
+        "columns": visible,
+        "rows_data": rows_data,
+        "user": user,
+        "can_write": can_access_table(table, user, db, require_write=True),
+        "col_readonly": col_readonly,
+        "alerted_rows": get_alert_row_data(db, table.id, user.id),
+        "page": page,
+        "total_pages": total_pages,
+        "total_count": total_count,
+        "page_size": PAGE_SIZE,
+    }
 
 
 def _row_details(row, columns) -> str:
@@ -34,6 +73,7 @@ def _row_details(row, columns) -> str:
 def get_rows(
     request: Request,
     table_id: int,
+    page: int = Query(1, ge=1),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -43,27 +83,9 @@ def get_rows(
         raise HTTPException(status_code=404)
     if not can_access_table(table, user, db):
         raise HTTPException(status_code=403)
-    visible = get_visible_columns(table, user, db)
-    visible_ids = {c.id for c in visible}
-    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
-    rows = db.query(TableRow).filter(
-        TableRow.table_id == table_id, TableRow.deleted_at == None
-    ).order_by(TableRow.created_at.desc()).all()
-    rows_data = [
-        {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
-        for r in rows
-    ]
     return templates.TemplateResponse(
         request, "partials/table_rows.html",
-        {
-            "table": table,
-            "columns": visible,
-            "rows_data": rows_data,
-            "user": user,
-            "can_write": can_access_table(table, user, db, require_write=True),
-            "col_readonly": col_readonly,
-            "alerted_rows": get_alert_row_data(db, table_id, user.id),
-        },
+        _rows_template_ctx(db, table, user, page),
     )
 
 
@@ -129,28 +151,10 @@ async def create_row(
     db.commit()
 
     if request.headers.get("HX-Request"):
-        visible = get_visible_columns(table, user, db)
-        visible_ids = {c.id for c in visible}
-        col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
-        rows = db.query(TableRow).filter(
-            TableRow.table_id == table_id, TableRow.deleted_at == None
-        ).order_by(TableRow.created_at.desc()).all()
-        rows_data = [
-            {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
-            for r in rows
-        ]
-        can_write = can_access_table(table, user, db, require_write=True)
+        # Page 1 : la nouvelle ligne apparaît en tête (tri created_at desc)
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            {
-                "table": table,
-                "columns": visible,
-                "rows_data": rows_data,
-                "user": user,
-                "can_write": can_write,
-                "col_readonly": col_readonly,
-                "alerted_rows": get_alert_row_data(db, table_id, user.id),
-            },
+            _rows_template_ctx(db, table, user, page=1),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -238,28 +242,9 @@ async def update_row(
     db.commit()
 
     if request.headers.get("HX-Request"):
-        visible = get_visible_columns(table, user, db)
-        visible_ids = {c.id for c in visible}
-        col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
-        rows = db.query(TableRow).filter(
-            TableRow.table_id == table_id, TableRow.deleted_at == None
-        ).order_by(TableRow.created_at.desc()).all()
-        rows_data = [
-            {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
-            for r in rows
-        ]
-        can_write = can_access_table(table, user, db, require_write=True)
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            {
-                "table": table,
-                "columns": visible,
-                "rows_data": rows_data,
-                "user": user,
-                "can_write": can_write,
-                "col_readonly": col_readonly,
-                "alerted_rows": get_alert_row_data(db, table_id, user.id),
-            },
+            _rows_template_ctx(db, table, user, page=1),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -269,6 +254,7 @@ def trash_row(
     request: Request,
     table_id: int,
     row_id: int,
+    page: int = Query(1, ge=1),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -288,28 +274,9 @@ def trash_row(
     db.commit()
 
     if request.headers.get("HX-Request"):
-        visible = get_visible_columns(table, user, db)
-        visible_ids = {c.id for c in visible}
-        col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
-        rows = db.query(TableRow).filter(
-            TableRow.table_id == table_id, TableRow.deleted_at == None
-        ).order_by(TableRow.created_at.desc()).all()
-        rows_data = [
-            {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
-            for r in rows
-        ]
-        can_write = can_access_table(table, user, db, require_write=True)
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            {
-                "table": table,
-                "columns": visible,
-                "rows_data": rows_data,
-                "user": user,
-                "can_write": can_write,
-                "col_readonly": col_readonly,
-                "alerted_rows": get_alert_row_data(db, table_id, user.id),
-            },
+            _rows_template_ctx(db, table, user, page=page),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 

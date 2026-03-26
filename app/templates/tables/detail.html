@@ -196,6 +196,7 @@ function closeAlertsPanel() {
       buttons: DETAIL_BUTTONS,
       language: DT_LANG_FR,
       order: [],
+      paging: false,       // pagination gérée côté serveur
       columnDefs: colDefs,
       initComplete: function() {
         // Skip col 0 (alerte) et la colonne actions

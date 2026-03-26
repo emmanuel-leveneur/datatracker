@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import delete as sa_delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, subqueryload
 from app.activity import log_action
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
@@ -118,9 +118,12 @@ def create_table(
     return RedirectResponse(url=f"/tables/{table.id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
+PAGE_SIZE = 100  # lignes affichées par page
+
 @router.get("/{table_id}", response_class=HTMLResponse)
 def table_detail(
     request: Request,
+    page: int = Query(1, ge=1),
     table: DataTable = Depends(get_table_or_404),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -135,21 +138,32 @@ def table_detail(
     visible_cols = get_visible_columns(table, user, db)
     visible_col_ids = {c.id for c in visible_cols}
 
-    rows = db.query(TableRow).filter(
+    total_count: int = db.query(TableRow).filter(
         TableRow.table_id == table.id, TableRow.deleted_at == None
-    ).order_by(TableRow.created_at.desc()).all()
-    rows_data = []
-    for row in rows:
-        cells = {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
-        rows_data.append({"row": row, "cells": cells})
+    ).count()
+    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = min(page, total_pages)
 
-    trashed_rows = db.query(TableRow).filter(
+    rows = db.query(TableRow).options(
+        subqueryload(TableRow.cell_values)
+    ).filter(
+        TableRow.table_id == table.id, TableRow.deleted_at == None
+    ).order_by(TableRow.created_at.desc()).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE).all()
+
+    rows_data = [
+        {"row": row, "cells": {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}}
+        for row in rows
+    ]
+
+    trashed_rows = db.query(TableRow).options(
+        subqueryload(TableRow.cell_values)
+    ).filter(
         TableRow.table_id == table.id, TableRow.deleted_at != None
     ).order_by(TableRow.deleted_at.desc()).all()
-    trashed_rows_data = []
-    for row in trashed_rows:
-        cells = {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
-        trashed_rows_data.append({"row": row, "cells": cells})
+    trashed_rows_data = [
+        {"row": row, "cells": {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}}
+        for row in trashed_rows
+    ]
 
     is_owner = is_table_owner(table, user, db)
     can_write = can_access_table(table, user, db, require_write=True)
@@ -171,6 +185,10 @@ def table_detail(
             "col_readonly": col_readonly,
             "column_types": COLUMN_TYPES,
             "alerted_rows": get_alert_row_data(db, table.id, user.id),
+            "page": page,
+            "total_pages": total_pages,
+            "total_count": total_count,
+            "page_size": PAGE_SIZE,
         },
     )
 
