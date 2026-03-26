@@ -20,6 +20,7 @@ class ColumnType(str, enum.Enum):
     BOOLEAN = "boolean"
     EMAIL = "email"
     SELECT = "select"
+    RELATION = "relation"
 
 
 class PermissionLevel(str, enum.Enum):
@@ -79,6 +80,11 @@ class TableColumn(Base):
     order: Mapped[int] = mapped_column(Integer, default=0)
     required: Mapped[bool] = mapped_column(Boolean, default=False)
     select_options: Mapped[str] = mapped_column(Text, default="")  # comma-separated
+    # Colonnes relation (type RELATION uniquement) — pas de FK pour survivre aux suppressions
+    related_table_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    related_display_col_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Colonne dont la valeur est stockée dans la cellule (si None → stocke l'ID de ligne)
+    related_value_col_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     table: Mapped["DataTable"] = relationship(back_populates="columns")
     cell_values: Mapped[list["CellValue"]] = relationship(

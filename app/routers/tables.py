@@ -71,11 +71,30 @@ def toggle_favorite(
     return RedirectResponse(url="/tables/", status_code=status.HTTP_303_SEE_OTHER)
 
 
+def _all_tables_json(db: Session, exclude_id: int | None = None) -> str:
+    """Sérialise toutes les tables non supprimées avec leurs colonnes pour le JS de config relation."""
+    import json
+    tables = db.query(DataTable).filter(DataTable.deleted_at == None).all()
+    return json.dumps([
+        {
+            "id": t.id,
+            "name": t.name,
+            "columns": [
+                {"id": c.id, "name": c.name}
+                for c in sorted(t.columns, key=lambda c: c.order)
+                if c.col_type.value != "relation"  # évite les relations circulaires
+            ],
+        }
+        for t in tables
+        if t.id != exclude_id
+    ])
+
+
 @router.get("/create", response_class=HTMLResponse)
-def create_table_page(request: Request, user: User = Depends(get_current_user)):
+def create_table_page(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request, "tables/create.html",
-        {"user": user, "column_types": COLUMN_TYPES},
+        {"user": user, "column_types": COLUMN_TYPES, "all_tables_json": _all_tables_json(db)},
     )
 
 
@@ -88,6 +107,9 @@ def create_table(
     col_types: list[str] = Form(default=[]),
     col_required: list[str] = Form(default=[]),
     col_options: list[str] = Form(default=[]),
+    col_related_table_ids: list[str] = Form(default=[]),
+    col_related_display_col_ids: list[str] = Form(default=[]),
+    col_related_value_col_ids: list[str] = Form(default=[]),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -102,6 +124,16 @@ def create_table(
         if not cname:
             continue
         options = col_options[i] if i < len(col_options) else ""
+        rel_table_id = None
+        rel_display_col_id = None
+        rel_value_col_id = None
+        if ctype == "relation":
+            try:
+                rel_table_id = int(col_related_table_ids[i]) if i < len(col_related_table_ids) and col_related_table_ids[i] else None
+                rel_display_col_id = int(col_related_display_col_ids[i]) if i < len(col_related_display_col_ids) and col_related_display_col_ids[i] else None
+                rel_value_col_id = int(col_related_value_col_ids[i]) if i < len(col_related_value_col_ids) and col_related_value_col_ids[i] else None
+            except (ValueError, IndexError):
+                pass
         col = TableColumn(
             table_id=table.id,
             name=cname,
@@ -109,6 +141,9 @@ def create_table(
             order=i,
             required=(str(i) in required_set),
             select_options=options,
+            related_table_id=rel_table_id,
+            related_display_col_id=rel_display_col_id,
+            related_value_col_id=rel_value_col_id,
         )
         db.add(col)
     log_action(db, user, "create_table", "table",
@@ -199,6 +234,7 @@ def table_detail(
 
     from app.dependencies import is_column_readonly
     from app.alerts import get_alert_row_data
+    from app.routers.data import _resolve_relation_labels
     col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
 
     return templates.TemplateResponse(
@@ -214,6 +250,7 @@ def table_detail(
             "col_readonly": col_readonly,
             "column_types": COLUMN_TYPES,
             "alerted_rows": get_alert_row_data(db, table.id, user.id),
+            "relation_labels": _resolve_relation_labels(db, visible_cols),
             "page": page,
             "total_pages": total_pages,
             "total_count": total_count,
@@ -242,6 +279,7 @@ def edit_table_page(
             "user": user,
             "table": table,
             "column_types": COLUMN_TYPES,
+            "all_tables_json": _all_tables_json(db, exclude_id=table.id),
         },
     )
 
@@ -257,6 +295,9 @@ def edit_table(
     col_types: list[str] = Form(default=[]),
     col_required: list[str] = Form(default=[]),
     col_options: list[str] = Form(default=[]),
+    col_related_table_ids: list[str] = Form(default=[]),
+    col_related_display_col_ids: list[str] = Form(default=[]),
+    col_related_value_col_ids: list[str] = Form(default=[]),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -288,6 +329,16 @@ def edit_table(
         if not cname:
             continue
         options = col_options[i] if i < len(col_options) else ""
+        rel_table_id = None
+        rel_display_col_id = None
+        rel_value_col_id = None
+        if ctype == "relation":
+            try:
+                rel_table_id = int(col_related_table_ids[i]) if i < len(col_related_table_ids) and col_related_table_ids[i] else None
+                rel_display_col_id = int(col_related_display_col_ids[i]) if i < len(col_related_display_col_ids) and col_related_display_col_ids[i] else None
+                rel_value_col_id = int(col_related_value_col_ids[i]) if i < len(col_related_value_col_ids) and col_related_value_col_ids[i] else None
+            except (ValueError, IndexError):
+                pass
         if cid and cid in existing_ids:
             col = db.get(TableColumn, int(cid))
             if col:
@@ -296,6 +347,9 @@ def edit_table(
                 col.order = i
                 col.required = (str(i) in required_set)
                 col.select_options = options
+                col.related_table_id = rel_table_id
+                col.related_display_col_id = rel_display_col_id
+                col.related_value_col_id = rel_value_col_id
         else:
             col = TableColumn(
                 table_id=table.id,
@@ -304,6 +358,9 @@ def edit_table(
                 order=i,
                 required=(str(i) in required_set),
                 select_options=options,
+                related_table_id=rel_table_id,
+                related_display_col_id=rel_display_col_id,
+                related_value_col_id=rel_value_col_id,
             )
             db.add(col)
 

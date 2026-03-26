@@ -3,12 +3,74 @@
 {% block head %}
 <script>
   let colIndex = 0;
+  const allTablesData = {{ all_tables_json | safe }};
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function buildRelationTableOptions(selectedId) {
+    let html = '<option value="">— Table liée —</option>';
+    for (const t of allTablesData) {
+      const sel = String(t.id) === String(selectedId) ? ' selected' : '';
+      html += `<option value="${t.id}"${sel}>${escHtml(t.name)}</option>`;
+    }
+    return html;
+  }
+
+  function buildRelationColOptions(tableId, selectedId, placeholder) {
+    const t = allTablesData.find(x => String(x.id) === String(tableId));
+    let html = `<option value="">${escHtml(placeholder || '— Colonne affichée —')}</option>`;
+    if (t) {
+      for (const c of t.columns) {
+        const sel = String(c.id) === String(selectedId) ? ' selected' : '';
+        html += `<option value="${c.id}"${sel}>${escHtml(c.name)}</option>`;
+      }
+    }
+    return html;
+  }
+
+  function onRelationTableChange(sel) {
+    const row = sel.closest('.col-row');
+    const displaySel = row.querySelector('.relation-display-col-select');
+    const valueSel = row.querySelector('.relation-value-col-select');
+    const hidT = row.querySelector('[name="col_related_table_ids"]');
+    const hidD = row.querySelector('[name="col_related_display_col_ids"]');
+    const hidV = row.querySelector('[name="col_related_value_col_ids"]');
+    displaySel.innerHTML = buildRelationColOptions(sel.value, '', '— Colonne affichée —');
+    valueSel.innerHTML = buildRelationColOptions(sel.value, '', '— ID de ligne (défaut) —');
+    if (hidT) hidT.value = sel.value;
+    if (hidD) hidD.value = '';
+    if (hidV) hidV.value = '';
+  }
+
+  function onRelationDisplayColChange(sel) {
+    const row = sel.closest('.col-row');
+    const hid = row.querySelector('[name="col_related_display_col_ids"]');
+    if (hid) hid.value = sel.value;
+  }
+
+  function onRelationValueColChange(sel) {
+    const row = sel.closest('.col-row');
+    const hid = row.querySelector('[name="col_related_value_col_ids"]');
+    if (hid) hid.value = sel.value;
+  }
+
+  function toggleOptions(select) {
+    const row = select.closest('.col-row');
+    const optField = row.querySelector('.options-field');
+    const relConfig = row.querySelector('.relation-config');
+    optField.classList.toggle('hidden', select.value !== 'select');
+    if (relConfig) relConfig.classList.toggle('hidden', select.value !== 'relation');
+  }
 
   function addColumn() {
     const container = document.getElementById('columns-container');
     const idx = colIndex++;
     const div = document.createElement('div');
     div.className = 'col-row flex flex-wrap items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg';
+    const relTableOpts = buildRelationTableOptions('');
+    const colCls = 'flex-1 min-w-[120px] border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white';
     div.innerHTML = `
       <input type="text" name="col_names" placeholder="Nom de la colonne" required
         class="flex-1 min-w-[160px] border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
@@ -19,8 +81,22 @@
         <option value="{{ ct }}">{{ ct }}</option>
         {% endfor %}
       </select>
+      <input type="hidden" name="col_related_table_ids" value="" />
+      <input type="hidden" name="col_related_display_col_ids" value="" />
+      <input type="hidden" name="col_related_value_col_ids" value="" />
       <input type="text" name="col_options" placeholder="Options (virgule séparés)"
         class="options-field flex-1 min-w-[160px] border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 hidden" />
+      <div class="relation-config hidden basis-full flex flex-wrap gap-2 items-center mt-1 p-2 bg-blue-50 border border-blue-100 rounded">
+        <span class="text-xs text-gray-400 shrink-0">Table :</span>
+        <select class="relation-table-select flex-1 min-w-[120px] border border-gray-300 rounded px-2 py-1 text-xs bg-white"
+          onchange="onRelationTableChange(this)">${relTableOpts}</select>
+        <span class="text-xs text-gray-400 shrink-0">Affiché :</span>
+        <select class="relation-display-col-select ${colCls}"
+          onchange="onRelationDisplayColChange(this)"><option value="">— Colonne affichée —</option></select>
+        <span class="text-xs text-gray-400 shrink-0">Stocké :</span>
+        <select class="relation-value-col-select ${colCls}"
+          onchange="onRelationValueColChange(this)"><option value="">— ID de ligne (défaut) —</option></select>
+      </div>
       <label class="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
         <input type="checkbox" name="col_required" value="${idx}" class="rounded" />
         Obligatoire
@@ -29,16 +105,6 @@
         class="text-red-400 hover:text-red-600 text-lg leading-none px-1" title="Supprimer">&times;</button>
     `;
     container.appendChild(div);
-  }
-
-  function toggleOptions(select) {
-    const row = select.closest('.col-row');
-    const optField = row.querySelector('.options-field');
-    if (select.value === 'select') {
-      optField.classList.remove('hidden');
-    } else {
-      optField.classList.add('hidden');
-    }
   }
 
   document.addEventListener('DOMContentLoaded', () => addColumn());

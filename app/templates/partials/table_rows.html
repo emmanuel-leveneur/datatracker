@@ -72,6 +72,13 @@
           <a href="mailto:{{ val }}" class="text-blue-600 hover:underline">{{ val }}</a>
         {% elif col.col_type.value == 'date' and val and val | length >= 10 %}
           {{ val[8:10] }}/{{ val[5:7] }}/{{ val[0:4] }}
+        {% elif col.col_type.value == 'relation' %}
+          {% if col.related_value_col_id %}
+            {{ val }}
+          {% else %}
+            {% set _rel_label = (relation_labels | default({})).get(col.id, {}).get(val, '') %}
+            {% if _rel_label %}{{ _rel_label }}{% elif val %}<span class="text-gray-400 italic text-xs">[ref. manquante]</span>{% endif %}
+          {% endif %}
         {% else %}
           {{ val }}
         {% endif %}

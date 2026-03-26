@@ -88,6 +88,7 @@ def _rows_template_ctx(
         "can_write": can_access_table(table, user, db, require_write=True),
         "col_readonly": col_readonly,
         "alerted_rows": get_alert_row_data(db, table.id, user.id),
+        "relation_labels": _resolve_relation_labels(db, visible),
         "page": page,
         "total_pages": total_pages,
         "total_count": total_count,
@@ -95,6 +96,68 @@ def _rows_template_ctx(
         "q": q,
         "col_filters": col_filters,
     }
+
+
+def _resolve_relation_labels(db: Session, columns: list) -> dict:
+    """Retourne {col_id: {stored_val: label}} pour les colonnes relation sans colonne valeur.
+
+    Si related_value_col_id est défini, la valeur stockée est directement lisible
+    (ex: code fournisseur) — aucune résolution nécessaire, on n'inclut pas la colonne.
+    Si related_value_col_id est None, la valeur stockée est l'ID de ligne → résolution
+    vers le libellé de related_display_col_id.
+    """
+    result = {}
+    for col in columns:
+        if col.col_type.value != "relation" or not col.related_table_id or not col.related_display_col_id:
+            continue
+        if col.related_value_col_id:
+            continue  # valeur stockée déjà lisible, pas de résolution
+        rows = db.query(TableRow).filter(
+            TableRow.table_id == col.related_table_id,
+            TableRow.deleted_at == None,
+        ).all()
+        labels = {}
+        for row in rows:
+            for cv in row.cell_values:
+                if cv.column_id == col.related_display_col_id:
+                    labels[str(row.id)] = cv.value or f"#{row.id}"
+                    break
+            else:
+                labels[str(row.id)] = f"#{row.id}"
+        result[col.id] = labels
+    return result
+
+
+def _get_relation_options(db: Session, columns: list) -> dict:
+    """Retourne {col_id: [(valeur_stockée, label_affiché), ...]} pour le formulaire de saisie.
+
+    - Si related_value_col_id est défini : valeur stockée = contenu de cette colonne,
+      label affiché = contenu de related_display_col_id.
+    - Sinon : valeur stockée = str(row.id), label = contenu de related_display_col_id.
+    """
+    result = {}
+    for col in columns:
+        if col.col_type.value != "relation" or not col.related_table_id or not col.related_display_col_id:
+            continue
+        rows = db.query(TableRow).filter(
+            TableRow.table_id == col.related_table_id,
+            TableRow.deleted_at == None,
+        ).all()
+        options = []
+        for row in rows:
+            label = f"#{row.id}"
+            value = str(row.id)
+            for cv in row.cell_values:
+                if cv.column_id == col.related_display_col_id:
+                    label = cv.value or label
+                if col.related_value_col_id and cv.column_id == col.related_value_col_id:
+                    value = cv.value
+            if col.related_value_col_id and not value:
+                continue  # ligne sans valeur dans la colonne stockée → on l'exclut
+            options.append((value, label))
+        options.sort(key=lambda x: x[1].lower())
+        result[col.id] = options
+    return result
 
 
 def _row_details(row, columns) -> str:
@@ -157,6 +220,7 @@ def new_row_form(
             "col_readonly": col_readonly,
             "row": None,
             "cells": {},
+            "relation_options": _get_relation_options(db, visible_cols),
         },
     )
 
@@ -240,6 +304,7 @@ def edit_row_form(
             "col_readonly": col_readonly,
             "row": row,
             "cells": cells,
+            "relation_options": _get_relation_options(db, visible_cols),
         },
     )
 

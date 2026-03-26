@@ -49,6 +49,11 @@ def _run_migrations():
         "alerts": [
             ("actions", "ALTER TABLE alerts ADD COLUMN actions TEXT DEFAULT '{}'"),
         ],
+        "table_columns": [
+            ("related_table_id", "ALTER TABLE table_columns ADD COLUMN related_table_id INTEGER"),
+            ("related_display_col_id", "ALTER TABLE table_columns ADD COLUMN related_display_col_id INTEGER"),
+            ("related_value_col_id", "ALTER TABLE table_columns ADD COLUMN related_value_col_id INTEGER"),
+        ],
     }
     with engine.connect() as conn:
         for table_name, columns in migrations_by_table.items():
