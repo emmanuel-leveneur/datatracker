@@ -87,7 +87,7 @@
 <!-- Table data -->
 {% if columns %}
 <div id="filters-zone">
-  <!-- Recherche globale -->
+  <!-- Recherche globale + contrôles -->
   <div class="mb-3 flex items-center gap-2">
     <input
       id="global-search"
@@ -102,6 +102,21 @@
       hx-include="#filters-zone"
       class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
     />
+    <!-- Sélecteur de taille de page -->
+    <div class="flex items-center gap-1.5 shrink-0">
+      <label class="text-xs text-gray-500 whitespace-nowrap">Lignes&nbsp;:</label>
+      <select
+        name="page_size"
+        hx-get="/tables/{{ table.id }}/rows"
+        hx-target="#table-body"
+        hx-trigger="change"
+        hx-include="#filters-zone"
+        class="border border-gray-300 rounded px-2 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+        {% for ps in allowed_page_sizes | default([25, 50, 100, 250, 500]) %}
+        <option value="{{ ps }}" {% if ps == page_size %}selected{% endif %}>{{ ps }}</option>
+        {% endfor %}
+      </select>
+    </div>
     {% if q or col_filters %}
     <button
       id="clear-filters-btn"

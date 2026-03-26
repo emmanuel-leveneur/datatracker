@@ -16,7 +16,8 @@ from app.models import CellValue, DataTable, TableRow, User
 router = APIRouter(prefix="/tables", tags=["data"])
 templates = Jinja2Templates(directory="app/templates")
 
-PAGE_SIZE = 100  # lignes affichées par page
+ALLOWED_PAGE_SIZES = [25, 50, 100, 250, 500]
+DEFAULT_PAGE_SIZE = 25
 
 
 def _rows_template_ctx(
@@ -26,6 +27,7 @@ def _rows_template_ctx(
     page: int = 1,
     q: str = "",
     col_filters: dict | None = None,
+    page_size: int = DEFAULT_PAGE_SIZE,
 ) -> dict:
     """Construit le contexte commun pour le rendu de partials/table_rows.html.
 
@@ -33,6 +35,7 @@ def _rows_template_ctx(
     col_filters  : dict {str(col_id): valeur} pour filtres par colonne
     """
     col_filters = col_filters or {}
+    page_size = page_size if page_size in ALLOWED_PAGE_SIZES else DEFAULT_PAGE_SIZE
     visible = get_visible_columns(table, user, db)
     visible_ids = {c.id for c in visible}
     col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
@@ -65,12 +68,12 @@ def _rows_template_ctx(
         base = base.filter(TableRow.id.in_(col_subq))
 
     total_count: int = base.count()
-    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
     page = min(max(1, page), total_pages)
 
     rows = base.options(
         subqueryload(TableRow.cell_values)
-    ).order_by(TableRow.created_at.desc()).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE).all()
+    ).order_by(TableRow.created_at.desc()).limit(page_size).offset((page - 1) * page_size).all()
 
     rows_data = [
         {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
@@ -88,7 +91,7 @@ def _rows_template_ctx(
         "page": page,
         "total_pages": total_pages,
         "total_count": total_count,
-        "page_size": PAGE_SIZE,
+        "page_size": page_size,
         "q": q,
         "col_filters": col_filters,
     }
@@ -118,6 +121,7 @@ def get_rows(
     table_id: int,
     page: int = Query(1, ge=1),
     q: str = Query(""),
+    page_size: int = Query(DEFAULT_PAGE_SIZE),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -130,7 +134,7 @@ def get_rows(
     col_filters = _parse_col_filters(dict(request.query_params))
     return templates.TemplateResponse(
         request, "partials/table_rows.html",
-        _rows_template_ctx(db, table, user, page, q, col_filters),
+        _rows_template_ctx(db, table, user, page, q, col_filters, page_size),
     )
 
 
@@ -199,9 +203,10 @@ async def create_row(
         # Page 1 : la nouvelle ligne apparaît en tête (tri created_at desc) ; filtres préservés
         q = str(form.get("q", ""))
         col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters),
+            _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters, page_size=page_size),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -291,9 +296,10 @@ async def update_row(
     if request.headers.get("HX-Request"):
         q = str(form.get("q", ""))
         col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters),
+            _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters, page_size=page_size),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -326,9 +332,10 @@ async def trash_row(
         form = await request.form()
         q = str(form.get("q", ""))
         col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters),
+            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 

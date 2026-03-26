@@ -118,13 +118,15 @@ def create_table(
     return RedirectResponse(url=f"/tables/{table.id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
-PAGE_SIZE = 100  # lignes affichées par page
+PAGE_SIZE = 25  # taille de page par défaut
+ALLOWED_PAGE_SIZES = [25, 50, 100, 250, 500]
 
 @router.get("/{table_id}", response_class=HTMLResponse)
 def table_detail(
     request: Request,
     page: int = Query(1, ge=1),
     q: str = Query(""),
+    page_size: int = Query(PAGE_SIZE),
     table: DataTable = Depends(get_table_or_404),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -168,13 +170,14 @@ def table_detail(
         ).distinct().subquery()
         base = base.filter(TableRow.id.in_(col_subq))
 
+    page_size = page_size if page_size in ALLOWED_PAGE_SIZES else PAGE_SIZE
     total_count: int = base.count()
-    total_pages = max(1, (total_count + PAGE_SIZE - 1) // PAGE_SIZE)
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
     page = min(max(1, page), total_pages)
 
     rows = base.options(
         subqueryload(TableRow.cell_values)
-    ).order_by(TableRow.created_at.desc()).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE).all()
+    ).order_by(TableRow.created_at.desc()).limit(page_size).offset((page - 1) * page_size).all()
 
     rows_data = [
         {"row": row, "cells": {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}}
@@ -214,7 +217,8 @@ def table_detail(
             "page": page,
             "total_pages": total_pages,
             "total_count": total_count,
-            "page_size": PAGE_SIZE,
+            "page_size": page_size,
+            "allowed_page_sizes": ALLOWED_PAGE_SIZES,
             "q": q,
             "col_filters": col_filters,
         },
