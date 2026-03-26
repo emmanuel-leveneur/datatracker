@@ -16,6 +16,28 @@
       <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
       {% endif %}
     </tr>
+    <!-- Ligne de filtres par colonne -->
+    <tr class="border-t border-gray-200 bg-white">
+      <th class="w-8 px-2 py-1.5"></th><!-- colonne alerte -->
+      {% for col in columns %}
+      <th class="px-2 py-1.5">
+        <input
+          type="search"
+          name="col_{{ col.id }}"
+          value="{{ (col_filters | default({})).get(col.id | string, '') }}"
+          placeholder="{{ col.name }}…"
+          autocomplete="off"
+          onclick="event.stopPropagation()"
+          hx-get="/tables/{{ table.id }}/rows"
+          hx-target="#table-body"
+          hx-trigger="input changed delay:350ms, search"
+          hx-include="#filters-zone"
+          class="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-600 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400 font-normal"
+        />
+      </th>
+      {% endfor %}
+      {% if can_write %}<th class="px-2 py-1.5"></th>{% endif %}
+    </tr>
   </thead>
   <tbody class="divide-y divide-gray-100 bg-white">
     {% if rows_data %}
@@ -87,28 +109,6 @@
     </tr>
     {% endif %}
   </tbody>
-  <tfoot>
-    <tr>
-      <th></th><!-- colonne alerte : pas de filtre -->
-      {% for col in columns %}
-      <th class="px-2 py-2">
-        <input
-          type="text"
-          name="col_{{ col.id }}"
-          value="{{ (col_filters | default({})).get(col.id | string, '') }}"
-          placeholder="Filtrer…"
-          autocomplete="off"
-          hx-get="/tables/{{ table.id }}/rows"
-          hx-target="#table-body"
-          hx-trigger="input changed delay:350ms"
-          hx-include="#filters-zone"
-          class="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-600 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400 font-normal"
-        />
-      </th>
-      {% endfor %}
-      {% if can_write %}<th></th>{% endif %}
-    </tr>
-  </tfoot>
 </table>
 
 {% set _total_pages = total_pages | default(1) %}

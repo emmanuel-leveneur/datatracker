@@ -70,8 +70,9 @@
 {% if columns %}
 <div id="filters-zone">
   <!-- Recherche globale -->
-  <div class="mb-3">
+  <div class="mb-3 flex items-center gap-2">
     <input
+      id="global-search"
       type="search"
       name="q"
       value="{{ q | default('') }}"
@@ -81,8 +82,17 @@
       hx-target="#table-body"
       hx-trigger="input changed delay:350ms, search"
       hx-include="#filters-zone"
-      class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+      class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
     />
+    {% if q or col_filters %}
+    <button
+      id="clear-filters-btn"
+      type="button"
+      onclick="clearAllFilters('{{ table.id }}')"
+      class="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition whitespace-nowrap">
+      <i data-lucide="x" class="w-4 h-4"></i> Effacer les filtres
+    </button>
+    {% endif %}
   </div>
   <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
     <div class="overflow-x-auto">
@@ -168,6 +178,20 @@
 
 {% block scripts %}
 <script>
+function clearAllFilters(tableId) {
+  // Vide la recherche globale
+  var gs = document.getElementById('global-search');
+  if (gs) gs.value = '';
+  // Vide tous les filtres de colonnes dans le thead
+  document.querySelectorAll('#main-table thead input[type="search"]').forEach(function(inp) {
+    inp.value = '';
+  });
+  // Lance le rechargement sans filtres
+  htmx.ajax('GET', '/tables/' + tableId + '/rows', {
+    target: '#table-body',
+    swap: 'innerHTML'
+  });
+}
 function openAlertsPanel() {
   document.getElementById('alerts-panel').classList.remove('hidden');
   document.getElementById('alerts-overlay').classList.remove('hidden');
