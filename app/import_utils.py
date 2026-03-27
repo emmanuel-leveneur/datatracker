@@ -100,6 +100,18 @@ def parse_csv(raw: bytes) -> tuple[list[str], list[list[str]], str | None]:
     return headers, data_rows, warning
 
 
+def _cell_to_str(cell) -> str:
+    """Convertit une cellule openpyxl en string sans perdre les entiers.
+    openpyxl retourne les entiers Excel comme float Python (42 → 42.0) ;
+    on les reconvertit en int avant de stringifier pour éviter le '42.0'.
+    """
+    if cell is None:
+        return ''
+    if isinstance(cell, float) and cell == int(cell):
+        return str(int(cell))
+    return str(cell).strip()
+
+
 def parse_excel(raw: bytes, sheet_index: int = 0) -> tuple[list[str], list[list[str]], list[str], str | None]:
     """
     Retourne (headers, rows, sheet_names, warning).
@@ -111,7 +123,7 @@ def parse_excel(raw: bytes, sheet_index: int = 0) -> tuple[list[str], list[list[
 
     rows_all = []
     for row in ws.iter_rows(values_only=True):
-        rows_all.append(['' if cell is None else str(cell).strip() for cell in row])
+        rows_all.append([_cell_to_str(cell) for cell in row])
 
     if not rows_all:
         return [], [], sheet_names, None

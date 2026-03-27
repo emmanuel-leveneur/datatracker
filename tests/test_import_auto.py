@@ -1,6 +1,8 @@
 """Tests pour l'import automatique de fichiers (CSV / Excel)."""
 import io
 import json
+
+import openpyxl
 import pytest
 
 from app.import_utils import (
@@ -10,6 +12,18 @@ from app.import_utils import (
     MAX_ROWS,
 )
 from app.models import ColumnType
+
+
+def _make_xlsx(headers: list, rows: list[list]) -> bytes:
+    """Crée un fichier Excel en mémoire avec les données fournies."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(headers)
+    for row in rows:
+        ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 # ── Détection encodage ────────────────────────────────────────────────────────
@@ -65,6 +79,32 @@ class TestParseCSV:
         raw = "A;B\nAlice;1\n\n\nBob;2".encode('utf-8')
         _, rows, _ = parse_csv(raw)
         assert len(rows) == 2
+
+
+# ── Parse Excel ───────────────────────────────────────────────────────────────
+
+class TestParseExcel:
+    def test_integer_cells_not_converted_to_float_string(self):
+        """openpyxl retourne les entiers Excel comme float Python (42 → 42.0) ;
+        parse_excel doit produire '42' et non '42.0'."""
+        raw = _make_xlsx(['ID', 'Valeur'], [[1, 42], [2, 100], [3, 7]])
+        headers, rows, _, _ = parse_excel(raw)
+        assert headers == ['ID', 'Valeur']
+        assert rows[0] == ['1', '42']
+        assert rows[1] == ['2', '100']
+
+    def test_integer_column_inferred_as_integer_not_float(self):
+        """Une colonne d'entiers Excel doit être inférée INTEGER, pas FLOAT."""
+        raw = _make_xlsx(['Qty'], [[i] for i in range(1, 20)])
+        _, rows, _, _ = parse_excel(raw)
+        col_values = [r[0] for r in rows]
+        assert infer_column_type(col_values) == ColumnType.INTEGER
+
+    def test_real_float_cells_preserved(self):
+        """Les vrais décimaux ne doivent pas être tronqués."""
+        raw = _make_xlsx(['Prix'], [[3.14], [2.71], [1.5]])
+        _, rows, _, _ = parse_excel(raw)
+        assert '3.14' in rows[0][0]
 
 
 # ── Inférence de types ────────────────────────────────────────────────────────
