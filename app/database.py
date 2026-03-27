@@ -1,16 +1,14 @@
-import os
-
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-# Base de données sur le filesystem natif WSL pour éviter les erreurs I/O SQLite sur NTFS
-_DB_PATH = os.path.join(os.path.expanduser("~"), "datatracker.db")
-DATABASE_URL = f"sqlite:///{_DB_PATH}"
+from app.config import settings
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
+DATABASE_URL = settings.DATABASE_URL
+
+# connect_args spécifique à SQLite (check_same_thread non applicable à PostgreSQL)
+_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+engine = create_engine(DATABASE_URL, connect_args=_connect_args)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

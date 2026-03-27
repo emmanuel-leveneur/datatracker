@@ -2,11 +2,12 @@ import bcrypt as _bcrypt
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from fastapi import Request, Response
 
-SECRET_KEY = "change-me-in-production-use-env-var"
+from app.config import settings
+
 SESSION_COOKIE = "dt_session"
 MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
-serializer = URLSafeTimedSerializer(SECRET_KEY)
+serializer = URLSafeTimedSerializer(settings.SECRET_KEY)
 
 
 def hash_password(password: str) -> str:
