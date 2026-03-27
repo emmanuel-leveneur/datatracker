@@ -64,7 +64,6 @@
             <input type="hidden" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
               class="relation-hidden-input" />
             <input type="text"
-              name="q"
               value="{{ _ns.cur_label or cells.get(col.id, '') }}"
               placeholder="Rechercher…"
               autocomplete="off"
@@ -72,7 +71,7 @@
               hx-get="/tables/{{ table.id }}/relation-search?col_id={{ col.id }}"
               hx-target="next .relation-suggestions"
               hx-trigger="focus, input changed delay:300ms"
-              hx-include="this"
+              hx-on:htmx:config-request="event.detail.parameters.q = event.target.value"
             />
             <div class="relation-suggestions absolute z-20 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-0.5 max-h-48 overflow-y-auto hidden"></div>
           </div>

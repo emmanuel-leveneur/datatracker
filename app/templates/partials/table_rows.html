@@ -23,7 +23,7 @@
       <th class="px-2 py-1.5">
         <input
           type="search"
-          name="col_{{ col.id }}"
+          name="filter_{{ col.id }}"
           value="{{ (col_filters | default({})).get(col.id | string, '') }}"
           placeholder="{{ col.name }}…"
           autocomplete="off"

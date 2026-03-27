@@ -177,7 +177,7 @@ def table_detail(
     visible_col_ids = {c.id for c in visible_cols}
 
     # Filtres par colonne depuis les query params (?col_123=val)
-    col_filters = {k[4:]: v for k, v in request.query_params.items() if k.startswith("col_") and v}
+    col_filters = {k[7:]: v for k, v in request.query_params.items() if k.startswith("filter_") and v}
 
     base = db.query(TableRow).filter(
         TableRow.table_id == table.id, TableRow.deleted_at == None

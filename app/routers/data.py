@@ -174,8 +174,12 @@ def _row_details(row, columns) -> str:
 
 
 def _parse_col_filters(params: dict) -> dict:
-    """Extrait les filtres par colonne d'un dict de paramètres (query ou form)."""
-    return {k[4:]: str(v) for k, v in params.items() if k.startswith("col_") and v}
+    """Extrait les filtres par colonne d'un dict de paramètres (query ou form).
+
+    Les inputs de filtre sont nommés filter_<col_id> pour éviter toute collision
+    avec les champs de formulaire de saisie (col_<col_id>).
+    """
+    return {k[7:]: str(v) for k, v in params.items() if k.startswith("filter_") and v}
 
 
 _RELATION_SEARCH_LIMIT = 50
