@@ -524,6 +524,70 @@ class TestAlertRoutes:
         db.refresh(notif)
         assert notif.alert_id is None  # notification survit, alert_id nullifié
 
+    def test_private_alert_invisible_to_admin(self, admin_client, db, admin_user, regular_user):
+        """Une alerte privée d'un utilisateur ne doit pas apparaître dans le panneau de l'admin.
+        Note: admin_client et user_client partagent le même objet client HTTP — on crée
+        l'alerte directement via la DB pour éviter le conflit de cookies."""
+        table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
+        col = cols[0]
+        # Créer l'alerte privée directement comme regular_user
+        alert = Alert(
+            table_id=table.id,
+            created_by_id=regular_user.id,
+            name="Alerte privée utilisateur",
+            scope=AlertScope.PRIVATE,
+            conditions=json.dumps([{"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}]),
+            is_active=True,
+        )
+        db.add(alert)
+        db.commit()
+        # L'admin ne doit pas la voir dans son panneau
+        r = admin_client.get(f"/tables/{table.id}/alerts/panel")
+        assert r.status_code == 200
+        assert "Alerte privée utilisateur" not in r.text
+
+    def test_private_alert_visible_to_creator(self, user_client, db, admin_user, regular_user):
+        """Une alerte privée doit être visible par son créateur."""
+        from app.models import TablePermission, PermissionLevel
+        table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.WRITE))
+        db.commit()
+        alert = Alert(
+            table_id=table.id,
+            created_by_id=regular_user.id,
+            name="Mon alerte privée",
+            scope=AlertScope.PRIVATE,
+            conditions=json.dumps([{"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}]),
+            is_active=True,
+        )
+        db.add(alert)
+        db.commit()
+        r = user_client.get(f"/tables/{table.id}/alerts/panel")
+        assert r.status_code == 200
+        assert "Mon alerte privée" in r.text
+
+    def test_global_alert_visible_to_regular_user(self, user_client, db, admin_user, regular_user):
+        """Une alerte globale doit être visible par tous les utilisateurs ayant accès."""
+        from app.models import TablePermission, PermissionLevel
+        table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+        alert = Alert(
+            table_id=table.id,
+            created_by_id=admin_user.id,
+            name="Alerte globale admin",
+            scope=AlertScope.GLOBAL,
+            conditions=json.dumps([{"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}]),
+            is_active=True,
+        )
+        db.add(alert)
+        db.commit()
+        r = user_client.get(f"/tables/{table.id}/alerts/panel")
+        assert r.status_code == 200
+        assert "Alerte globale admin" in r.text
+
     def test_non_owner_cannot_delete_alert(self, user_client, db, admin_user, regular_user, table_with_cols):
         from app.models import TablePermission, PermissionLevel
         table, cols = table_with_cols

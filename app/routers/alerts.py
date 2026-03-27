@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from app.alerts import evaluate_alerts_for_row
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
+from sqlalchemy import or_
+
 from app.models import Alert, AlertNotification, AlertScope, AlertState, DataTable, TableRow, User
 
 router = APIRouter(tags=["alerts"])
@@ -58,7 +60,19 @@ def _build_conditions(col_ids: list[str], operators: list[str], values: list[str
 
 
 def _panel_context(table: DataTable, user: User, db: Session) -> dict:
-    alerts = db.query(Alert).filter_by(table_id=table.id).order_by(Alert.created_at.desc()).all()
+    # Alertes visibles : globales (tous) + privées du créateur uniquement
+    alerts = (
+        db.query(Alert)
+        .filter(
+            Alert.table_id == table.id,
+            or_(
+                Alert.scope == AlertScope.GLOBAL,
+                Alert.created_by_id == user.id,
+            ),
+        )
+        .order_by(Alert.created_at.desc())
+        .all()
+    )
     columns_json = json.dumps([
         {"id": col.id, "name": col.name, "type": col.col_type.value}
         for col in table.columns
