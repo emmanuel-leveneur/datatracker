@@ -128,33 +128,92 @@
   var EXISTING_CONDITIONS = {{ conditions_json | safe }};
 
   var OPERATORS = {
-    text:    [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
-    integer: [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
-    float:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
+    text:     [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
+    integer:  [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
+    float:    [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
     date:     [{v:"eq",l:"="}, {v:"before",l:"avant"}, {v:"after",l:"après"}, {v:"before_today",l:"avant aujourd'hui"}, {v:"after_today",l:"après aujourd'hui"}, {v:"today_or_before",l:"aujourd'hui ou avant"}, {v:"today_or_after",l:"aujourd'hui ou après"}, {v:"today",l:"aujourd'hui"}, {v:"yesterday",l:"hier"}, {v:"tomorrow",l:"demain"}],
     datetime: [{v:"eq",l:"="}, {v:"before",l:"avant"}, {v:"after",l:"après"}, {v:"before_today",l:"avant aujourd'hui"}, {v:"after_today",l:"après aujourd'hui"}, {v:"today_or_before",l:"aujourd'hui ou avant"}, {v:"today_or_after",l:"aujourd'hui ou après"}, {v:"today",l:"aujourd'hui"}, {v:"yesterday",l:"hier"}, {v:"tomorrow",l:"demain"}],
     select:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"in",l:"dans (virgules)"}, {v:"not_in",l:"pas dans (virgules)"}],
-    boolean: [{v:"is_true",l:"est vrai"}, {v:"is_false",l:"est faux"}],
-    email:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
+    boolean:  [{v:"is_true",l:"est vrai"}, {v:"is_false",l:"est faux"}],
+    email:    [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
   };
   var NO_VALUE_OPS = ["today", "yesterday", "tomorrow", "is_true", "is_false", "before_today", "after_today", "today_or_before", "today_or_after"];
+  var COMPARABLE_TYPES = ['integer', 'float', 'date', 'datetime'];
   var inputCls = "border border-gray-300 rounded px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400";
-
-  // Mémorise le type de colonne par condition (pour le changement dynamique d'input)
   var condColTypes = {};
 
-  function buildValInput(idx, colType, defVal) {
-    var cls = inputCls + ' w-full';
-    if (colType === 'date') {
-      return '<input type="date" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" class="' + cls + '">';
-    }
-    if (colType === 'datetime') {
-      return '<input type="datetime-local" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" class="' + cls + '">';
-    }
-    return '<input type="text" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" placeholder="Valeur" class="' + cls + '">';
+  function buildColOptions(colType, srcColId, selectedColId) {
+    var opts = '<option value="">— Choisir —</option>';
+    COLUMNS_DATA.forEach(function(c) {
+      if (c.type === colType && c.id != srcColId) {
+        opts += '<option value="' + c.id + '"' + (c.id == selectedColId ? ' selected' : '') + '>' + c.name + '</option>';
+      }
+    });
+    return opts;
   }
 
-  window.addCondition = function(defColId, defOp, defVal, defLogic) {
+  function buildValInput(idx, colType, defVal, defValueType, defValueColId, srcColId) {
+    var cls = inputCls + ' w-full';
+    var isColMode = defValueType === 'column';
+    var isComparable = COMPARABLE_TYPES.indexOf(colType) !== -1;
+
+    var literalInput;
+    if (colType === 'date') {
+      literalInput = '<input type="date" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" class="' + cls + '">';
+    } else if (colType === 'datetime') {
+      literalInput = '<input type="datetime-local" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" class="' + cls + '">';
+    } else {
+      literalInput = '<input type="text" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" placeholder="Valeur" class="' + cls + '">';
+    }
+
+    var toggleBar = '';
+    if (isComparable) {
+      toggleBar = '<div id="val-toggle-bar-' + idx + '" class="flex gap-3 mb-1">' +
+        '<label class="cursor-pointer flex items-center gap-1 text-xs text-gray-500">' +
+          '<input type="radio" name="valtoggle_' + idx + '" value="literal"' + (!isColMode ? ' checked' : '') +
+          ' onchange="switchValMode(' + idx + ',\'literal\')"> Valeur fixe' +
+        '</label>' +
+        '<label class="cursor-pointer flex items-center gap-1 text-xs text-gray-500">' +
+          '<input type="radio" name="valtoggle_' + idx + '" value="column"' + (isColMode ? ' checked' : '') +
+          ' onchange="switchValMode(' + idx + ',\'column\')"> Colonne' +
+        '</label>' +
+      '</div>';
+    }
+
+    var colOpts = buildColOptions(colType, srcColId, isColMode ? defValueColId : null);
+    var colSelect = '<select id="val-col-select-' + idx + '" class="' + cls + '"' +
+      ' onchange="document.getElementById(\'val-col-id-' + idx + '\').value=this.value">' +
+      colOpts + '</select>';
+
+    return '<div id="val-zone-' + idx + '">' +
+      toggleBar +
+      '<div id="val-literal-' + idx + '"' + (isColMode ? ' class="hidden"' : '') + '>' + literalInput + '</div>' +
+      '<div id="val-col-' + idx + '"' + (!isColMode ? ' class="hidden"' : '') + '>' + colSelect + '</div>' +
+      '<input type="hidden" name="value_types" id="val-type-' + idx + '" value="' + (isColMode ? 'column' : 'literal') + '">' +
+      '<input type="hidden" name="value_col_ids" id="val-col-id-' + idx + '" value="' + (isColMode && defValueColId ? defValueColId : '') + '">' +
+    '</div>';
+  }
+
+  window.switchValMode = function(idx, mode) {
+    var literalDiv = document.getElementById('val-literal-' + idx);
+    var colDiv = document.getElementById('val-col-' + idx);
+    var typeInput = document.getElementById('val-type-' + idx);
+    var colIdInput = document.getElementById('val-col-id-' + idx);
+    var valInput = document.getElementById('val-' + idx);
+    if (mode === 'column') {
+      literalDiv.classList.add('hidden');
+      colDiv.classList.remove('hidden');
+      if (valInput) valInput.value = '';
+      typeInput.value = 'column';
+    } else {
+      literalDiv.classList.remove('hidden');
+      colDiv.classList.add('hidden');
+      colIdInput.value = '';
+      typeInput.value = 'literal';
+    }
+  };
+
+  window.addCondition = function(defColId, defOp, defVal, defLogic, defValueType, defValueColId) {
     if (activeConditions >= MAX_CONDITIONS) return;
     var idx = totalCreated++;
     activeConditions++;
@@ -166,6 +225,7 @@
 
     var firstCol = COLUMNS_DATA.find(function(c) { return c.id == (defColId || (COLUMNS_DATA[0] && COLUMNS_DATA[0].id)); });
     var colType = firstCol ? firstCol.type : 'text';
+    var srcColId = firstCol ? firstCol.id : null;
     condColTypes[idx] = colType;
     var ops = OPERATORS[colType] || OPERATORS.text;
     var opOptions = ops.map(function(op) {
@@ -181,7 +241,7 @@
       logicHtml +
       '<select name="col_ids" class="' + inputCls + ' w-full" onchange="updateOperators(this,' + idx + ')">' + colOptions + '</select>' +
       '<select name="operators" class="' + inputCls + ' w-full" id="op-' + idx + '" onchange="updateValueField(this,' + idx + ')">' + opOptions + '</select>' +
-      buildValInput(idx, colType, defVal) +
+      buildValInput(idx, colType, defVal, defValueType, defValueColId, srcColId) +
       '<button type="button" onclick="removeCondition(' + idx + ')" class="text-xs text-red-500 hover:underline">Supprimer</button>' +
     '</div>';
 
@@ -198,24 +258,31 @@
     var ops = OPERATORS[colType] || OPERATORS.text;
     var opSelect = document.getElementById('op-' + idx);
     opSelect.innerHTML = ops.map(function(op) { return '<option value="' + op.v + '">' + op.l + '</option>'; }).join('');
-    // Remplacer le champ valeur si le type de colonne a changé
     if (condColTypes[idx] !== colType) {
       condColTypes[idx] = colType;
-      var oldInput = document.getElementById('val-' + idx);
-      if (oldInput) {
+      var oldZone = document.getElementById('val-zone-' + idx);
+      if (oldZone) {
         var tmp = document.createElement('div');
-        tmp.innerHTML = buildValInput(idx, colType, '');
-        oldInput.parentNode.replaceChild(tmp.firstChild, oldInput);
+        tmp.innerHTML = buildValInput(idx, colType, '', 'literal', '', colId);
+        oldZone.parentNode.replaceChild(tmp.firstChild, oldZone);
       }
     }
     updateValueField(opSelect, idx);
   };
 
   window.updateValueField = function(opSelect, idx) {
-    var valInput = document.getElementById('val-' + idx);
-    if (!valInput) return;
-    valInput.style.display = NO_VALUE_OPS.indexOf(opSelect.value) !== -1 ? 'none' : '';
-    if (NO_VALUE_OPS.indexOf(opSelect.value) !== -1) valInput.value = '';
+    var zone = document.getElementById('val-zone-' + idx);
+    if (!zone) return;
+    var isNoVal = NO_VALUE_OPS.indexOf(opSelect.value) !== -1;
+    zone.style.display = isNoVal ? 'none' : '';
+    if (isNoVal) {
+      var valInput = document.getElementById('val-' + idx);
+      if (valInput) valInput.value = '';
+      var colIdInput = document.getElementById('val-col-id-' + idx);
+      if (colIdInput) colIdInput.value = '';
+      var typeInput = document.getElementById('val-type-' + idx);
+      if (typeInput) typeInput.value = 'literal';
+    }
   };
 
   window.removeCondition = function(idx) {
@@ -231,7 +298,7 @@
 
   // Pré-remplissage des conditions existantes
   EXISTING_CONDITIONS.forEach(function(c, i) {
-    addCondition(c.col_id, c.operator, c.value, i > 0 ? c.logic : null);
+    addCondition(c.col_id, c.operator, c.value, i > 0 ? c.logic : null, c.value_type, c.value_col_id);
   });
 })();
 </script>

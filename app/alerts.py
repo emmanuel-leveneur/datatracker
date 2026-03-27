@@ -33,13 +33,21 @@ NO_VALUE_OPERATORS = {
 def _evaluate_condition(condition: dict, cells: dict[int, str], columns: dict[int, TableColumn]) -> bool:
     col_id = condition.get("col_id")
     operator = condition.get("operator", "eq")
-    target = str(condition.get("value", ""))
 
     if col_id not in columns:
         return False
 
     raw = cells.get(col_id, "")
     col_type = columns[col_id].col_type
+
+    # Résolution de la valeur cible : colonne ou valeur littérale
+    if condition.get("value_type") == "column":
+        value_col_id = condition.get("value_col_id")
+        if not value_col_id or value_col_id not in columns:
+            return False  # colonne référencée supprimée → fallback sécurisé
+        target = cells.get(value_col_id, "")
+    else:
+        target = str(condition.get("value", ""))
 
     if col_type in (ColumnType.INTEGER, ColumnType.FLOAT):
         try:
@@ -168,11 +176,13 @@ def _build_message(alert_name: str, conditions: list[dict], col_names: dict[int,
     for i, c in enumerate(conditions):
         col_name = col_names.get(c.get("col_id"), "?")
         op_label = OPERATOR_LABELS.get(c.get("operator", "eq"), c.get("operator", "?"))
-        val = c.get("value", "")
         if i > 0:
             parts.append(c.get("logic", "ET"))
-        if val:
-            parts.append(f"{col_name} {op_label} {val}")
+        if c.get("value_type") == "column":
+            target_name = col_names.get(c.get("value_col_id"), "?")
+            parts.append(f"{col_name} {op_label} {target_name}")
+        elif c.get("value"):
+            parts.append(f"{col_name} {op_label} {c['value']}")
         else:
             parts.append(f"{col_name} {op_label}")
     cond_str = " ".join(parts) if parts else "?"

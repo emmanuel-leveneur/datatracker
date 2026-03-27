@@ -194,6 +194,44 @@ class TestEvaluateCondition:
             {992: "2025-06-01T00:00"}, columns
         )
 
+    def test_column_comparison_integer_lt(self, db, admin_user):
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col_a = TableColumn(id=980, name="Stock actuel", col_type=ColumnType.INTEGER)
+        col_b = TableColumn(id=981, name="Stock minimum", col_type=ColumnType.INTEGER)
+        columns = {980: col_a, 981: col_b}
+        cond = {"col_id": 980, "operator": "lt", "value_type": "column", "value_col_id": 981}
+        assert _evaluate_condition(cond, {980: "5", 981: "10"}, columns)
+        assert not _evaluate_condition(cond, {980: "15", 981: "10"}, columns)
+
+    def test_column_comparison_date_after(self, db, admin_user):
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col_reelle = TableColumn(id=982, name="Livraison réelle", col_type=ColumnType.DATE)
+        col_prevue = TableColumn(id=983, name="Livraison prévue", col_type=ColumnType.DATE)
+        columns = {982: col_reelle, 983: col_prevue}
+        cond = {"col_id": 982, "operator": "after", "value_type": "column", "value_col_id": 983}
+        assert _evaluate_condition(cond, {982: "2026-01-25", 983: "2026-01-20"}, columns)
+        assert not _evaluate_condition(cond, {982: "2026-01-18", 983: "2026-01-20"}, columns)
+
+    def test_column_comparison_missing_target_returns_false(self, db, admin_user):
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col = TableColumn(id=984, name="Prix vente", col_type=ColumnType.FLOAT)
+        columns = {984: col}
+        cond = {"col_id": 984, "operator": "gt", "value_type": "column", "value_col_id": 999}
+        assert not _evaluate_condition(cond, {984: "100"}, columns)
+
+    def test_column_comparison_float_vente_inferieur_achat(self, db, admin_user):
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col_vente = TableColumn(id=985, name="Prix vente", col_type=ColumnType.FLOAT)
+        col_achat = TableColumn(id=986, name="Prix achat", col_type=ColumnType.FLOAT)
+        columns = {985: col_vente, 986: col_achat}
+        cond = {"col_id": 985, "operator": "lt", "value_type": "column", "value_col_id": 986}
+        assert _evaluate_condition(cond, {985: "70.0", 986: "80.0"}, columns)
+        assert not _evaluate_condition(cond, {985: "100.0", 986: "80.0"}, columns)
+
 
 class TestEvaluateAlert:
     def test_single_condition_true(self, db, admin_user, table_with_cols):

@@ -31,18 +31,29 @@ def _check_alert_owner(alert: Alert, user: User) -> None:
         raise HTTPException(status_code=403)
 
 
-def _build_conditions(col_ids: list[str], operators: list[str],
-                      values: list[str], logics: list[str]) -> list[dict]:
+def _build_conditions(col_ids: list[str], operators: list[str], values: list[str],
+                      logics: list[str], value_types: list[str] | None = None,
+                      value_col_ids: list[str] | None = None) -> list[dict]:
     conditions = []
     for i, col_id in enumerate(col_ids):
         if not col_id:
             continue
-        conditions.append({
+        vtype = (value_types[i] if value_types and i < len(value_types) else "") or "literal"
+        cond: dict = {
             "col_id": int(col_id),
             "operator": operators[i] if i < len(operators) else "eq",
             "value": values[i] if i < len(values) else "",
             "logic": logics[i] if i < len(logics) else "AND",
-        })
+            "value_type": vtype,
+        }
+        if vtype == "column":
+            vcol_str = (value_col_ids[i] if value_col_ids and i < len(value_col_ids) else "") or ""
+            try:
+                cond["value_col_id"] = int(vcol_str)
+                cond["value"] = ""
+            except (ValueError, TypeError):
+                cond["value_type"] = "literal"  # référence invalide → retour littéral
+        conditions.append(cond)
     return conditions[:MAX_CONDITIONS]
 
 
@@ -97,12 +108,14 @@ async def create_alert(
     operators = form.getlist("operators")
     values = form.getlist("values")
     logics = form.getlist("logics")
+    value_types = form.getlist("value_types")
+    value_col_ids = form.getlist("value_col_ids")
 
     # Validation
     errors: list[str] = []
     if not name:
         errors.append("Le nom de l'alerte est obligatoire.")
-    conditions = _build_conditions(col_ids, operators, values, logics)
+    conditions = _build_conditions(col_ids, operators, values, logics, value_types, value_col_ids)
     if not conditions:
         errors.append("Au moins une condition est requise.")
 
@@ -212,11 +225,13 @@ async def update_alert(
     operators = form.getlist("operators")
     values = form.getlist("values")
     logics = form.getlist("logics")
+    value_types = form.getlist("value_types")
+    value_col_ids = form.getlist("value_col_ids")
 
     errors: list[str] = []
     if not name:
         errors.append("Le nom de l'alerte est obligatoire.")
-    conditions = _build_conditions(col_ids, operators, values, logics)
+    conditions = _build_conditions(col_ids, operators, values, logics, value_types, value_col_ids)
     if not conditions:
         errors.append("Au moins une condition est requise.")
 
