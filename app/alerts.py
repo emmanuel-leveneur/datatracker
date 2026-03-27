@@ -84,6 +84,31 @@ def _evaluate_condition(condition: dict, cells: dict[int, str], columns: dict[in
         if operator == "before": return raw_date < target_date
         if operator == "after":  return raw_date > target_date
 
+    elif col_type == ColumnType.DATETIME:
+        try:
+            raw_dt = datetime.fromisoformat(raw) if raw else None
+        except ValueError:
+            raw_dt = None
+        today = date.today()
+        # Opérateurs relatifs : comparaison sur la partie date uniquement
+        raw_d = raw_dt.date() if raw_dt else None
+        if operator == "today":          return raw_d == today
+        if operator == "yesterday":      return raw_d == today - timedelta(days=1)
+        if operator == "tomorrow":       return raw_d == today + timedelta(days=1)
+        if operator == "before_today":   return raw_d is not None and raw_d < today
+        if operator == "after_today":    return raw_d is not None and raw_d > today
+        if operator == "today_or_before": return raw_d is not None and raw_d <= today
+        if operator == "today_or_after":  return raw_d is not None and raw_d >= today
+        if raw_dt is None:
+            return False
+        try:
+            target_dt = datetime.fromisoformat(target)
+        except ValueError:
+            return False
+        if operator == "eq":     return raw_dt == target_dt
+        if operator == "before": return raw_dt < target_dt
+        if operator == "after":  return raw_dt > target_dt
+
     elif col_type == ColumnType.SELECT:
         if operator == "eq":      return raw == target
         if operator == "neq":     return raw != target

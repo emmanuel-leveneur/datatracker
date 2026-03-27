@@ -48,6 +48,7 @@ def _col_type_label(col_type: ColumnType) -> str:
         ColumnType.INTEGER: "Entier",
         ColumnType.FLOAT: "Décimal",
         ColumnType.DATE: "Date",
+        ColumnType.DATETIME: "Date+Heure",
         ColumnType.BOOLEAN: "Oui/Non",
         ColumnType.EMAIL: "Email",
         ColumnType.SELECT: "Liste",

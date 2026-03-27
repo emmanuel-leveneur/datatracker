@@ -17,6 +17,7 @@ class ColumnType(str, enum.Enum):
     INTEGER = "integer"
     FLOAT = "float"
     DATE = "date"
+    DATETIME = "datetime"
     BOOLEAN = "boolean"
     EMAIL = "email"
     SELECT = "select"

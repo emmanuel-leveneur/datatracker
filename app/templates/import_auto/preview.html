@@ -93,7 +93,7 @@
                         class="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
                   {% for t in all_types %}
                   <option value="{{ t }}" {% if t == col_type.value %}selected{% endif %}>
-                    {{ {"text":"Texte","integer":"Entier","float":"Décimal","date":"Date","boolean":"Oui/Non","email":"Email","select":"Liste"}[t] }}
+                    {{ {"text":"Texte","integer":"Entier","float":"Décimal","date":"Date","datetime":"Date+Heure","boolean":"Oui/Non","email":"Email","select":"Liste"}.get(t, t) }}
                   </option>
                   {% endfor %}
                 </select>

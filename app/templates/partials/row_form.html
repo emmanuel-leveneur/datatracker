@@ -43,6 +43,10 @@
           <input type="date" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
             {% if col.required %}required{% endif %}
             class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        {% elif col.col_type.value == 'datetime' %}
+          <input type="datetime-local" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
+            {% if col.required %}required{% endif %}
+            class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
         {% elif col.col_type.value == 'integer' %}
           <input type="number" step="1" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
             {% if col.required %}required{% endif %}

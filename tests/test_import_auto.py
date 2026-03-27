@@ -127,6 +127,21 @@ class TestInferColumnType:
         vals = ['1'] * 8 + ['texte'] * 2
         assert infer_column_type(vals) == ColumnType.TEXT
 
+    def test_datetime_iso_T(self):
+        vals = ['2024-01-15T14:30', '2023-12-31T08:00', '2025-06-01T23:59'] * 3
+        assert infer_column_type(vals) == ColumnType.DATETIME
+
+    def test_datetime_iso_space(self):
+        vals = ['2024-01-15 14:30:00', '2023-12-31 08:00:00', '2025-06-01 23:59:00'] * 3
+        assert infer_column_type(vals) == ColumnType.DATETIME
+
+    def test_datetime_before_date(self):
+        # Un datetime ne doit pas être détecté comme date
+        vals = ['2024-01-15T14:30', '2023-12-31T08:00'] * 5
+        result = infer_column_type(vals)
+        assert result == ColumnType.DATETIME
+        assert result != ColumnType.DATE
+
 
 # ── Normalisation ─────────────────────────────────────────────────────────────
 
@@ -145,6 +160,18 @@ class TestNormalizeValue:
 
     def test_float_comma_to_dot(self):
         assert normalize_value('3,14', ColumnType.FLOAT) == '3.14'
+
+    def test_datetime_iso_T_normalized(self):
+        assert normalize_value('2024-01-15T14:30', ColumnType.DATETIME) == '2024-01-15T14:30'
+
+    def test_datetime_with_seconds_strips_seconds(self):
+        assert normalize_value('2024-01-15T14:30:45', ColumnType.DATETIME) == '2024-01-15T14:30'
+
+    def test_datetime_space_separator_to_T(self):
+        assert normalize_value('2024-01-15 14:30:00', ColumnType.DATETIME) == '2024-01-15T14:30'
+
+    def test_datetime_french_format(self):
+        assert normalize_value('15/01/2024 14:30', ColumnType.DATETIME) == '2024-01-15T14:30'
 
     def test_text_unchanged(self):
         assert normalize_value('Hello World', ColumnType.TEXT) == 'Hello World'

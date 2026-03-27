@@ -24,6 +24,16 @@ SAMPLE_SIZE = 200  # nb de valeurs non vides analysées pour inférer le type
 SELECT_MAX_DISTINCT = 15
 SELECT_MAX_RATIO = 0.20
 
+# Patterns datetime supportés (AVANT les dates — ordre critique)
+_DATETIME_PATTERNS = [
+    (re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$'), '%Y-%m-%dT%H:%M:%S'),   # ISO T avec sec
+    (re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$'),        '%Y-%m-%dT%H:%M'),      # ISO T sans sec
+    (re.compile(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$'),  '%Y-%m-%d %H:%M:%S'),  # ISO espace avec sec
+    (re.compile(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$'),        '%Y-%m-%d %H:%M'),     # ISO espace sans sec
+    (re.compile(r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$'),  '%d/%m/%Y %H:%M:%S'),  # FR avec sec
+    (re.compile(r'^\d{2}/\d{2}/\d{4} \d{2}:\d{2}$'),        '%d/%m/%Y %H:%M'),     # FR sans sec
+]
+
 # Patterns de dates supportés (ordre important : du plus précis au moins précis)
 _DATE_PATTERNS = [
     (re.compile(r'^\d{4}-\d{2}-\d{2}$'), '%Y-%m-%d'),        # ISO
@@ -119,6 +129,17 @@ def parse_excel(raw: bytes, sheet_index: int = 0) -> tuple[list[str], list[list[
 
 # ── Inférence de types ─────────────────────────────────────────────────────────
 
+def _is_datetime(val: str) -> bool:
+    for pattern, fmt in _DATETIME_PATTERNS:
+        if pattern.match(val):
+            try:
+                dt.strptime(val, fmt)
+                return True
+            except ValueError:
+                pass
+    return False
+
+
 def _is_date(val: str) -> bool:
     for pattern, fmt in _DATE_PATTERNS:
         if pattern.match(val):
@@ -184,6 +205,10 @@ def infer_column_type(all_values: list[str]) -> ColumnType:
     if _is_bool_column(sample):
         return ColumnType.BOOLEAN
 
+    # DATETIME avant DATE (les patterns datetime sont plus spécifiques)
+    if sum(_is_datetime(v) for v in sample) / total >= threshold:
+        return ColumnType.DATETIME
+
     if sum(_is_date(v) for v in sample) / total >= threshold:
         return ColumnType.DATE
 
@@ -233,6 +258,15 @@ def normalize_value(val: str, col_type: ColumnType) -> str:
 
     if col_type == ColumnType.BOOLEAN:
         return 'true' if val.lower() in _BOOL_TRUE else 'false'
+
+    if col_type == ColumnType.DATETIME:
+        for pattern, fmt in _DATETIME_PATTERNS:
+            if pattern.match(val):
+                try:
+                    return dt.strptime(val, fmt).strftime('%Y-%m-%dT%H:%M')
+                except ValueError:
+                    pass
+        return val  # stocké tel quel si non parseable
 
     if col_type == ColumnType.DATE:
         for pattern, fmt in _DATE_PATTERNS:

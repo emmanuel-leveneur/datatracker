@@ -58,7 +58,13 @@
       {% for col in columns %}
       {% set cell_style = row_data.cell_styles.get(col.id, '') if (is_alerted and row_data) else '' %}
       {% set val = item.cells.get(col.id, '') %}
-      {% set val_display = val[8:10] ~ '/' ~ val[5:7] ~ '/' ~ val[0:4] if (col.col_type.value == 'date' and val and val | length >= 10) else val %}
+      {% if col.col_type.value == 'date' and val and val | length >= 10 %}
+        {% set val_display = val[8:10] ~ '/' ~ val[5:7] ~ '/' ~ val[0:4] %}
+      {% elif col.col_type.value == 'datetime' and val and val | length >= 16 %}
+        {% set val_display = val[8:10] ~ '/' ~ val[5:7] ~ '/' ~ val[0:4] ~ ' ' ~ val[11:16] %}
+      {% else %}
+        {% set val_display = val %}
+      {% endif %}
       <td class="px-4 py-2.5 text-gray-700 whitespace-nowrap max-w-[200px] truncate"
           title="{{ val_display }}"
           {% if cell_style %}style="{{ cell_style }}"{% endif %}>
@@ -72,6 +78,8 @@
           <a href="mailto:{{ val }}" class="text-blue-600 hover:underline">{{ val }}</a>
         {% elif col.col_type.value == 'date' and val and val | length >= 10 %}
           {{ val[8:10] }}/{{ val[5:7] }}/{{ val[0:4] }}
+        {% elif col.col_type.value == 'datetime' and val and val | length >= 16 %}
+          {{ val[8:10] }}/{{ val[5:7] }}/{{ val[0:4] }} {{ val[11:16] }}
         {% elif col.col_type.value == 'relation' %}
           {% if col.related_value_col_id %}
             {{ val }}

@@ -131,8 +131,9 @@
     text:    [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
     integer: [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
     float:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"gt",l:">"}, {v:"lt",l:"<"}, {v:"gte",l:"≥"}, {v:"lte",l:"≤"}],
-    date:    [{v:"eq",l:"="}, {v:"before",l:"avant"}, {v:"after",l:"après"}, {v:"before_today",l:"avant aujourd'hui"}, {v:"after_today",l:"après aujourd'hui"}, {v:"today_or_before",l:"aujourd'hui ou avant"}, {v:"today_or_after",l:"aujourd'hui ou après"}, {v:"today",l:"aujourd'hui"}, {v:"yesterday",l:"hier"}, {v:"tomorrow",l:"demain"}],
-    select:  [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"in",l:"dans (virgules)"}, {v:"not_in",l:"pas dans (virgules)"}],
+    date:     [{v:"eq",l:"="}, {v:"before",l:"avant"}, {v:"after",l:"après"}, {v:"before_today",l:"avant aujourd'hui"}, {v:"after_today",l:"après aujourd'hui"}, {v:"today_or_before",l:"aujourd'hui ou avant"}, {v:"today_or_after",l:"aujourd'hui ou après"}, {v:"today",l:"aujourd'hui"}, {v:"yesterday",l:"hier"}, {v:"tomorrow",l:"demain"}],
+    datetime: [{v:"eq",l:"="}, {v:"before",l:"avant"}, {v:"after",l:"après"}, {v:"before_today",l:"avant aujourd'hui"}, {v:"after_today",l:"après aujourd'hui"}, {v:"today_or_before",l:"aujourd'hui ou avant"}, {v:"today_or_after",l:"aujourd'hui ou après"}, {v:"today",l:"aujourd'hui"}, {v:"yesterday",l:"hier"}, {v:"tomorrow",l:"demain"}],
+    select:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"in",l:"dans (virgules)"}, {v:"not_in",l:"pas dans (virgules)"}],
     boolean: [{v:"is_true",l:"est vrai"}, {v:"is_false",l:"est faux"}],
     email:   [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],
   };
@@ -146,6 +147,9 @@
     var cls = inputCls + ' w-full';
     if (colType === 'date') {
       return '<input type="date" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" class="' + cls + '">';
+    }
+    if (colType === 'datetime') {
+      return '<input type="datetime-local" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" class="' + cls + '">';
     }
     return '<input type="text" name="values" id="val-' + idx + '" value="' + (defVal || '') + '" placeholder="Valeur" class="' + cls + '">';
   }

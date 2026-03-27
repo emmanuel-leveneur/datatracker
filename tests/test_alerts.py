@@ -155,6 +155,46 @@ class TestEvaluateCondition:
         assert not _evaluate_condition({"col_id": 996, "operator": "today_or_after"}, {996: yesterday}, columns)
 
 
+    def test_datetime_before_today(self, db, admin_user):
+        from datetime import date, timedelta
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col = TableColumn(id=990, name="CreatedAt", col_type=ColumnType.DATETIME)
+        columns = {990: col}
+        yesterday_dt = (date.today() - timedelta(days=1)).isoformat() + "T10:00"
+        tomorrow_dt = (date.today() + timedelta(days=1)).isoformat() + "T10:00"
+        assert _evaluate_condition({"col_id": 990, "operator": "before_today"}, {990: yesterday_dt}, columns)
+        assert not _evaluate_condition({"col_id": 990, "operator": "before_today"}, {990: tomorrow_dt}, columns)
+
+    def test_datetime_eq(self, db, admin_user):
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col = TableColumn(id=991, name="RDV", col_type=ColumnType.DATETIME)
+        columns = {991: col}
+        assert _evaluate_condition(
+            {"col_id": 991, "operator": "eq", "value": "2025-03-15T14:30"},
+            {991: "2025-03-15T14:30"}, columns
+        )
+        assert not _evaluate_condition(
+            {"col_id": 991, "operator": "eq", "value": "2025-03-15T14:30"},
+            {991: "2025-03-15T09:00"}, columns
+        )
+
+    def test_datetime_before_after(self, db, admin_user):
+        from app.alerts import _evaluate_condition
+        from app.models import TableColumn, ColumnType
+        col = TableColumn(id=992, name="Event", col_type=ColumnType.DATETIME)
+        columns = {992: col}
+        assert _evaluate_condition(
+            {"col_id": 992, "operator": "before", "value": "2025-06-01T00:00"},
+            {992: "2025-01-01T00:00"}, columns
+        )
+        assert _evaluate_condition(
+            {"col_id": 992, "operator": "after", "value": "2025-01-01T00:00"},
+            {992: "2025-06-01T00:00"}, columns
+        )
+
+
 class TestEvaluateAlert:
     def test_single_condition_true(self, db, admin_user, table_with_cols):
         from app.alerts import _evaluate_alert
