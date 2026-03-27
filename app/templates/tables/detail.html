@@ -343,7 +343,12 @@ function closeAlertsPanel() {
     { extend: 'excel',  text: 'Excel',     exportOptions: exportOpts },
     { extend: 'pdf',    text: 'PDF',       exportOptions: exportOpts },
     { extend: 'print',  text: 'Imprimer',  exportOptions: exportOpts },
-    { extend: 'colvis', text: 'Colonnes',  columns: ':not(.dt-no-export)' }
+    { extend: 'colvis', text: 'Colonnes',  columns: ':not(.dt-no-export)',
+      columnText: function(dt, idx, title) {
+        // thead a 2 lignes (noms + filtres) : lire le titre depuis la 1re ligne
+        return $('#main-table thead tr:first th').eq(idx).text().trim() || title;
+      }
+    }
   ];
 
   function initMainTable() {
