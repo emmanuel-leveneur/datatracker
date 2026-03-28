@@ -12,8 +12,8 @@
         {% endif %}
       </th>
       {% endfor %}
-      {# Colonne actions (toujours présente : commentaires + edit/delete si can_write) #}
-      <th class="dt-no-export px-3 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
+      {# Colonne actions sticky à droite #}
+      <th class="dt-no-export col-sticky-right px-3 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-gray-50">
         {% if can_write %}Actions{% endif %}
       </th>
     </tr>
@@ -37,7 +37,7 @@
         />
       </th>
       {% endfor %}
-      <th class="px-2 py-1.5"></th>{# colonne actions #}
+      <th class="col-sticky-right px-2 py-1.5 bg-white"></th>{# colonne actions #}
     </tr>
   </thead>
   <tbody class="divide-y divide-gray-100 bg-white">
@@ -49,8 +49,8 @@
     <tr class="hover:bg-gray-50 transition"
         id="row-{{ item.row.id }}"
         {% if is_alerted and row_data.row_style %}style="{{ row_data.row_style }}"{% endif %}>
-      <!-- Indicateur alerte + bordure commentaire sur le td (survit à DataTables) -->
-      <td class="w-8 px-2 py-2.5 text-center {% if _cc %}border-l-4 border-blue-400{% else %}border-l-4 border-transparent{% endif %}">
+      <!-- Indicateur alerte -->
+      <td class="w-8 px-2 py-2.5 text-center">
         {% if is_alerted and row_data.has_notification %}
         <span class="text-amber-500 inline-flex"
               title="{% if row_data.notification_names %}{{ row_data.notification_names | join(' · ') }}{% else %}Alerte non lue{% endif %}">
@@ -95,8 +95,8 @@
         {% endif %}
       </td>
       {% endfor %}
-      {# Colonne actions : commentaires (toujours) + edit/delete (si can_write) #}
-      <td class="px-3 py-2.5 text-right whitespace-nowrap">
+      {# Colonne actions sticky à droite #}
+      <td class="col-sticky-right px-3 py-2.5 text-right whitespace-nowrap bg-white">
         {# Bouton commentaires — pill coloré si commentaires, icône discrète sinon #}
         <button
           id="cc-btn-{{ item.row.id }}"
