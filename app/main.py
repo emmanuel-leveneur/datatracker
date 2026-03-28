@@ -8,6 +8,7 @@ from app.scheduler import start_scheduler, stop_scheduler
 from app.routers import auth, tables, data, export, permissions, admin, logs, tracabilite
 from app.routers import alerts as alerts_router
 from app.routers import import_auto as import_auto_router
+from app.routers import comments as comments_router
 
 
 @asynccontextmanager
@@ -32,6 +33,7 @@ app.include_router(logs.router)
 app.include_router(tracabilite.router)
 app.include_router(alerts_router.router)
 app.include_router(import_auto_router.router)
+app.include_router(comments_router.router)
 
 
 @app.get("/")

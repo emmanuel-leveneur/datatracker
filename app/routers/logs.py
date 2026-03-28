@@ -23,6 +23,9 @@ ACTION_LABELS = {
     "restore_row": "Ligne restaurée",
     "delete_row": "Suppression définitive (ligne)",
     "import_csv": "Import CSV",
+    "create_comment": "Commentaire ajouté",
+    "edit_comment": "Commentaire modifié",
+    "delete_comment": "Commentaire supprimé",
     "update_permissions": "Modification des permissions",
     "update_user_permissions": "Permissions utilisateur",
     "add_owner": "Propriétaire ajouté",
@@ -36,6 +39,7 @@ ACTION_LABELS = {
 RESOURCE_LABELS = {
     "table": "Table",
     "row": "Ligne",
+    "comment": "Commentaire",
     "permission": "Permission",
     "user": "Utilisateur",
 }

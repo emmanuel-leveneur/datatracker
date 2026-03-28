@@ -257,7 +257,17 @@ def table_detail(
     from app.dependencies import is_column_readonly
     from app.alerts import get_alert_row_data
     from app.routers.data import _resolve_relation_labels
+    from app.models import RowComment
+    from sqlalchemy import func as _func
     col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
+
+    row_ids = [r.id for r in rows]
+    comment_counts: dict[int, int] = {}
+    if row_ids:
+        _counts = db.query(RowComment.row_id, _func.count(RowComment.id)).filter(
+            RowComment.row_id.in_(row_ids)
+        ).group_by(RowComment.row_id).all()
+        comment_counts = dict(_counts)
 
     return templates.TemplateResponse(
         request, "tables/detail.html",
@@ -280,6 +290,7 @@ def table_detail(
             "allowed_page_sizes": ALLOWED_PAGE_SIZES,
             "q": q,
             "col_filters": col_filters,
+            "comment_counts": comment_counts,
         },
     )
 

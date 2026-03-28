@@ -15,6 +15,23 @@
     .htmx-request .htmx-indicator { display: inline; }
     .htmx-request.htmx-indicator { display: inline; }
 
+    /* Colonne actions sticky à droite */
+    .col-sticky-right {
+      position: sticky;
+      right: 0;
+      z-index: 1;
+      background: inherit;
+    }
+    /* Ombre gauche visible uniquement quand le tableau scrolle */
+    .col-sticky-right::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -16px; bottom: 0;
+      width: 16px;
+      background: linear-gradient(to right, transparent, rgba(0,0,0,.05));
+      pointer-events: none;
+    }
+
     /* DataTables — harmonisation avec le design Tailwind */
     .dataTables_wrapper { font-size: .875rem; color: #374151; }
     .dataTables_filter label,
