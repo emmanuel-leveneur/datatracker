@@ -4,6 +4,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from app.activity import log_action
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, is_table_owner
 from app.models import DataTable, RowComment, TableRow, User
@@ -151,6 +152,9 @@ async def add_comment(
         raise HTTPException(status_code=422, detail="Le commentaire ne peut pas être vide.")
 
     db.add(RowComment(row_id=row_id, user_id=user.id, content=content))
+    log_action(db, user, "create_comment", "comment",
+               resource_id=row_id, resource_name=table.name, table_id=table.id,
+               details=f"Commentaire ajouté sur la ligne #{row_id} : {content[:120]}")
     db.commit()
 
     ctx = _comment_list_ctx(row, table, user, db)
@@ -183,7 +187,11 @@ def delete_comment(
     if not (comment.user_id == user.id or user.is_admin or is_table_owner(table, user, db)):
         raise HTTPException(status_code=403)
 
+    snippet = comment.content[:120]
     db.delete(comment)
+    log_action(db, user, "delete_comment", "comment",
+               resource_id=row_id, resource_name=table.name, table_id=table.id,
+               details=f"Commentaire supprimé sur la ligne #{row_id} : {snippet}")
     db.commit()
 
     ctx = _comment_list_ctx(row, table, user, db)
@@ -218,6 +226,9 @@ async def edit_comment(
 
     comment.content = content
     comment.edited_at = datetime.utcnow()
+    log_action(db, user, "edit_comment", "comment",
+               resource_id=row_id, resource_name=table.name, table_id=table.id,
+               details=f"Commentaire modifié sur la ligne #{row_id} : {content[:120]}")
     db.commit()
 
     ctx = {
