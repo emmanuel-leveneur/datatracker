@@ -1,0 +1,14 @@
+{# Mise à jour OOB du badge dans le tableau #}
+{% if _oob_badge is defined %}{{ _oob_badge | safe }}{% endif %}
+
+{% if not comments %}
+<div class="flex flex-col items-center justify-center h-full py-16 text-center select-none">
+  <i data-lucide="message-square-off" class="w-12 h-12 text-gray-200 mb-3"></i>
+  <p class="text-sm font-medium text-gray-400">Aucun commentaire</p>
+  <p class="text-xs text-gray-300 mt-1">Soyez le premier à commenter cette ligne.</p>
+</div>
+{% else %}
+{% for comment in comments %}
+  {% include "comments/_comment.html" %}
+{% endfor %}
+{% endif %}

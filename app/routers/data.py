@@ -11,7 +11,8 @@ from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
     get_visible_columns, is_column_readonly,
 )
-from app.models import CellValue, DataTable, TableRow, User
+from app.models import CellValue, DataTable, RowComment, TableRow, User
+from sqlalchemy import func as sa_func
 
 router = APIRouter(prefix="/tables", tags=["data"])
 templates = Jinja2Templates(directory="app/templates")
@@ -80,6 +81,15 @@ def _rows_template_ctx(
         for r in rows
     ]
 
+    # Comptage des commentaires par ligne (batch query)
+    row_ids = [r.id for r in rows]
+    comment_counts: dict[int, int] = {}
+    if row_ids:
+        counts = db.query(RowComment.row_id, sa_func.count(RowComment.id)).filter(
+            RowComment.row_id.in_(row_ids)
+        ).group_by(RowComment.row_id).all()
+        comment_counts = dict(counts)
+
     return {
         "table": table,
         "columns": visible,
@@ -95,6 +105,7 @@ def _rows_template_ctx(
         "page_size": page_size,
         "q": q,
         "col_filters": col_filters,
+        "comment_counts": comment_counts,
     }
 
 

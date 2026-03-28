@@ -44,6 +44,7 @@ class User(Base):
     table_permissions: Mapped[list["TablePermission"]] = relationship(back_populates="user")
     column_permissions: Mapped[list["ColumnPermission"]] = relationship(back_populates="user")
     rows: Mapped[list["TableRow"]] = relationship(back_populates="created_by")
+    row_comments: Mapped[list["RowComment"]] = relationship(back_populates="author")
 
 
 class DataTable(Base):
@@ -112,6 +113,10 @@ class TableRow(Base):
     created_by: Mapped["User"] = relationship(back_populates="rows")
     cell_values: Mapped[list["CellValue"]] = relationship(
         back_populates="row", cascade="all, delete-orphan"
+    )
+    comments: Mapped[list["RowComment"]] = relationship(
+        back_populates="row", cascade="all, delete-orphan",
+        order_by="RowComment.created_at",
     )
 
 
@@ -247,3 +252,21 @@ class ActivityLog(Base):
     details: Mapped[str] = mapped_column(Text, default="")
     # table_id sans FK — permet de filtrer par table sans cascade sur suppression
     table_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class RowComment(Base):
+    __tablename__ = "row_comments"
+    __table_args__ = (
+        Index("ix_row_comments_row_id", "row_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    row_id: Mapped[int] = mapped_column(ForeignKey("table_rows.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    row: Mapped["TableRow"] = relationship(back_populates="comments")
+    author: Mapped["User"] = relationship(back_populates="row_comments")
+

@@ -1,6 +1,24 @@
 {% extends "base.html" %}
 {% block title %}{{ table.name }} — DataTracker{% endblock %}
+
+{% block head %}
+<style>
+  #comment-panel { transform: translateX(100%); transition: transform .28s cubic-bezier(.4,0,.2,1); }
+  #comment-panel.open { transform: translateX(0); }
+  #comment-backdrop { opacity: 0; transition: opacity .28s ease; pointer-events: none; }
+  #comment-backdrop.open { opacity: 1; pointer-events: auto; }
+</style>
+{% endblock %}
+
 {% block content %}
+
+{# ── Panneau latéral commentaires ─────────────────────────────────────────── #}
+<div id="comment-backdrop"
+     class="fixed inset-0 bg-black/40 z-40"
+     onclick="closeCommentPanel()"></div>
+<aside id="comment-panel"
+       class="fixed top-0 right-0 h-full w-full sm:w-[440px] bg-white shadow-2xl z-50 flex flex-col">
+</aside>
 
 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
   <div class="flex items-center gap-3">
@@ -447,5 +465,45 @@ function closeAlertsPanel() {
     if (e.detail.target && e.detail.target.id === 'table-body') initMainTable();
   });
 })();
+
+// ── Panneau commentaires ───────────────────────────────────────────────────
+function openCommentPanel() {
+  document.getElementById('comment-panel').classList.add('open');
+  document.getElementById('comment-backdrop').classList.add('open');
+}
+
+function closeCommentPanel() {
+  var panel = document.getElementById('comment-panel');
+  var backdrop = document.getElementById('comment-backdrop');
+  panel.classList.remove('open');
+  backdrop.classList.remove('open');
+  // Vider le contenu après la transition pour éviter le flash au prochain chargement
+  setTimeout(function() { if (!panel.classList.contains('open')) panel.innerHTML = ''; }, 300);
+}
+
+// Ouvre le panneau dès que HTMX a injecté son contenu
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'comment-panel') {
+    openCommentPanel();
+    lucide.createIcons();
+    // Focus automatique sur le textarea
+    setTimeout(function() {
+      var ta = document.getElementById('comment-input');
+      if (ta) ta.focus();
+    }, 300);
+  }
+});
+
+// Après chaque swap dans le panneau (nouveau commentaire, suppression…)
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'comment-list') {
+    lucide.createIcons();
+  }
+});
+
+// Touche Échap pour fermer
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeCommentPanel();
+});
 </script>
 {% endblock %}

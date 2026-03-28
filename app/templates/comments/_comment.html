@@ -1,0 +1,68 @@
+<div class="flex gap-3 group" id="comment-{{ comment.id }}">
+  {# Avatar avec initiale + couleur déterministe #}
+  <div class="w-8 h-8 rounded-full {{ comment.author.username | avatar_color }} flex items-center justify-center shrink-0 text-white text-xs font-bold select-none">
+    {{ comment.author.username[0] | upper }}
+  </div>
+
+  <div class="flex-1 min-w-0">
+    {# En-tête : nom + timestamp #}
+    <div class="flex items-baseline gap-2 mb-1">
+      <span class="text-sm font-semibold text-gray-800">{{ comment.author.email.split('@')[0] }}</span>
+      <span class="text-xs text-gray-400" title="{{ comment.created_at.strftime('%d/%m/%Y à %H:%M') }}">
+        {{ comment.created_at | relative_time }}
+      </span>
+      {% if comment.edited_at %}
+      <span class="text-xs text-gray-300 italic">(modifié)</span>
+      {% endif %}
+    </div>
+
+    {# Contenu du commentaire #}
+    <div id="comment-text-{{ comment.id }}"
+         class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap break-words bg-gray-50 rounded-lg px-3 py-2">{{ comment.content }}</div>
+
+    {# Formulaire d'édition (masqué par défaut) #}
+    <form id="comment-edit-{{ comment.id }}"
+          class="hidden mt-2"
+          hx-post="/tables/{{ table.id }}/rows/{{ row.id }}/comments/{{ comment.id }}/edit"
+          hx-target="#comment-{{ comment.id }}"
+          hx-swap="outerHTML">
+      <textarea name="content" rows="3"
+                class="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm text-gray-700
+                       focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+                onkeydown="if(event.key==='Escape'){cancelEdit({{ comment.id }})}
+                           if(event.ctrlKey&&event.key==='Enter'){this.closest('form').requestSubmit()}"
+      >{{ comment.content }}</textarea>
+      <div class="flex items-center gap-3 mt-1.5">
+        <button type="submit"
+                class="text-xs font-medium text-blue-600 hover:text-blue-800 transition">
+          Enregistrer
+        </button>
+        <button type="button"
+                onclick="cancelEdit({{ comment.id }})"
+                class="text-xs text-gray-400 hover:text-gray-600 transition">
+          Annuler
+        </button>
+      </div>
+    </form>
+
+    {# Actions : modifier / supprimer — visibles au survol #}
+    {% if comment.user_id == user.id or user.is_admin or is_owner %}
+    <div class="flex items-center gap-3 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      {% if comment.user_id == user.id %}
+      <button onclick="startEdit({{ comment.id }})"
+              class="text-xs text-gray-400 hover:text-blue-600 transition flex items-center gap-1">
+        <i data-lucide="pencil" class="w-3 h-3"></i> Modifier
+      </button>
+      {% endif %}
+      <button
+        hx-post="/tables/{{ table.id }}/rows/{{ row.id }}/comments/{{ comment.id }}/delete"
+        hx-target="#comment-list"
+        hx-swap="innerHTML"
+        hx-confirm="Supprimer ce commentaire ?"
+        class="text-xs text-gray-400 hover:text-red-500 transition flex items-center gap-1">
+        <i data-lucide="trash-2" class="w-3 h-3"></i> Supprimer
+      </button>
+    </div>
+    {% endif %}
+  </div>
+</div>
