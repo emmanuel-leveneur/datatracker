@@ -40,6 +40,25 @@ def list_tables(request: Request, user: User = Depends(get_current_user), db: Se
     else:
         owner_table_ids = set(owned_ids)
 
+    # Nombre d'utilisateurs ayant une permission explicite sur chaque table
+    shared_counts = {t.id: len(t.permissions) for t in tables}
+
+    # Niveau d'accès de l'utilisateur sur les tables dont il n'est pas propriétaire
+    user_perm_levels: dict[int, str] = {}
+    for t in tables:
+        if t.id not in owner_table_ids:
+            tp = next((p for p in t.permissions if p.user_id == user.id), None)
+            if tp:
+                user_perm_levels[t.id] = tp.level.value
+
+    # Nom du premier propriétaire de chaque table (pour les tables partagées)
+    table_owner_names: dict[int, str] = {}
+    for t in tables:
+        if t.id not in owner_table_ids and t.co_owners:
+            owner_obj = t.co_owners[0]
+            if owner_obj.user:
+                table_owner_names[t.id] = owner_obj.user.email.split("@")[0]
+
     return templates.TemplateResponse(
         request, "tables/list.html",
         {
@@ -49,6 +68,9 @@ def list_tables(request: Request, user: User = Depends(get_current_user), db: Se
             "favorite_ids": favorite_ids,
             "trashed_tables": trashed_tables,
             "owner_table_ids": owner_table_ids,
+            "shared_counts": shared_counts,
+            "user_perm_levels": user_perm_levels,
+            "table_owner_names": table_owner_names,
         },
     )
 
