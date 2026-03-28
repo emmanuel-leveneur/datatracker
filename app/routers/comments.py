@@ -109,10 +109,10 @@ def _badge_html(row_id: int, count: int) -> str:
 
 def _render_badge_content(count: int) -> str:
     if count == 0:
-        return '<i data-lucide="message-square" class="w-4 h-4"></i>'
+        return '<i data-lucide="message-square" class="w-3.5 h-3.5"></i>'
     return (
-        f'<i data-lucide="message-square" class="w-4 h-4 text-blue-500"></i>'
-        f'<span class="ml-0.5 text-xs font-semibold text-blue-600">{count}</span>'
+        f'<i data-lucide="message-square" class="w-3.5 h-3.5"></i>'
+        f'<span class="text-xs font-semibold leading-none">{count}</span>'
     )
 
 

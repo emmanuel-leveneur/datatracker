@@ -45,7 +45,9 @@
     {% for item in rows_data %}
     {% set is_alerted = alerted_rows is defined and item.row.id in alerted_rows %}
     {% set row_data = alerted_rows[item.row.id] if is_alerted else None %}
-    <tr class="hover:bg-gray-50 transition" id="row-{{ item.row.id }}"
+    {% set _cc = (comment_counts | default({})).get(item.row.id, 0) %}
+    <tr class="hover:bg-gray-50 transition {% if _cc %}border-l-4 border-blue-400{% else %}border-l-4 border-transparent{% endif %}"
+        id="row-{{ item.row.id }}"
         {% if is_alerted and row_data.row_style %}style="{{ row_data.row_style }}"{% endif %}>
       <!-- Indicateur alerte -->
       <td class="w-8 px-2 py-2.5 text-center">
@@ -95,18 +97,18 @@
       {% endfor %}
       {# Colonne actions : commentaires (toujours) + edit/delete (si can_write) #}
       <td class="px-3 py-2.5 text-right whitespace-nowrap">
-        {# Bouton commentaires avec badge #}
-        {% set _cc = (comment_counts | default({})).get(item.row.id, 0) %}
+        {# Bouton commentaires — pill coloré si commentaires, icône discrète sinon #}
         <button
           hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/comments/panel"
           hx-target="#comment-panel"
           hx-swap="innerHTML"
           title="Commentaires{% if _cc %} ({{ _cc }}){% endif %}"
-          class="inline-flex items-center gap-0.5 p-1.5 rounded hover:bg-blue-50 transition
-                 {% if _cc %}text-blue-500 hover:text-blue-700{% else %}text-gray-300 hover:text-blue-400{% endif %}">
-          <span id="cc-{{ item.row.id }}" class="inline-flex items-center gap-0.5">
-            <i data-lucide="message-square" class="w-4 h-4"></i>
-            {% if _cc %}<span class="text-xs font-semibold">{{ _cc }}</span>{% endif %}
+          class="inline-flex items-center gap-1 rounded-full transition
+                 {% if _cc %}bg-blue-100 text-blue-700 hover:bg-blue-200 px-2 py-0.5
+                 {% else %}text-gray-300 hover:text-blue-400 hover:bg-blue-50 p-1.5{% endif %}">
+          <span id="cc-{{ item.row.id }}" class="inline-flex items-center gap-1">
+            <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
+            {% if _cc %}<span class="text-xs font-semibold leading-none">{{ _cc }}</span>{% endif %}
           </span>
         </button>
         {% if can_write %}
