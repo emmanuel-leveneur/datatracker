@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Confirmer les accès — {{ table.name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+
+  <div class="mb-4">
+    <a href="/tables/{{ table.id }}/permissions" class="text-sm text-blue-600 hover:underline">&larr; Retour aux permissions</a>
+  </div>
+
+  <div class="bg-white border border-amber-200 rounded-xl shadow-sm overflow-hidden">
+    <div class="bg-amber-50 border-b border-amber-200 px-6 py-4 flex items-start gap-3">
+      <i data-lucide="triangle-alert" class="w-5 h-5 text-amber-600 mt-0.5 shrink-0"></i>
+      <div>
+        <h2 class="font-semibold text-amber-900 text-sm">Accès aux tables de relation</h2>
+        <p class="text-amber-800 text-sm mt-1">
+          La table <strong>{{ table.name }}</strong> contient des colonnes de type relation.
+          Les utilisateurs ci-dessous viennent de recevoir accès à cette table, mais n'ont pas encore
+          accès aux tables référencées. Sans ces accès, les colonnes de relation s'afficheront vides.
+        </p>
+      </div>
+    </div>
+
+    <form method="post" action="/tables/{{ table.id }}/permissions/confirm-relation">
+      <div class="divide-y divide-gray-100">
+        {% for item in items %}
+        <div class="px-6 py-4 flex items-center justify-between gap-4">
+          <div class="flex items-center gap-3 min-w-0">
+            <i data-lucide="user" class="w-4 h-4 text-gray-400 shrink-0"></i>
+            <span class="text-sm font-medium text-gray-800 truncate">{{ item.user.username }}</span>
+            <i data-lucide="arrow-right" class="w-4 h-4 text-gray-400 shrink-0"></i>
+            <span class="text-sm text-gray-600 truncate">{{ item.related_table.name }}</span>
+            <span class="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded px-1.5 py-0.5 whitespace-nowrap">lecture</span>
+          </div>
+          <label class="flex items-center gap-2 shrink-0 cursor-pointer">
+            <input type="checkbox"
+                   name="grant_{{ item.user.id }}_{{ item.related_table.id }}"
+                   value="1"
+                   checked
+                   class="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4">
+            <span class="text-sm text-gray-700 whitespace-nowrap">Accorder</span>
+          </label>
+        </div>
+        {% endfor %}
+      </div>
+
+      <div class="px-6 py-4 border-t border-gray-100 bg-gray-50 flex items-center justify-between gap-3">
+        <a href="/tables/{{ table.id }}/permissions"
+           class="text-sm text-gray-500 hover:text-gray-700 hover:underline">
+          Ignorer et ne pas accorder
+        </a>
+        <button type="submit"
+                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition">
+          Confirmer les accès cochés
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

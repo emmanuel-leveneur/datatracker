@@ -71,8 +71,8 @@ def toggle_favorite(
     return RedirectResponse(url="/tables/", status_code=status.HTTP_303_SEE_OTHER)
 
 
-def _all_tables_json(db: Session, exclude_id: int | None = None) -> str:
-    """Sérialise toutes les tables non supprimées avec leurs colonnes pour le JS de config relation."""
+def _all_tables_json(db: Session, user: User, exclude_id: int | None = None) -> str:
+    """Sérialise les tables accessibles par l'utilisateur (min. lecture) avec leurs colonnes."""
     import json
     tables = db.query(DataTable).filter(DataTable.deleted_at == None).all()
     return json.dumps([
@@ -86,7 +86,7 @@ def _all_tables_json(db: Session, exclude_id: int | None = None) -> str:
             ],
         }
         for t in tables
-        if t.id != exclude_id
+        if t.id != exclude_id and can_access_table(t, user, db)
     ])
 
 
@@ -94,7 +94,7 @@ def _all_tables_json(db: Session, exclude_id: int | None = None) -> str:
 def create_table_page(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request, "tables/create.html",
-        {"user": user, "column_types": COLUMN_TYPES, "all_tables_json": _all_tables_json(db)},
+        {"user": user, "column_types": COLUMN_TYPES, "all_tables_json": _all_tables_json(db, user)},
     )
 
 
@@ -279,7 +279,7 @@ def edit_table_page(
             "user": user,
             "table": table,
             "column_types": COLUMN_TYPES,
-            "all_tables_json": _all_tables_json(db, exclude_id=table.id),
+            "all_tables_json": _all_tables_json(db, user, exclude_id=table.id),
         },
     )
 

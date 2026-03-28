@@ -1,12 +1,12 @@
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from app.activity import log_action
 from app.database import get_db
-from app.dependencies import get_current_user, get_table_or_404, is_table_owner
+from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
 from app.models import (
-    ColumnPermission, DataTable, PermissionLevel,
+    ColumnPermission, ColumnType, DataTable, PermissionLevel,
     TableOwner, TablePermission, User,
 )
 
@@ -132,10 +132,140 @@ async def bulk_set_permissions(
                resource_id=table.id, resource_name=table.name, table_id=table.id,
                details="\n".join(diff) if diff else "Aucune modification")
     db.commit()
+
+    # ── Détection des accès manquants sur les tables de relation ──────────────
+    # On cherche les utilisateurs qui viennent de GAGNER un accès à cette table
+    newly_granted = [
+        u for u in all_users
+        if old_table_perms.get(u.id, "none") == "none"
+        and (form.get(f"table_perm_{u.id}") in [e.value for e in PermissionLevel])
+    ]
+
+    # Tables liées référencées par les colonnes RELATION de cette table
+    relation_cols = [c for c in table.columns if c.col_type == ColumnType.RELATION and c.related_table_id]
+    related_tables = {}
+    for col in relation_cols:
+        rt = db.get(DataTable, col.related_table_id)
+        if rt and rt.deleted_at is None:
+            related_tables[rt.id] = rt
+
+    # Pour chaque utilisateur nouvellement accordé × chaque table liée :
+    # on collecte les paires où l'accès manque ET où le partageur peut accorder
+    pending: list[dict] = []
+    seen_pairs: set[tuple[int, int]] = set()
+    for u in newly_granted:
+        for rt in related_tables.values():
+            pair = (u.id, rt.id)
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            # Déjà accès ? (propriétaire, admin, ou permission existante)
+            if can_access_table(rt, u, db):
+                continue
+            # Le partageur peut-il accorder l'accès sur la table liée ?
+            if not (user.is_admin or is_table_owner(rt, user, db)):
+                continue
+            pending.append({"user_id": u.id, "username": u.username, "table_id": rt.id, "table_name": rt.name})
+
+    if pending:
+        return RedirectResponse(
+            url=f"/tables/{table_id}/permissions/confirm-relation?pending=" + "&pending=".join(
+                f"{p['user_id']}:{p['table_id']}" for p in pending
+            ),
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
     return RedirectResponse(
         url=f"/tables/{table_id}/permissions",
         status_code=status.HTTP_303_SEE_OTHER,
     )
+
+
+@router.get("/{table_id}/permissions/confirm-relation", response_class=HTMLResponse)
+def confirm_relation_permissions_page(
+    request: Request,
+    table_id: int,
+    pending: list[str] = Query(default=[]),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Page de confirmation pour accorder l'accès aux tables de relation."""
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    _require_owner_or_admin(table, user, db)
+
+    # Dédoublonner et résoudre les paires user:table depuis les query params
+    items: list[dict] = []
+    seen: set[tuple[int, int]] = set()
+    for pair_str in pending:
+        try:
+            uid, tid = pair_str.split(":")
+            uid, tid = int(uid), int(tid)
+        except (ValueError, AttributeError):
+            continue
+        if (uid, tid) in seen:
+            continue
+        seen.add((uid, tid))
+        u = db.get(User, uid)
+        rt = db.get(DataTable, tid)
+        if u and rt and rt.deleted_at is None:
+            items.append({"user": u, "related_table": rt})
+
+    if not items:
+        return RedirectResponse(url=f"/tables/{table_id}/permissions", status_code=status.HTTP_303_SEE_OTHER)
+
+    return templates.TemplateResponse(
+        request, "permissions/confirm_relation.html",
+        {"user": user, "table": table, "items": items},
+    )
+
+
+@router.post("/{table_id}/permissions/confirm-relation")
+async def apply_relation_permissions(
+    request: Request,
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Applique les droits READ sur les tables de relation après confirmation."""
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    _require_owner_or_admin(table, user, db)
+
+    form = await request.form()
+    granted = []
+    for key in form.keys():
+        if not key.startswith("grant_"):
+            continue
+        if form.get(key) != "1":
+            continue
+        try:
+            _, uid, tid = key.split("_")
+            uid, tid = int(uid), int(tid)
+        except (ValueError, AttributeError):
+            continue
+        # Vérifier que le partageur a bien le droit d'accorder cet accès
+        rt = db.get(DataTable, tid)
+        target_user = db.get(User, uid)
+        if not rt or rt.deleted_at is not None or not target_user:
+            continue
+        if not (user.is_admin or is_table_owner(rt, user, db)):
+            continue
+        # Accorder READ si pas déjà présent
+        existing = db.query(TablePermission).filter_by(table_id=tid, user_id=uid).first()
+        if not existing:
+            db.add(TablePermission(table_id=tid, user_id=uid, level=PermissionLevel.READ))
+            granted.append(f'"{target_user.username}" → "{rt.name}" (lecture)')
+
+    if granted:
+        log_action(db, user, "grant_relation_read", "permission",
+                   resource_id=table.id, resource_name=table.name, table_id=table.id,
+                   details="Accès relation accordés :\n" + "\n".join(granted))
+        db.commit()
+
+    return RedirectResponse(url=f"/tables/{table_id}/permissions", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.post("/{table_id}/owners")
