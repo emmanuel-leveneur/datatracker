@@ -114,8 +114,9 @@
   {% endif %}
   <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
     <!-- Barre outils : boutons DataTables (gauche) + page_size (droite) -->
-    <div id="dt-toolbar" class="flex items-center gap-2 px-3 py-2 border-b border-gray-100 min-h-[44px]">
+    <div id="dt-toolbar" class="flex items-center gap-2 px-3 py-2 border-b border-gray-100 min-h-[44px] flex-wrap">
       <!-- Les boutons DT sont déplacés ici par JS après init -->
+      <span id="colvis-hidden-badge" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 whitespace-nowrap"></span>
       <div class="ml-auto flex items-center gap-1.5 shrink-0">
         <label class="text-xs text-gray-500 whitespace-nowrap">Lignes&nbsp;:</label>
         <select
@@ -335,6 +336,55 @@ function closeAlertsPanel() {
   var nbCols   = {{ columns | length }};
   // Colonne 0 = alerte (non exportable) ; colonnes data = 1..nbCols ; actions = nbCols+1
 
+  // ── Persistance visibilité colonnes (localStorage) ────────────────────────
+  var COLVIS_KEY = 'colvis_{{ table.id }}';
+
+  function colvisLoad() {
+    try { return JSON.parse(localStorage.getItem(COLVIS_KEY) || '{}'); }
+    catch(e) { return {}; }
+  }
+
+  function colvisSave(dt) {
+    var state = {};
+    dt.columns(':not(.dt-no-export)').every(function() {
+      var name = $('#main-table thead tr:first th').eq(this.index()).text().trim();
+      if (name) state[name] = this.visible();
+    });
+    try { localStorage.setItem(COLVIS_KEY, JSON.stringify(state)); }
+    catch(e) {}
+  }
+
+  function colvisRestore(dt) {
+    var state = colvisLoad();
+    if (!Object.keys(state).length) return;
+    dt.columns(':not(.dt-no-export)').every(function() {
+      var name = $('#main-table thead tr:first th').eq(this.index()).text().trim();
+      if (name && state.hasOwnProperty(name)) this.visible(state[name], false);
+    });
+    dt.columns.adjust().draw(false);
+  }
+
+  // ── Badge "N colonnes masquées" ────────────────────────────────────────────
+  function updateHiddenBadge(dt) {
+    var hidden = 0;
+    dt.columns(':not(.dt-no-export)').every(function() { if (!this.visible()) hidden++; });
+    var $badge = $('#colvis-hidden-badge');
+    if (hidden > 0) {
+      $badge.html(
+        hidden + ' colonne' + (hidden > 1 ? 's' : '') + ' masquée' + (hidden > 1 ? 's' : '') +
+        ' &mdash; <a href="#" class="underline hover:text-blue-800" id="colvis-show-all">tout afficher</a>'
+      ).removeClass('hidden');
+      $('#colvis-show-all').off('click').on('click', function(e) {
+        e.preventDefault();
+        dt.columns().visible(true);
+        colvisSave(dt);
+        updateHiddenBadge(dt);
+      });
+    } else {
+      $badge.addClass('hidden');
+    }
+  }
+
   // Boutons avec exclusion de la colonne alerte des exports
   var exportOpts = { columns: ':not(.dt-no-export)' };
   var DETAIL_BUTTONS = [
@@ -370,6 +420,15 @@ function closeAlertsPanel() {
     };
     var dt = $('#main-table').DataTable(cfg);
 
+    // Restaurer la visibilité sauvegardée
+    colvisRestore(dt);
+
+    // Sauvegarder + mettre à jour le badge à chaque changement de visibilité
+    dt.on('column-visibility.dt', function() {
+      colvisSave(dt);
+      updateHiddenBadge(dt);
+    });
+
     // Déplace les boutons DT dans la barre d'outils persistante
     var $toolbar = $('#dt-toolbar');
     if ($toolbar.length) {
@@ -377,6 +436,9 @@ function closeAlertsPanel() {
       if ($existingBtns.length) $existingBtns.remove();
       $toolbar.prepend(dt.buttons().container());
     }
+
+    // Badge initial (si colonnes déjà masquées via localStorage)
+    updateHiddenBadge(dt);
   }
 
   $(document).ready(initMainTable);
