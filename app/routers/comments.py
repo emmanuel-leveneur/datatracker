@@ -98,21 +98,22 @@ def _comment_list_ctx(row: TableRow, table: DataTable, user: User, db: Session) 
     }
 
 
-def _badge_html(row_id: int, count: int) -> str:
-    """HTML du badge OOB pour la mise à jour immédiate dans le tableau."""
+def _badge_oob_html(row_id: int, table_id: int, count: int) -> str:
+    """Bouton commentaire complet pour mise à jour OOB immédiate dans le tableau."""
+    if count > 0:
+        btn_class = "inline-flex items-center gap-1 rounded-full transition bg-blue-100 text-blue-700 hover:bg-blue-200 px-2 py-0.5"
+        inner = f'<i data-lucide="message-square" class="w-3.5 h-3.5"></i><span class="text-xs font-semibold leading-none">{count}</span>'
+        title = f"Commentaires ({count})"
+    else:
+        btn_class = "inline-flex items-center gap-1 rounded-full transition text-gray-300 hover:text-blue-400 hover:bg-blue-50 p-1.5"
+        inner = '<i data-lucide="message-square" class="w-3.5 h-3.5"></i>'
+        title = "Commentaires"
     return (
-        f'<span id="cc-{row_id}" hx-swap-oob="true">'
-        + _render_badge_content(count)
-        + "</span>"
-    )
-
-
-def _render_badge_content(count: int) -> str:
-    if count == 0:
-        return '<i data-lucide="message-square" class="w-3.5 h-3.5"></i>'
-    return (
-        f'<i data-lucide="message-square" class="w-3.5 h-3.5"></i>'
-        f'<span class="text-xs font-semibold leading-none">{count}</span>'
+        f'<button id="cc-btn-{row_id}" hx-swap-oob="true"'
+        f' hx-get="/tables/{table_id}/rows/{row_id}/comments/panel"'
+        f' hx-target="#comment-panel" hx-swap="innerHTML"'
+        f' title="{title}" class="{btn_class}">'
+        f'{inner}</button>'
     )
 
 
@@ -158,13 +159,9 @@ async def add_comment(
     db.commit()
 
     ctx = _comment_list_ctx(row, table, user, db)
-    response = templates.TemplateResponse(request, "comments/_list.html", ctx)
-    count = len(ctx["comments"])
-    response.headers["HX-Trigger-After-Swap"] = f'{{"commentPanelUpdated": {{"rowId": {row_id}}}}}'
-    # OOB badge update
-    response.headers["HX-Reswap"] = "innerHTML"
-    ctx["_oob_badge"] = _badge_html(row_id, count)
-    return response
+    # OOB badge doit être défini AVANT la création du TemplateResponse
+    ctx["_oob_badge"] = _badge_oob_html(row_id, table_id, len(ctx["comments"]))
+    return templates.TemplateResponse(request, "comments/_list.html", ctx)
 
 
 @router.post("/tables/{table_id}/rows/{row_id}/comments/{comment_id}/delete", response_class=HTMLResponse)
@@ -195,8 +192,7 @@ def delete_comment(
     db.commit()
 
     ctx = _comment_list_ctx(row, table, user, db)
-    count = len(ctx["comments"])
-    ctx["_oob_badge"] = _badge_html(row_id, count)
+    ctx["_oob_badge"] = _badge_oob_html(row_id, table_id, len(ctx["comments"]))
     return templates.TemplateResponse(request, "comments/_list.html", ctx)
 
 
