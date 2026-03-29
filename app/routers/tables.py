@@ -36,7 +36,8 @@ def list_tables(request: Request, user: User = Depends(get_current_user), db: Se
     favorites = [t for t in tables if t.id in favorite_ids]
 
     if user.is_admin:
-        owner_table_ids = {t.id for t in tables}
+        admin_owned_ids = {r[0] for r in db.query(TableOwner.table_id).filter_by(user_id=user.id).all()}
+        owner_table_ids = admin_owned_ids
     else:
         owner_table_ids = set(owned_ids)
 

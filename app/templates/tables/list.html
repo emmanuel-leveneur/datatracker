@@ -75,11 +75,15 @@
       {% endif %}
       <span class="ml-auto bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Propriétaire</span>
     {% else %}
-      {% set level = user_perm_levels.get(table.id, '') %}
-      {% if level == 'write' %}
-      <span class="ml-auto bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Lecture / Écriture</span>
+      {% if user.is_admin %}
+      <span class="ml-auto bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">Admin</span>
       {% else %}
-      <span class="ml-auto bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">Lecture</span>
+        {% set level = user_perm_levels.get(table.id, '') %}
+        {% if level == 'write' %}
+        <span class="ml-auto bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Lecture / Écriture</span>
+        {% else %}
+        <span class="ml-auto bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">Lecture</span>
+        {% endif %}
       {% endif %}
     {% endif %}
   </div>
