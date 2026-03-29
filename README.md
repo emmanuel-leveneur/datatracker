@@ -387,6 +387,7 @@ Les alertes surveillent les données d'une table et déclenchent des actions vis
   - `value_type = column` : comparaison colonne-à-colonne sur la même ligne
 - **Actions** :
   - `notify_inapp` : notification dans le centre de notifications (cloche navbar)
+  - `notify_email` : envoi d'un email aux destinataires concernés (nécessite une configuration SMTP dans `.env`)
   - `highlight.enabled` : surbrillance de la ligne ou des cellules concernées
   - `highlight.mode` : `row` (toute la ligne) ou `cells` (cellules impliquées)
   - `highlight.color` : couleur hexadécimale (ex. `#fbbf24`)
@@ -508,6 +509,7 @@ datatracker/
 │   ├── auth.py              # bcrypt, sessions itsdangerous (encode/decode cookie)
 │   ├── activity.py          # log_action() — helper transversal
 │   ├── alerts.py            # evaluate_alerts_for_row(), get_alert_row_data()
+│   ├── email_utils.py       # send_email() — envoi SMTP synchrone (smtplib)
 │   ├── import_utils.py      # parse_csv(), parse_excel(), infer_column_type(),
 │   │                        #   normalize_value(), sanitize_headers()
 │   ├── dependencies.py      # get_current_user, can_access_table, get_visible_columns…
@@ -593,6 +595,12 @@ La base de données `datatracker.db` est créée automatiquement au premier dém
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./datatracker.db` | URL de connexion SQLAlchemy |
 | `SECRET_KEY` | Valeur codée en dur dans `app/auth.py` | Clé de signature des cookies — **à changer en production** |
+| `SMTP_HOST` | *(vide)* | Hôte SMTP — si vide, les notifications email sont désactivées |
+| `SMTP_PORT` | `587` | Port SMTP |
+| `SMTP_USER` | *(vide)* | Identifiant SMTP |
+| `SMTP_PASSWORD` | *(vide)* | Mot de passe SMTP |
+| `SMTP_FROM` | *(vide)* | Adresse expéditeur (si vide, utilise `SMTP_USER`) |
+| `SMTP_USE_TLS` | `true` | Activer STARTTLS |
 
 ---
 
