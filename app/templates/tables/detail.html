@@ -362,24 +362,26 @@ function closeAlertsPanel() {
     catch(e) { return {}; }
   }
 
-  function colvisSave(dt) {
+  function colvisSave(dt, colIdByIndex) {
     var state = {};
-    dt.columns(':not(.dt-no-export)').every(function() {
-      var name = $('#main-table thead tr:first th').eq(this.index()).text().trim();
-      if (name) state[name] = this.visible();
+    dt.columns().every(function() {
+      var colId = colIdByIndex[this.index()];
+      if (colId) state[colId] = this.visible();
     });
     try { localStorage.setItem(COLVIS_KEY, JSON.stringify(state)); }
     catch(e) {}
   }
 
-  function colvisRestore(dt) {
+  function colvisRestore(dt, colIdByIndex) {
     var state = colvisLoad();
     if (!Object.keys(state).length) return;
-    dt.columns(':not(.dt-no-export)').every(function() {
-      var name = $('#main-table thead tr:first th').eq(this.index()).text().trim();
-      if (name && state.hasOwnProperty(name)) this.visible(state[name], false);
+    dt.columns().every(function() {
+      var colId = colIdByIndex[this.index()];
+      if (colId && state.hasOwnProperty(String(colId))) {
+        this.visible(state[String(colId)], false);
+      }
     });
-    dt.columns.adjust().draw(false);
+    dt.columns.adjust();
   }
 
   // ── Badge "N colonnes masquées" ────────────────────────────────────────────
@@ -395,7 +397,7 @@ function closeAlertsPanel() {
       $('#colvis-show-all').off('click').on('click', function(e) {
         e.preventDefault();
         dt.columns().visible(true);
-        colvisSave(dt);
+        colvisSave(dt, colIdByIndex);
         updateHiddenBadge(dt);
       });
     } else {
@@ -424,6 +426,13 @@ function closeAlertsPanel() {
     if ($.fn.DataTable.isDataTable('#main-table')) {
       $('#main-table').DataTable().destroy();
     }
+
+    // Lire le mapping index → col-id AVANT que DataTables modifie le DOM
+    var colIdByIndex = [];
+    $('#main-table thead tr:first th').each(function(i, th) {
+      colIdByIndex[i] = $(th).data('col-id') || null;
+    });
+
     var colDefs = [{ orderable: false, searchable: false, targets: 0 }];
     if (canWrite) colDefs.push({ orderable: false, searchable: false, targets: -1 });
 
@@ -439,11 +448,11 @@ function closeAlertsPanel() {
     var dt = $('#main-table').DataTable(cfg);
 
     // Restaurer la visibilité sauvegardée
-    colvisRestore(dt);
+    colvisRestore(dt, colIdByIndex);
 
     // Sauvegarder + mettre à jour le badge à chaque changement de visibilité
     dt.on('column-visibility.dt', function() {
-      colvisSave(dt);
+      colvisSave(dt, colIdByIndex);
       updateHiddenBadge(dt);
     });
 
