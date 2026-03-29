@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = _DEFAULT_DB
     SECRET_KEY: str = "change-me-in-production-use-env-var"
 
+    # URL publique de l'application (utilisée dans les liens des emails)
+    APP_URL: str = "http://localhost:8000"
+
     # SMTP (optionnel — si non configuré, les emails ne sont pas envoyés)
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587

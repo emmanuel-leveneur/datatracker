@@ -244,11 +244,22 @@ def evaluate_alerts_for_row(db: Session, row: TableRow, table: DataTable) -> Non
                     ))
 
             if actions.get("notify_email", False):
-                from app.email_utils import send_email
+                from app.email_utils import send_alert_email
                 users = db.query(User).filter(User.id.in_(user_ids), User.email != "").all()
                 emails = [u.email for u in users if u.email]
                 if emails:
-                    send_email(emails, f"[DataTracker] {alert.name}", message)
+                    trigger_col_ids = {c.get("col_id") for c in conditions}
+                    send_alert_email(
+                        to_addresses=emails,
+                        alert_name=alert.name,
+                        table_name=table.name,
+                        table_id=table.id,
+                        row_id=row.id,
+                        message=message,
+                        columns=list(table.columns),
+                        cells=cells,
+                        trigger_col_ids=trigger_col_ids,
+                    )
 
 
 def get_alert_row_data(db: Session, table_id: int, user_id: int | None = None) -> dict[int, dict]:
