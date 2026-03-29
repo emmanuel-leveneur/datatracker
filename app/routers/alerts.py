@@ -145,6 +145,7 @@ async def create_alert(
 
     # Actions
     notify_inapp = form.get("notify_inapp") == "1"
+    notify_email = form.get("notify_email") == "1"
     hl_enabled = form.get("highlight_enabled") == "1"
     hl_mode = str(form.get("highlight_mode", "row"))
     hl_color = str(form.get("highlight_color", "#fbbf24"))
@@ -152,6 +153,7 @@ async def create_alert(
         hl_color = "#fbbf24"
     actions = {
         "notify_inapp": notify_inapp,
+        "notify_email": notify_email,
         "highlight": {
             "enabled": hl_enabled,
             "mode": hl_mode if hl_mode in ("row", "cells") else "row",
@@ -270,6 +272,7 @@ async def update_alert(
         })
 
     notify_inapp = form.get("notify_inapp") == "1"
+    notify_email = form.get("notify_email") == "1"
     hl_enabled = form.get("highlight_enabled") == "1"
     hl_mode = str(form.get("highlight_mode", "row"))
     hl_color = str(form.get("highlight_color", "#fbbf24"))
@@ -277,6 +280,7 @@ async def update_alert(
         hl_color = "#fbbf24"
     actions = {
         "notify_inapp": notify_inapp,
+        "notify_email": notify_email,
         "highlight": {
             "enabled": hl_enabled,
             "mode": hl_mode if hl_mode in ("row", "cells") else "row",
