@@ -174,6 +174,11 @@
             Notification in-app
           </label>
           <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <input type="checkbox" name="notify_email" value="1"
+              class="rounded border-gray-300 text-blue-600">
+            Email
+          </label>
+          <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
             <input type="checkbox" name="highlight_enabled" value="1"
               class="rounded border-gray-300 text-blue-600"
               onchange="document.getElementById('highlight-opts').classList.toggle('hidden', !this.checked)">

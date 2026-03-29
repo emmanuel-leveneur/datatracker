@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     Alert, AlertNotification, AlertScope, AlertState,
-    ColumnType, DataTable, TableColumn, TableOwner, TablePermission, TableRow,
+    ColumnType, DataTable, TableColumn, TableOwner, TablePermission, TableRow, User,
 )
 
 OPERATOR_LABELS: dict[str, str] = {
@@ -218,19 +218,20 @@ def evaluate_alerts_for_row(db: Session, row: TableRow, table: DataTable) -> Non
         if is_triggered_now:
             state.last_triggered_at = datetime.utcnow()
 
-        # Notifier uniquement si passage False → True ET notify_inapp activé
+        # Notifier uniquement si passage False → True
         if is_triggered_now and not was_triggered:
             try:
                 actions = json.loads(alert.actions or "{}")
             except Exception:
                 actions = {}
+            try:
+                conditions = json.loads(alert.conditions)
+            except Exception:
+                conditions = []
+            message = _build_message(alert.name, conditions, col_names, table.name, row.id)
+            user_ids = _get_user_ids_to_notify(alert, table.id, db)
+
             if actions.get("notify_inapp", True):
-                try:
-                    conditions = json.loads(alert.conditions)
-                except Exception:
-                    conditions = []
-                message = _build_message(alert.name, conditions, col_names, table.name, row.id)
-                user_ids = _get_user_ids_to_notify(alert, table.id, db)
                 for uid in user_ids:
                     db.add(AlertNotification(
                         user_id=uid,
@@ -241,6 +242,13 @@ def evaluate_alerts_for_row(db: Session, row: TableRow, table: DataTable) -> Non
                         table_name=table.name,
                         message=message,
                     ))
+
+            if actions.get("notify_email", False):
+                from app.email_utils import send_email
+                users = db.query(User).filter(User.id.in_(user_ids), User.email != "").all()
+                emails = [u.email for u in users if u.email]
+                if emails:
+                    send_email(emails, f"[DataTracker] {alert.name}", message)
 
 
 def get_alert_row_data(db: Session, table_id: int, user_id: int | None = None) -> dict[int, dict]:

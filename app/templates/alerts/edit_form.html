@@ -72,6 +72,12 @@
           Notification in-app
         </label>
         <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" name="notify_email" value="1"
+            {% if act.notify_email %}checked{% endif %}
+            class="rounded border-gray-300 text-blue-600">
+          Email
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
           <input type="checkbox" name="highlight_enabled" value="1"
             {% if act.highlight and act.highlight.enabled %}checked{% endif %}
             class="rounded border-gray-300 text-blue-600"
