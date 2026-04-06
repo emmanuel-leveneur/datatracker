@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.activity import log_action
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
+from app.email_utils import send_share_notification_email
 from app.models import (
     ColumnPermission, ColumnType, DataTable, PermissionLevel,
     TableOwner, TablePermission, User,
@@ -133,6 +134,20 @@ async def bulk_set_permissions(
                details="\n".join(diff) if diff else "Aucune modification")
     db.commit()
 
+    # ── Notification email aux utilisateurs nouvellement accédés ──────────────
+    for u in all_users:
+        new_level = form.get(f"table_perm_{u.id}")
+        if (old_table_perms.get(u.id, "none") == "none"
+                and new_level in [e.value for e in PermissionLevel]
+                and u.email):
+            send_share_notification_email(
+                to_address=u.email,
+                table_name=table.name,
+                table_id=table.id,
+                permission_level=new_level,
+                shared_by_username=user.username,
+            )
+
     # ── Détection des accès manquants sur les tables de relation ──────────────
     # On cherche les utilisateurs qui viennent de GAGNER un accès à cette table
     newly_granted = [
@@ -257,13 +272,25 @@ async def apply_relation_permissions(
         existing = db.query(TablePermission).filter_by(table_id=tid, user_id=uid).first()
         if not existing:
             db.add(TablePermission(table_id=tid, user_id=uid, level=PermissionLevel.READ))
-            granted.append(f'"{target_user.username}" → "{rt.name}" (lecture)')
+            granted.append((target_user, rt))
 
     if granted:
         log_action(db, user, "grant_relation_read", "permission",
                    resource_id=table.id, resource_name=table.name, table_id=table.id,
-                   details="Accès relation accordés :\n" + "\n".join(granted))
+                   details="Accès relation accordés :\n" + "\n".join(
+                       f'"{u.username}" → "{rt.name}" (lecture)' for u, rt in granted
+                   ))
         db.commit()
+
+        for granted_user, granted_table in granted:
+            if granted_user.email:
+                send_share_notification_email(
+                    to_address=granted_user.email,
+                    table_name=granted_table.name,
+                    table_id=granted_table.id,
+                    permission_level="read",
+                    shared_by_username=user.username,
+                )
 
     return RedirectResponse(url=f"/tables/{table_id}/permissions", status_code=status.HTTP_303_SEE_OTHER)
 

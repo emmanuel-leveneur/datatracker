@@ -264,6 +264,158 @@ Voir le tableau : {table_url}
 Notification automatique de DataTracker. Ne pas répondre à cet email.
 """
 
+_SHARE_HTML = """\
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{subject}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f3f4f6;
+             font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,
+             'Helvetica Neue',Arial,sans-serif;">
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+       style="background-color:#f3f4f6;min-height:100vh;">
+  <tr>
+    <td align="center" style="padding:40px 16px;">
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+             style="max-width:600px;">
+
+        <!-- Header -->
+        <tr>
+          <td style="background-color:#1d4ed8;border-radius:12px 12px 0 0;
+                      padding:22px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+              <tr>
+                <td>
+                  <span style="color:#ffffff;font-size:20px;font-weight:700;
+                               letter-spacing:0.3px;">DataTracker</span>
+                </td>
+                <td align="right">
+                  <span style="display:inline-block;background-color:#065f46;
+                               color:#a7f3d0;font-size:11px;font-weight:600;
+                               padding:3px 10px;border-radius:20px;
+                               letter-spacing:0.4px;text-transform:uppercase;">
+                    Partage
+                  </span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Bande colorée -->
+        <tr>
+          <td style="height:4px;background:linear-gradient(90deg,#10b981,#34d399);"></td>
+        </tr>
+
+        <!-- Corps -->
+        <tr>
+          <td style="background-color:#ffffff;padding:28px 32px 24px 32px;">
+
+            <!-- Badge partage -->
+            <table cellpadding="0" cellspacing="0" role="presentation"
+                   style="margin-bottom:18px;">
+              <tr>
+                <td style="background-color:#ecfdf5;border:1px solid #a7f3d0;
+                            border-radius:8px;padding:9px 16px;">
+                  <table cellpadding="0" cellspacing="0" role="presentation">
+                    <tr>
+                      <td style="padding-right:10px;font-size:18px;
+                                 vertical-align:middle;">&#128279;</td>
+                      <td style="vertical-align:middle;">
+                        <span style="font-size:12px;font-weight:700;color:#065f46;
+                                     text-transform:uppercase;letter-spacing:0.5px;">
+                          Table partagée avec vous
+                        </span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Nom table -->
+            <h1 style="margin:0 0 20px 0;font-size:21px;font-weight:700;
+                        color:#111827;line-height:1.3;">{table_name}</h1>
+
+            <!-- Détails partage -->
+            <div style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;
+                         margin-bottom:28px;">
+              <table width="100%" cellpadding="0" cellspacing="0"
+                     style="border-collapse:collapse;">
+                <tr style="background-color:#f9fafb;">
+                  <td style="font-size:12px;font-weight:600;color:#6b7280;
+                              padding:9px 14px;width:38%;border-bottom:1px solid #f3f4f6;
+                              white-space:nowrap;">Partagé par</td>
+                  <td style="font-size:13px;color:#111827;
+                              padding:9px 14px;border-bottom:1px solid #f3f4f6;">
+                    {shared_by}
+                  </td>
+                </tr>
+                <tr style="background-color:#ffffff;">
+                  <td style="font-size:12px;font-weight:600;color:#6b7280;
+                              padding:9px 14px;width:38%;white-space:nowrap;">
+                    Niveau d'accès
+                  </td>
+                  <td style="font-size:13px;color:#111827;padding:9px 14px;">
+                    {level_label}
+                  </td>
+                </tr>
+              </table>
+            </div>
+
+            <!-- Bouton CTA -->
+            <table cellpadding="0" cellspacing="0" role="presentation">
+              <tr>
+                <td style="border-radius:8px;background-color:#2563eb;">
+                  <a href="{table_url}"
+                     style="display:inline-block;padding:12px 28px;
+                            font-size:14px;font-weight:600;color:#ffffff;
+                            text-decoration:none;letter-spacing:0.2px;">
+                    Voir le tableau &nbsp;&#8594;
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background-color:#f9fafb;border-top:1px solid #e5e7eb;
+                      border-radius:0 0 12px 12px;padding:16px 32px;">
+            <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;
+                       line-height:1.6;">
+              Notification automatique de&nbsp;
+              <strong style="color:#6b7280;">DataTracker</strong>
+              &nbsp;&#183;&nbsp;Ne pas répondre à cet email
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+_SHARE_TEXT_TEMPLATE = """\
+[DataTracker] Table partagée avec vous : {table_name}
+
+{shared_by} vous a accordé l'accès à la table "{table_name}".
+Niveau d'accès : {level_label}
+
+Voir le tableau : {table_url}
+
+Notification automatique de DataTracker. Ne pas répondre à cet email.
+"""
+
 
 # ── Fonction publique ──────────────────────────────────────────────────────────
 
@@ -358,3 +510,68 @@ def send_alert_email(
         logger.info("email_utils: email envoyé à %s — %s", to_addresses, subject)
     except Exception as exc:
         logger.error("email_utils: échec envoi email — %s", exc)
+
+
+def send_share_notification_email(
+    to_address: str,
+    table_name: str,
+    table_id: int,
+    permission_level: str,
+    shared_by_username: str,
+) -> None:
+    """
+    Envoie un email de notification lorsqu'une table est partagée avec un utilisateur.
+    - permission_level : valeur brute du PermissionLevel ("read" ou "write")
+    Ne lève pas d'exception — les erreurs sont loggées.
+    """
+    if not settings.SMTP_HOST or not to_address:
+        return
+
+    from_addr = settings.SMTP_FROM or settings.SMTP_USER
+    if not from_addr:
+        logger.warning("email_utils: SMTP_FROM et SMTP_USER sont vides, email non envoyé.")
+        return
+
+    table_url = f"{settings.APP_URL.rstrip('/')}/tables/{table_id}"
+    level_label = "Lecture seule" if permission_level == "read" else "Lecture et écriture"
+    subject = f"Table partagée avec vous : {table_name}"
+
+    html_body = _SHARE_HTML.format(
+        subject=html.escape(subject),
+        table_name=html.escape(table_name),
+        shared_by=html.escape(shared_by_username),
+        level_label=html.escape(level_label),
+        table_url=table_url,
+    )
+
+    text_body = _SHARE_TEXT_TEMPLATE.format(
+        table_name=table_name,
+        shared_by=shared_by_username,
+        level_label=level_label,
+        table_url=table_url,
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = to_address
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    try:
+        if settings.SMTP_USE_TLS:
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+        else:
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+
+        if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+
+        server.sendmail(from_addr, [to_address], msg.as_string())
+        server.quit()
+        logger.info("email_utils: email partage envoyé à %s — %s", to_address, subject)
+    except Exception as exc:
+        logger.error("email_utils: échec envoi email partage — %s", exc)
