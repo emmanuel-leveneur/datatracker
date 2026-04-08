@@ -204,6 +204,16 @@
 | Conditions | Seules les tables liées dont le grantor est propriétaire sont proposées |
 | Opt-in | L'utilisateur peut ignorer certaines propositions via les cases à cocher |
 
+### Notification de partage par email
+
+| Fonctionnalité | Description |
+|---|---|
+| Email automatique | Lors d'un nouveau partage, l'utilisateur concerné reçoit un email de notification |
+| Contenu de l'email | Nom de la table, niveau d'accès accordé (Lecture seule / Lecture et écriture), nom de l'auteur du partage |
+| Lien direct | Bouton "Voir le tableau" pointant directement sur la table partagée |
+| Cascade relations | L'email est également envoyé pour les accès READ accordés automatiquement sur les tables de relation |
+| Conditionnel SMTP | L'envoi est silencieusement ignoré si `SMTP_HOST` n'est pas configuré |
+
 ### Vue admin des permissions
 
 | Fonctionnalité | Description |

@@ -324,6 +324,10 @@ Ces permissions sont gérables depuis deux interfaces :
 
 Lors d'un partage d'une table contenant des colonnes de type `RELATION`, le système détecte si les nouveaux bénéficiaires n'ont pas accès aux tables référencées. Si le grantor (celui qui partage) est lui-même propriétaire des tables liées, une page de confirmation propose d'octroyer automatiquement un accès READ.
 
+### Notification email lors d'un partage
+
+Lorsqu'un utilisateur reçoit un accès à une table (niveau READ ou WRITE), un email lui est automatiquement envoyé. Il indique le nom de la table, le niveau d'accès accordé et l'identité de la personne ayant effectué le partage. L'email inclut un lien direct vers la table. L'envoi est également déclenché pour les accès READ accordés en cascade sur les tables de relation. Si `SMTP_HOST` n'est pas configuré, l'envoi est silencieusement ignoré.
+
 ### Visibilité des tables RELATION dans le schéma
 
 Lors de la création/modification d'une colonne RELATION, le sélecteur de table cible ne propose que les tables accessibles (au minimum en lecture) par l'utilisateur courant.
@@ -509,7 +513,8 @@ datatracker/
 │   ├── auth.py              # bcrypt, sessions itsdangerous (encode/decode cookie)
 │   ├── activity.py          # log_action() — helper transversal
 │   ├── alerts.py            # evaluate_alerts_for_row(), get_alert_row_data()
-│   ├── email_utils.py       # send_email() — envoi SMTP synchrone (smtplib)
+│   ├── email_utils.py       # send_alert_email(), send_share_notification_email()
+│   │                        #   — envoi SMTP synchrone (smtplib)
 │   ├── import_utils.py      # parse_csv(), parse_excel(), infer_column_type(),
 │   │                        #   normalize_value(), sanitize_headers()
 │   ├── dependencies.py      # get_current_user, can_access_table, get_visible_columns…
