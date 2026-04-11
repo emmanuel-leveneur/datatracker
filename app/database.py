@@ -52,6 +52,9 @@ def _run_migrations():
             ("related_display_col_id", "ALTER TABLE table_columns ADD COLUMN related_display_col_id INTEGER"),
             ("related_value_col_id", "ALTER TABLE table_columns ADD COLUMN related_value_col_id INTEGER"),
         ],
+        "users": [
+            ("is_email_verified", "ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN DEFAULT 0"),
+        ],
     }
     with engine.connect() as conn:
         for table_name, columns in migrations_by_table.items():
@@ -64,11 +67,18 @@ def _run_migrations():
                     conn.execute(text(stmt))
                     conn.commit()
 
-        # Seeding : s'assurer que chaque créateur de table est aussi dans table_owners
+        # Seeding : opérations conditionnelles sur les tables existantes
         tables_in_db = {
             row[0]
             for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
         }
+
+        # Valider automatiquement les comptes existants avant l'introduction de la vérification email
+        if "users" in tables_in_db:
+            conn.execute(text("UPDATE users SET is_email_verified = 1 WHERE is_email_verified = 0"))
+            conn.commit()
+
+        # S'assurer que chaque créateur de table est aussi dans table_owners
         if "table_owners" in tables_in_db:
             conn.execute(text(
                 "INSERT OR IGNORE INTO table_owners (table_id, user_id) "

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Lien expiré — DataTracker{% endblock %}
+{% block content %}
+<div class="min-h-[70vh] flex items-center justify-center">
+  <div class="w-full max-w-sm">
+    <div class="bg-white shadow-md rounded-xl p-8 text-center">
+      <div class="flex justify-center mb-4">
+        <div class="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+          <i data-lucide="clock" class="w-6 h-6 text-red-500"></i>
+        </div>
+      </div>
+      <h1 class="text-xl font-bold text-gray-800 mb-3">Lien expiré</h1>
+      <p class="text-sm text-gray-600 mb-6">
+        Ce lien de confirmation a expiré ou est invalide.<br>
+        Veuillez créer un nouveau compte.
+      </p>
+      <a href="/auth/register"
+         class="inline-block bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold
+                px-5 py-2 rounded-lg transition">
+        Créer un compte
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

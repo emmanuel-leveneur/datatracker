@@ -57,6 +57,7 @@ def admin_user(db):
         email="admin@test.com",
         hashed_password=hash_password("password123"),
         is_admin=True,
+        is_email_verified=True,
     )
     db.add(user)
     db.commit()
@@ -71,6 +72,7 @@ def regular_user(db):
         email="alice@test.com",
         hashed_password=hash_password("password123"),
         is_admin=False,
+        is_email_verified=True,
     )
     db.add(user)
     db.commit()
@@ -85,6 +87,7 @@ def second_user(db):
         email="bob@test.com",
         hashed_password=hash_password("password123"),
         is_admin=False,
+        is_email_verified=True,
     )
     db.add(user)
     db.commit()

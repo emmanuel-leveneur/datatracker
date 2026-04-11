@@ -6,6 +6,7 @@ from app.config import settings
 
 SESSION_COOKIE = "dt_session"
 MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+EMAIL_TOKEN_MAX_AGE = 600   # 10 minutes
 
 serializer = URLSafeTimedSerializer(settings.SECRET_KEY)
 
@@ -42,3 +43,15 @@ def get_session_user_id(request: Request) -> int | None:
 
 def clear_session(response: Response) -> None:
     response.delete_cookie(SESSION_COOKIE)
+
+
+def generate_email_token(user_id: int) -> str:
+    return serializer.dumps(user_id, salt="email-confirm")
+
+
+def verify_email_token(token: str) -> int | None:
+    """Retourne l'user_id si le token est valide, None s'il est expiré ou invalide."""
+    try:
+        return serializer.loads(token, salt="email-confirm", max_age=EMAIL_TOKEN_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return None

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Vérifiez votre email — DataTracker{% endblock %}
+{% block content %}
+<div class="min-h-[70vh] flex items-center justify-center">
+  <div class="w-full max-w-sm">
+    <div class="bg-white shadow-md rounded-xl p-8 text-center">
+      <div class="flex justify-center mb-4">
+        <div class="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
+          <i data-lucide="mail" class="w-6 h-6 text-blue-600"></i>
+        </div>
+      </div>
+      <h1 class="text-xl font-bold text-gray-800 mb-3">Vérifiez votre email</h1>
+      <p class="text-sm text-gray-600 mb-2">
+        Un email de confirmation a été envoyé à
+      </p>
+      <p class="text-sm font-semibold text-gray-800 mb-4">{{ email }}</p>
+      <p class="text-sm text-gray-500 mb-6">
+        Cliquez sur le lien dans l'email pour activer votre compte.<br>
+        Le lien expire dans <strong>10 minutes</strong>.
+      </p>
+      <a href="/auth/login"
+         class="text-sm text-blue-600 hover:underline">
+        Retour à la connexion
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

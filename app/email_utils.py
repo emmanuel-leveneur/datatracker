@@ -416,6 +416,125 @@ Voir le tableau : {table_url}
 Notification automatique de DataTracker. Ne pas répondre à cet email.
 """
 
+_CONFIRM_HTML = """\
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirmez votre adresse email — DataTracker</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f3f4f6;
+             font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,
+             'Helvetica Neue',Arial,sans-serif;">
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+       style="background-color:#f3f4f6;min-height:100vh;">
+  <tr>
+    <td align="center" style="padding:40px 16px;">
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+             style="max-width:600px;">
+
+        <!-- Header -->
+        <tr>
+          <td style="background-color:#1d4ed8;border-radius:12px 12px 0 0;
+                      padding:22px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+              <tr>
+                <td>
+                  <span style="color:#ffffff;font-size:20px;font-weight:700;
+                               letter-spacing:0.3px;">DataTracker</span>
+                </td>
+                <td align="right">
+                  <span style="display:inline-block;background-color:#1e40af;
+                               color:#bfdbfe;font-size:11px;font-weight:600;
+                               padding:3px 10px;border-radius:20px;
+                               letter-spacing:0.4px;text-transform:uppercase;">
+                    Confirmation
+                  </span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Bande colorée -->
+        <tr>
+          <td style="height:4px;background:linear-gradient(90deg,#3b82f6,#60a5fa);"></td>
+        </tr>
+
+        <!-- Corps -->
+        <tr>
+          <td style="background-color:#ffffff;padding:28px 32px 24px 32px;">
+
+            <h1 style="margin:0 0 12px 0;font-size:21px;font-weight:700;
+                        color:#111827;line-height:1.3;">
+              Confirmez votre adresse email
+            </h1>
+
+            <p style="margin:0 0 24px 0;font-size:14px;color:#374151;line-height:1.6;">
+              Bonjour <strong>{username}</strong>,<br>
+              Cliquez sur le bouton ci-dessous pour activer votre compte DataTracker.
+            </p>
+
+            <!-- Bouton CTA -->
+            <table cellpadding="0" cellspacing="0" role="presentation"
+                   style="margin-bottom:24px;">
+              <tr>
+                <td style="border-radius:8px;background-color:#2563eb;">
+                  <a href="{confirmation_url}"
+                     style="display:inline-block;padding:12px 28px;
+                            font-size:14px;font-weight:600;color:#ffffff;
+                            text-decoration:none;letter-spacing:0.2px;">
+                    Confirmer mon adresse email &nbsp;&#8594;
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:0;font-size:12px;color:#9ca3af;line-height:1.5;">
+              Ce lien expire dans <strong style="color:#6b7280;">10&nbsp;minutes</strong>.
+              Si vous n'avez pas créé de compte, ignorez cet email.
+            </p>
+
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background-color:#f9fafb;border-top:1px solid #e5e7eb;
+                      border-radius:0 0 12px 12px;padding:16px 32px;">
+            <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;
+                       line-height:1.6;">
+              Notification automatique de&nbsp;
+              <strong style="color:#6b7280;">DataTracker</strong>
+              &nbsp;&#183;&nbsp;Ne pas répondre à cet email
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+_CONFIRM_TEXT_TEMPLATE = """\
+[DataTracker] Confirmez votre adresse email
+
+Bonjour {username},
+
+Cliquez sur le lien ci-dessous pour activer votre compte DataTracker.
+Ce lien expire dans 10 minutes.
+
+{confirmation_url}
+
+Si vous n'avez pas créé de compte, ignorez cet email.
+Notification automatique de DataTracker. Ne pas répondre à cet email.
+"""
+
 
 # ── Fonction publique ──────────────────────────────────────────────────────────
 
@@ -575,3 +694,58 @@ def send_share_notification_email(
         logger.info("email_utils: email partage envoyé à %s — %s", to_address, subject)
     except Exception as exc:
         logger.error("email_utils: échec envoi email partage — %s", exc)
+
+
+def send_confirmation_email(
+    to_address: str,
+    username: str,
+    confirmation_url: str,
+) -> None:
+    """
+    Envoie l'email de confirmation d'adresse email lors de l'inscription.
+    Ne lève pas d'exception — les erreurs sont loggées.
+    """
+    if not settings.SMTP_HOST or not to_address:
+        return
+
+    from_addr = settings.SMTP_FROM or settings.SMTP_USER
+    if not from_addr:
+        logger.warning("email_utils: SMTP_FROM et SMTP_USER sont vides, email non envoyé.")
+        return
+
+    subject = "Confirmez votre adresse email — DataTracker"
+
+    html_body = _CONFIRM_HTML.format(
+        username=html.escape(username),
+        confirmation_url=confirmation_url,
+    )
+
+    text_body = _CONFIRM_TEXT_TEMPLATE.format(
+        username=username,
+        confirmation_url=confirmation_url,
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = to_address
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    try:
+        if settings.SMTP_USE_TLS:
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+        else:
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+
+        if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+
+        server.sendmail(from_addr, [to_address], msg.as_string())
+        server.quit()
+        logger.info("email_utils: email confirmation envoyé à %s", to_address)
+    except Exception as exc:
+        logger.error("email_utils: échec envoi email confirmation — %s", exc)
