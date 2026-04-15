@@ -334,7 +334,7 @@ def get_alert_row_data(db: Session, table_id: int, user_id: int | None = None) -
             continue
         if alert.scope == AlertScope.CUSTOM and user_id is not None:
             recipient_ids = {r.user_id for r in db.query(AlertRecipient).filter_by(alert_id=alert.id).all()}
-            if user_id not in recipient_ids and alert.created_by_id != user_id:
+            if user_id not in recipient_ids:
                 continue
 
         color = hl.get("color", "#fbbf24")

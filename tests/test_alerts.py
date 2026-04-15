@@ -847,8 +847,9 @@ class TestCustomScopeAlerts:
         assert db.query(Alert).filter_by(id=alert_id).first() is None
         assert db.query(AlertRecipient).filter_by(alert_id=alert_id).count() == 0
 
-    def test_custom_alert_highlight_visible_to_creator(self, db, admin_user, regular_user, table_with_cols):
-        """Le créateur d'une alerte custom voit la surbrillance même s'il n'est pas destinataire."""
+    def test_custom_alert_highlight_visible_only_to_recipients(self, db, admin_user, regular_user, table_with_cols):
+        """Portée stricte : seuls les destinataires explicites voient la surbrillance,
+        pas le créateur s'il ne s'est pas ajouté dans la liste."""
         from app.alerts import evaluate_alerts_for_row, get_alert_row_data
         from app.models import TablePermission, PermissionLevel
         table, cols = table_with_cols
@@ -867,19 +868,19 @@ class TestCustomScopeAlerts:
         )
         db.add(alert)
         db.flush()
-        db.add(AlertRecipient(alert_id=alert.id, user_id=regular_user.id))
+        db.add(AlertRecipient(alert_id=alert.id, user_id=regular_user.id))  # seul regular_user
         db.commit()
 
         row = _make_row(db, table, admin_user, {col.id: "5"})
         evaluate_alerts_for_row(db, row, table)
         db.commit()
 
-        # Créateur voit la surbrillance (même non destinataire)
+        # Créateur NON destinataire → pas de surbrillance
         data_admin = get_alert_row_data(db, table.id, user_id=admin_user.id)
-        assert row.id in data_admin
-        assert data_admin[row.id]["row_style"] != ""
+        if row.id in data_admin:
+            assert data_admin[row.id]["row_style"] == ""
 
-        # Destinataire voit aussi la surbrillance
+        # Destinataire → surbrillance visible
         data_user = get_alert_row_data(db, table.id, user_id=regular_user.id)
         assert row.id in data_user
         assert data_user[row.id]["row_style"] != ""
