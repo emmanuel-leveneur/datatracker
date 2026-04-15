@@ -32,7 +32,9 @@
                   title="Mise en couleur — {{ 'ligne entière' if act.highlight.mode == 'row' else 'cellules' }}"></span>
             {% endif %}
             {% if alert.scope.value == 'global' %}
-            <span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Global</span>
+            <span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Globale</span>
+            {% elif alert.scope.value == 'custom' %}
+            <span class="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Personnalisée ({{ alert.recipients | length }})</span>
             {% else %}
             <span class="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Privée</span>
             {% endif %}
@@ -141,11 +143,31 @@
       {% if is_owner or user.is_admin %}
       <div>
         <label class="block text-xs font-medium text-gray-600 mb-1">Portée</label>
-        <select name="scope"
-          class="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+        <select name="scope" id="scope-select"
+          class="w-full border border-gray-300 rounded px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+          onchange="onScopeChange(this.value)">
           <option value="private">Privée (moi uniquement)</option>
           <option value="global">Globale (tous les utilisateurs)</option>
+          <option value="custom">Personnalisée (destinataires choisis)</option>
         </select>
+      </div>
+      <!-- Zone destinataires — visible uniquement si scope = custom -->
+      <div id="recipients-zone" class="hidden">
+        <label class="block text-xs font-medium text-gray-600 mb-1">
+          Destinataires <span class="text-red-400">*</span>
+        </label>
+        <div class="relative">
+          <div id="recipients-tag-input"
+               class="min-h-[38px] border border-gray-300 rounded bg-white flex flex-wrap items-center gap-1 px-2 py-1 cursor-text focus-within:ring-2 focus-within:ring-blue-400">
+            <input type="text" id="recipients-text-input" autocomplete="off"
+                   class="flex-1 min-w-[120px] border-0 outline-none text-sm bg-transparent py-0.5"
+                   placeholder="Rechercher un utilisateur…">
+          </div>
+          <div id="recipients-dropdown"
+               class="hidden absolute z-50 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-44 overflow-y-auto">
+          </div>
+        </div>
+        <select name="recipient_user_ids" id="recipients-select" multiple class="hidden"></select>
       </div>
       {% else %}
       <input type="hidden" name="scope" value="private">
@@ -228,6 +250,108 @@
   var MAX_CONDITIONS = 5;
 
   var COLUMNS_DATA = {{ columns_json | safe }};
+  var TABLE_USERS = {{ table_users_json | safe }};
+
+  // ── Tag input destinataires ───────────────────────────────────────────────
+  var selectedRecipientIds = new Set();
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function syncHiddenSelect() {
+    var sel = document.getElementById('recipients-select');
+    if (!sel) return;
+    sel.innerHTML = '';
+    selectedRecipientIds.forEach(function(uid) {
+      var opt = document.createElement('option');
+      opt.value = uid;
+      opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  function renderRecipientBadges() {
+    var container = document.getElementById('recipients-tag-input');
+    var input = document.getElementById('recipients-text-input');
+    if (!container || !input) return;
+    container.querySelectorAll('.recipient-badge').forEach(function(b) { b.remove(); });
+    selectedRecipientIds.forEach(function(uid) {
+      var u = TABLE_USERS.find(function(x) { return x.id === uid; });
+      if (!u) return;
+      var badge = document.createElement('span');
+      badge.className = 'recipient-badge bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0';
+      badge.innerHTML = escHtml(u.label.split(' — ')[0]) +
+        '<button type="button" class="text-purple-500 hover:text-purple-800 font-bold leading-none">&times;</button>';
+      badge.querySelector('button').addEventListener('click', function() {
+        selectedRecipientIds.delete(uid);
+        renderRecipientBadges();
+        syncHiddenSelect();
+      });
+      container.insertBefore(badge, input);
+    });
+    syncHiddenSelect();
+  }
+
+  function showRecipientDropdown(query) {
+    var dropdown = document.getElementById('recipients-dropdown');
+    if (!dropdown) return;
+    var q = query.toLowerCase();
+    var filtered = TABLE_USERS.filter(function(u) {
+      return !selectedRecipientIds.has(u.id) && u.label.toLowerCase().includes(q);
+    });
+    if (filtered.length === 0) { dropdown.classList.add('hidden'); return; }
+    dropdown.innerHTML = '';
+    filtered.forEach(function(u) {
+      var item = document.createElement('div');
+      item.className = 'px-3 py-2 text-sm cursor-pointer hover:bg-purple-50 flex items-center justify-between gap-2';
+      item.innerHTML = '<span class="truncate">' + escHtml(u.label) + '</span>' +
+        '<span class="text-xs text-gray-400 shrink-0">' + escHtml(u.level) + '</span>';
+      item.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        selectedRecipientIds.add(u.id);
+        renderRecipientBadges();
+        var inp = document.getElementById('recipients-text-input');
+        if (inp) { inp.value = ''; }
+        dropdown.classList.add('hidden');
+      });
+      dropdown.appendChild(item);
+    });
+    dropdown.classList.remove('hidden');
+  }
+
+  // Initialisation immédiate du tag input (panel = partial HTMX, DOMContentLoaded déjà tiré)
+  (function initTagInput() {
+    var inp = document.getElementById('recipients-text-input');
+    var container = document.getElementById('recipients-tag-input');
+    if (!inp) return;
+    inp.addEventListener('input', function() { showRecipientDropdown(this.value); });
+    inp.addEventListener('focus', function() { showRecipientDropdown(this.value); });
+    inp.addEventListener('blur', function() { setTimeout(function() {
+      var d = document.getElementById('recipients-dropdown');
+      if (d) d.classList.add('hidden');
+    }, 150); });
+    inp.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        var d = document.getElementById('recipients-dropdown');
+        if (d) d.classList.add('hidden');
+      }
+      if (e.key === 'Backspace' && !this.value && selectedRecipientIds.size > 0) {
+        var lastId = Array.from(selectedRecipientIds).pop();
+        selectedRecipientIds.delete(lastId);
+        renderRecipientBadges();
+      }
+    });
+    if (container) {
+      container.addEventListener('click', function() { inp.focus(); });
+    }
+  })();
+
+  window.onScopeChange = function(val) {
+    var zone = document.getElementById('recipients-zone');
+    if (zone) zone.classList.toggle('hidden', val !== 'custom');
+  };
+  // ── Fin tag input ─────────────────────────────────────────────────────────
 
   var OPERATORS = {
     text:     [{v:"eq",l:"="}, {v:"neq",l:"≠"}, {v:"contains",l:"contient"}, {v:"not_contains",l:"ne contient pas"}],

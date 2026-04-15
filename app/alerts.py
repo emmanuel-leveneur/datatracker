@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.models import (
-    Alert, AlertNotification, AlertScope, AlertState,
+    Alert, AlertNotification, AlertRecipient, AlertScope, AlertState,
     ColumnType, DataTable, TableColumn, TableOwner, TablePermission, TableRow, User,
 )
 
@@ -161,13 +161,36 @@ def _get_user_ids_to_notify(alert: Alert, table_id: int, db: Session) -> list[in
     if alert.scope == AlertScope.PRIVATE:
         return [alert.created_by_id]
 
-    # Global : tous les utilisateurs ayant accès à la table
-    user_ids: set[int] = {alert.created_by_id}
+    if alert.scope == AlertScope.GLOBAL:
+        # Tous les utilisateurs ayant accès à la table
+        user_ids: set[int] = {alert.created_by_id}
+        for o in db.query(TableOwner).filter_by(table_id=table_id).all():
+            user_ids.add(o.user_id)
+        for p in db.query(TablePermission).filter_by(table_id=table_id).all():
+            user_ids.add(p.user_id)
+        return list(user_ids)
+
+    # CUSTOM : destinataires explicites ∩ utilisateurs ayant encore accès à la table
+    recipient_ids = {r.user_id for r in db.query(AlertRecipient).filter_by(alert_id=alert.id).all()}
+    if not recipient_ids:
+        return []
+    # Construire l'ensemble des utilisateurs avec accès courant
+    has_access: set[int] = set()
+    table_obj = db.query(DataTable).filter_by(id=table_id).first()
+    if table_obj:
+        has_access.add(table_obj.created_by_id)
     for o in db.query(TableOwner).filter_by(table_id=table_id).all():
-        user_ids.add(o.user_id)
+        has_access.add(o.user_id)
     for p in db.query(TablePermission).filter_by(table_id=table_id).all():
-        user_ids.add(p.user_id)
-    return list(user_ids)
+        has_access.add(p.user_id)
+    # Les admins gardent l'accès même sans entrée dans les tables de permission
+    from sqlalchemy import or_ as sa_or
+    admin_ids = {
+        u.id for u in db.query(User).filter(
+            User.id.in_(recipient_ids), User.is_admin == True
+        ).all()
+    }
+    return list(recipient_ids & (has_access | admin_ids))
 
 
 def _build_message(alert_name: str, conditions: list[dict], col_names: dict[int, str],
@@ -189,11 +212,21 @@ def _build_message(alert_name: str, conditions: list[dict], col_names: dict[int,
     return f"Alerte « {alert_name} » : {cond_str} — ligne #{row_id} dans {table_name}"
 
 
-def evaluate_alerts_for_row(db: Session, row: TableRow, table: DataTable) -> None:
+def evaluate_alerts_for_row(
+    db: Session,
+    row: TableRow,
+    table: DataTable,
+    silent: bool = False,
+) -> None:
     """
     Évalue toutes les alertes actives de la table sur la ligne donnée.
     Crée des notifications uniquement lors du passage False → True (anti-spam).
     À appeler après db.flush() (row.id et cell_values disponibles) et avant db.commit().
+
+    silent=True : met à jour les AlertState (couleurs + amorçage anti-spam) sans
+    envoyer aucune notification in-app ni email. À utiliser lors de la réévaluation
+    initiale à la création/modification/toggle d'une alerte, pour éviter d'inonder
+    les destinataires avec des données déjà existantes.
     """
     alerts = db.query(Alert).filter_by(table_id=table.id, is_active=True).all()
     if not alerts:
@@ -218,8 +251,8 @@ def evaluate_alerts_for_row(db: Session, row: TableRow, table: DataTable) -> Non
         if is_triggered_now:
             state.last_triggered_at = datetime.utcnow()
 
-        # Notifier uniquement si passage False → True
-        if is_triggered_now and not was_triggered:
+        # Notifier uniquement si passage False → True ET mode non silencieux
+        if is_triggered_now and not was_triggered and not silent:
             try:
                 actions = json.loads(alert.actions or "{}")
             except Exception:
@@ -296,8 +329,13 @@ def get_alert_row_data(db: Session, table_id: int, user_id: int | None = None) -
             continue
 
         # Portée : privée → uniquement le créateur ; globale → tout le monde
+        # personnalisée → créateur + destinataires explicites
         if alert.scope == AlertScope.PRIVATE and user_id is not None and alert.created_by_id != user_id:
             continue
+        if alert.scope == AlertScope.CUSTOM and user_id is not None:
+            recipient_ids = {r.user_id for r in db.query(AlertRecipient).filter_by(alert_id=alert.id).all()}
+            if user_id not in recipient_ids:
+                continue
 
         color = hl.get("color", "#fbbf24")
         mode = hl.get("mode", "row")

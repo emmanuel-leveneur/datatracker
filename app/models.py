@@ -10,6 +10,7 @@ from app.database import Base
 class AlertScope(str, enum.Enum):
     PRIVATE = "private"
     GLOBAL = "global"
+    CUSTOM = "custom"
 
 
 class ColumnType(str, enum.Enum):
@@ -196,6 +197,20 @@ class Alert(Base):
 
     created_by: Mapped["User"] = relationship()
     states: Mapped[list["AlertState"]] = relationship(back_populates="alert", cascade="all, delete-orphan")
+    recipients: Mapped[list["AlertRecipient"]] = relationship(back_populates="alert", cascade="all, delete-orphan")
+
+
+class AlertRecipient(Base):
+    """Destinataires explicites d'une alerte de portée CUSTOM."""
+    __tablename__ = "alert_recipients"
+    __table_args__ = (UniqueConstraint("alert_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    alert_id: Mapped[int] = mapped_column(ForeignKey("alerts.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+
+    alert: Mapped["Alert"] = relationship(back_populates="recipients")
+    user: Mapped["User"] = relationship()
 
 
 class AlertState(Base):
