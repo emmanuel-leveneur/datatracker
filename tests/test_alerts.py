@@ -2,7 +2,7 @@
 import json
 import pytest
 from tests.helpers import make_table
-from app.models import Alert, AlertNotification, AlertScope, AlertState, CellValue, ColumnType, TableRow
+from app.models import Alert, AlertNotification, AlertRecipient, AlertScope, AlertState, CellValue, ColumnType, TableRow
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -28,16 +28,21 @@ def _make_row(db, table, admin_user, values: dict[int, str]) -> TableRow:
     return row
 
 
-def _make_alert(db, table, admin_user, conditions, scope="private", name="Test Alert"):
+def _make_alert(db, table, admin_user, conditions, scope="private", name="Test Alert", recipients=None):
+    scope_map = {"private": AlertScope.PRIVATE, "global": AlertScope.GLOBAL, "custom": AlertScope.CUSTOM}
     alert = Alert(
         table_id=table.id,
         created_by_id=admin_user.id,
         name=name,
-        scope=AlertScope.PRIVATE if scope == "private" else AlertScope.GLOBAL,
+        scope=scope_map.get(scope, AlertScope.PRIVATE),
         conditions=json.dumps(conditions),
         is_active=True,
     )
     db.add(alert)
+    db.flush()
+    if scope == "custom" and recipients:
+        for uid in recipients:
+            db.add(AlertRecipient(alert_id=alert.id, user_id=uid))
     db.commit()
     return alert
 
@@ -638,6 +643,279 @@ class TestNotificationRoutes:
         assert r.status_code == 200
         # Aucun badge si 0 notifications
         assert "bg-red-500" not in r.text
+
+
+# ── Scope personnalisé ────────────────────────────────────────────────────────
+
+class TestCustomScopeAlerts:
+    """Tests pour le scope CUSTOM (alerte personnalisée)."""
+
+    def test_custom_alert_notifies_only_recipients(self, db, admin_user, regular_user, table_with_cols):
+        """Une alerte personnalisée ne notifie que les destinataires explicites."""
+        from app.alerts import evaluate_alerts_for_row
+        from app.models import TablePermission, PermissionLevel
+        table, cols = table_with_cols
+        col = cols[0]
+
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+
+        # Alerte avec regular_user comme seul destinataire (pas admin_user)
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "100", "logic": "AND"}
+        ], scope="custom", recipients=[regular_user.id])
+
+        row = _make_row(db, table, admin_user, {col.id: "200"})
+        evaluate_alerts_for_row(db, row, table)
+        db.commit()
+
+        admin_notifs = db.query(AlertNotification).filter_by(user_id=admin_user.id).all()
+        user_notifs = db.query(AlertNotification).filter_by(user_id=regular_user.id).all()
+        assert len(admin_notifs) == 0   # admin non destinataire → pas notifié
+        assert len(user_notifs) == 1    # regular_user destinataire → notifié
+
+    def test_custom_alert_excludes_user_who_lost_access(self, db, admin_user, regular_user, table_with_cols):
+        """Un destinataire ayant perdu son accès à la table n'est plus notifié."""
+        from app.alerts import evaluate_alerts_for_row
+        from app.models import TablePermission, PermissionLevel
+        table, cols = table_with_cols
+        col = cols[0]
+
+        perm = TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ)
+        db.add(perm)
+        db.commit()
+
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "100", "logic": "AND"}
+        ], scope="custom", recipients=[regular_user.id])
+
+        # Retrait de l'accès AVANT le déclenchement
+        db.delete(perm)
+        db.commit()
+
+        row = _make_row(db, table, admin_user, {col.id: "200"})
+        evaluate_alerts_for_row(db, row, table)
+        db.commit()
+
+        user_notifs = db.query(AlertNotification).filter_by(user_id=regular_user.id).all()
+        assert len(user_notifs) == 0  # accès perdu → pas notifié
+
+    def test_custom_alert_visible_to_recipient_in_panel(self, user_client, db, admin_user, regular_user):
+        """Un destinataire voit l'alerte personnalisée dans le panneau."""
+        from app.models import TablePermission, PermissionLevel
+        table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}
+        ], scope="custom", name="Alerte perso", recipients=[regular_user.id])
+
+        r = user_client.get(f"/tables/{table.id}/alerts/panel")
+        assert r.status_code == 200
+        assert "Alerte perso" in r.text
+        assert "Personnalisée" in r.text
+
+    def test_custom_alert_invisible_to_non_recipient(self, user_client, db, admin_user, regular_user, second_user):
+        """Un utilisateur non destinataire ne voit pas l'alerte personnalisée."""
+        from app.models import TablePermission, PermissionLevel
+        table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
+        col = cols[0]
+        # regular_user a accès mais n'est PAS destinataire
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        # second_user est destinataire mais user_client correspond à regular_user
+        db.add(TablePermission(table_id=table.id, user_id=second_user.id, level=PermissionLevel.READ))
+        db.commit()
+
+        _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}
+        ], scope="custom", name="Alerte réservée", recipients=[second_user.id])
+
+        r = user_client.get(f"/tables/{table.id}/alerts/panel")
+        assert r.status_code == 200
+        assert "Alerte réservée" not in r.text
+
+    def test_create_custom_alert_via_route(self, admin_client, db, admin_user, regular_user):
+        """La création d'une alerte personnalisée via la route sauvegarde les destinataires."""
+        from app.models import TablePermission, PermissionLevel
+        table, cols = make_table(db, admin_user, columns=[("Prix", ColumnType.FLOAT)])
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+
+        r = admin_client.post(f"/tables/{table.id}/alerts", data={
+            "name": "Alerte custom",
+            "scope": "custom",
+            "col_ids": [str(col.id)],
+            "operators": ["gt"],
+            "values": ["500"],
+            "logics": ["AND"],
+            "recipient_user_ids": [str(regular_user.id)],
+        })
+        assert r.status_code == 200
+        alert = db.query(Alert).filter_by(table_id=table.id).first()
+        assert alert is not None
+        assert alert.scope == AlertScope.CUSTOM
+        recipients = db.query(AlertRecipient).filter_by(alert_id=alert.id).all()
+        assert len(recipients) == 1
+        assert recipients[0].user_id == regular_user.id
+
+    def test_create_custom_alert_requires_recipient(self, admin_client, db, admin_user):
+        """La création d'une alerte personnalisée sans destinataire retourne une erreur."""
+        table, cols = make_table(db, admin_user, columns=[("Prix", ColumnType.FLOAT)])
+        col = cols[0]
+        r = admin_client.post(f"/tables/{table.id}/alerts", data={
+            "name": "Sans destinataire",
+            "scope": "custom",
+            "col_ids": [str(col.id)],
+            "operators": ["gt"],
+            "values": ["0"],
+            "logics": ["AND"],
+        })
+        assert r.status_code == 200
+        assert "destinataire" in r.text
+        assert db.query(Alert).filter_by(table_id=table.id).first() is None
+
+    def test_regular_user_cannot_create_custom_alert(self, user_client, db, admin_user, regular_user):
+        """Un utilisateur non propriétaire voit son scope custom downgrade en private."""
+        from app.models import TablePermission, PermissionLevel
+        table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.WRITE))
+        db.commit()
+        r = user_client.post(f"/tables/{table.id}/alerts", data={
+            "name": "Tentative custom",
+            "scope": "custom",
+            "col_ids": [str(col.id)],
+            "operators": ["gt"],
+            "values": ["0"],
+            "logics": ["AND"],
+            "recipient_user_ids": [str(admin_user.id)],
+        })
+        assert r.status_code == 200
+        alert = db.query(Alert).filter_by(table_id=table.id).first()
+        # Downgrade en private
+        assert alert is None or alert.scope == AlertScope.PRIVATE
+
+    def test_update_custom_alert_replaces_recipients(self, admin_client, db, admin_user, regular_user, second_user):
+        """La modification d'une alerte personnalisée remplace les destinataires."""
+        from app.models import TablePermission, PermissionLevel
+        table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.add(TablePermission(table_id=table.id, user_id=second_user.id, level=PermissionLevel.READ))
+        db.commit()
+
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}
+        ], scope="custom", recipients=[regular_user.id])
+        assert db.query(AlertRecipient).filter_by(alert_id=alert.id).count() == 1
+
+        # Modification : on remplace regular_user par second_user
+        r = admin_client.post(f"/tables/{table.id}/alerts/{alert.id}/edit", data={
+            "name": alert.name,
+            "scope": "custom",
+            "col_ids": [str(col.id)],
+            "operators": ["gt"],
+            "values": ["0"],
+            "logics": ["AND"],
+            "recipient_user_ids": [str(second_user.id)],
+        })
+        assert r.status_code == 200
+        db.expire_all()
+        recipients = db.query(AlertRecipient).filter_by(alert_id=alert.id).all()
+        assert len(recipients) == 1
+        assert recipients[0].user_id == second_user.id
+
+    def test_delete_custom_alert_cascades_recipients(self, admin_client, db, admin_user, regular_user):
+        """La suppression d'une alerte personnalisée supprime ses destinataires."""
+        from app.models import TablePermission, PermissionLevel
+        table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}
+        ], scope="custom", recipients=[regular_user.id])
+        alert_id = alert.id
+        assert db.query(AlertRecipient).filter_by(alert_id=alert_id).count() == 1
+
+        admin_client.post(f"/tables/{table.id}/alerts/{alert_id}/delete")
+        db.expire_all()
+        assert db.query(Alert).filter_by(id=alert_id).first() is None
+        assert db.query(AlertRecipient).filter_by(alert_id=alert_id).count() == 0
+
+    def test_custom_alert_highlight_visible_to_creator(self, db, admin_user, regular_user, table_with_cols):
+        """Le créateur d'une alerte custom voit la surbrillance même s'il n'est pas destinataire."""
+        from app.alerts import evaluate_alerts_for_row, get_alert_row_data
+        from app.models import TablePermission, PermissionLevel
+        table, cols = table_with_cols
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+
+        alert = Alert(
+            table_id=table.id,
+            created_by_id=admin_user.id,
+            name="Custom HL",
+            scope=AlertScope.CUSTOM,
+            conditions=json.dumps([{"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}]),
+            actions=json.dumps({"highlight": {"enabled": True, "mode": "row", "color": "#ff0000"}}),
+            is_active=True,
+        )
+        db.add(alert)
+        db.flush()
+        db.add(AlertRecipient(alert_id=alert.id, user_id=regular_user.id))
+        db.commit()
+
+        row = _make_row(db, table, admin_user, {col.id: "5"})
+        evaluate_alerts_for_row(db, row, table)
+        db.commit()
+
+        # Créateur voit la surbrillance (même non destinataire)
+        data_admin = get_alert_row_data(db, table.id, user_id=admin_user.id)
+        assert row.id in data_admin
+        assert data_admin[row.id]["row_style"] != ""
+
+        # Destinataire voit aussi la surbrillance
+        data_user = get_alert_row_data(db, table.id, user_id=regular_user.id)
+        assert row.id in data_user
+        assert data_user[row.id]["row_style"] != ""
+
+    def test_custom_alert_highlight_invisible_to_non_recipient(self, db, admin_user, regular_user, second_user, table_with_cols):
+        """Un utilisateur non destinataire d'une alerte custom ne voit pas la surbrillance."""
+        from app.alerts import evaluate_alerts_for_row, get_alert_row_data
+        from app.models import TablePermission, PermissionLevel
+        table, cols = table_with_cols
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.add(TablePermission(table_id=table.id, user_id=second_user.id, level=PermissionLevel.READ))
+        db.commit()
+
+        alert = Alert(
+            table_id=table.id,
+            created_by_id=admin_user.id,
+            name="Custom HL",
+            scope=AlertScope.CUSTOM,
+            conditions=json.dumps([{"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}]),
+            actions=json.dumps({"highlight": {"enabled": True, "mode": "row", "color": "#ff0000"}}),
+            is_active=True,
+        )
+        db.add(alert)
+        db.flush()
+        db.add(AlertRecipient(alert_id=alert.id, user_id=regular_user.id))  # seul regular_user
+        db.commit()
+
+        row = _make_row(db, table, admin_user, {col.id: "5"})
+        evaluate_alerts_for_row(db, row, table)
+        db.commit()
+
+        # second_user non destinataire → pas de surbrillance
+        data = get_alert_row_data(db, table.id, user_id=second_user.id)
+        if row.id in data:
+            assert data[row.id]["row_style"] == ""
 
 
 # ── get_alerted_row_ids ───────────────────────────────────────────────────────

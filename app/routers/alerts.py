@@ -8,9 +8,12 @@ from sqlalchemy.orm import Session
 from app.alerts import evaluate_alerts_for_row
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
-from sqlalchemy import or_
+from sqlalchemy import and_, exists, or_
 
-from app.models import Alert, AlertNotification, AlertScope, AlertState, DataTable, TableRow, User
+from app.models import (
+    Alert, AlertNotification, AlertRecipient, AlertScope, AlertState,
+    DataTable, TableOwner, TablePermission, TableRow, User,
+)
 
 router = APIRouter(tags=["alerts"])
 templates = Jinja2Templates(directory="app/templates")
@@ -59,8 +62,39 @@ def _build_conditions(col_ids: list[str], operators: list[str], values: list[str
     return conditions[:MAX_CONDITIONS]
 
 
+def _get_table_users(table: DataTable, db: Session) -> list[dict]:
+    """Retourne tous les utilisateurs ayant accès à la table (pour le picker de destinataires)."""
+    seen: set[int] = set()
+    result: list[dict] = []
+
+    owner = db.get(User, table.created_by_id)
+    if owner:
+        seen.add(owner.id)
+        result.append({"id": owner.id, "label": f"{owner.username} — {owner.email}", "level": "propriétaire"})
+
+    for co in db.query(TableOwner).filter_by(table_id=table.id).all():
+        if co.user_id not in seen:
+            u = db.get(User, co.user_id)
+            if u:
+                seen.add(u.id)
+                result.append({"id": u.id, "label": f"{u.username} — {u.email}", "level": "co-propriétaire"})
+
+    for perm in db.query(TablePermission).filter_by(table_id=table.id).all():
+        if perm.user_id not in seen:
+            u = db.get(User, perm.user_id)
+            if u:
+                seen.add(u.id)
+                level_label = "Lecture / Écriture" if perm.level.value == "write" else "Lecture"
+                result.append({"id": u.id, "label": f"{u.username} — {u.email}", "level": level_label})
+
+    return result
+
+
 def _panel_context(table: DataTable, user: User, db: Session) -> dict:
-    # Alertes visibles : globales (tous) + privées du créateur uniquement
+    # Alertes visibles :
+    #   - globales (tous)
+    #   - privées du créateur uniquement
+    #   - personnalisées : créateur OU destinataire explicite
     alerts = (
         db.query(Alert)
         .filter(
@@ -68,6 +102,15 @@ def _panel_context(table: DataTable, user: User, db: Session) -> dict:
             or_(
                 Alert.scope == AlertScope.GLOBAL,
                 Alert.created_by_id == user.id,
+                and_(
+                    Alert.scope == AlertScope.CUSTOM,
+                    exists().where(
+                        and_(
+                            AlertRecipient.alert_id == Alert.id,
+                            AlertRecipient.user_id == user.id,
+                        )
+                    ),
+                ),
             ),
         )
         .order_by(Alert.created_at.desc())
@@ -77,12 +120,14 @@ def _panel_context(table: DataTable, user: User, db: Session) -> dict:
         {"id": col.id, "name": col.name, "type": col.col_type.value}
         for col in table.columns
     ])
+    table_users_json = json.dumps(_get_table_users(table, db))
     return {
         "table": table,
         "user": user,
         "alerts": alerts,
         "columns": table.columns,
         "columns_json": columns_json,
+        "table_users_json": table_users_json,
         "is_owner": is_table_owner(table, user, db),
     }
 
@@ -124,6 +169,17 @@ async def create_alert(
     logics = form.getlist("logics")
     value_types = form.getlist("value_types")
     value_col_ids = form.getlist("value_col_ids")
+    recipient_ids_raw = form.getlist("recipient_user_ids")
+
+    # Scope global/custom réservé aux propriétaires/admins
+    if scope_val in ("global", "custom") and not (user.is_admin or is_table_owner(table, user, db)):
+        scope_val = "private"
+
+    # Validation des destinataires pour le scope custom
+    recipient_ids: list[int] = []
+    if scope_val == "custom":
+        valid_user_ids = {u["id"] for u in _get_table_users(table, db)}
+        recipient_ids = [int(x) for x in recipient_ids_raw if x.strip().isdigit() and int(x) in valid_user_ids]
 
     # Validation
     errors: list[str] = []
@@ -132,10 +188,8 @@ async def create_alert(
     conditions = _build_conditions(col_ids, operators, values, logics, value_types, value_col_ids)
     if not conditions:
         errors.append("Au moins une condition est requise.")
-
-    # Scope global réservé aux propriétaires/admins
-    if scope_val == "global" and not (user.is_admin or is_table_owner(table, user, db)):
-        scope_val = "private"
+    if scope_val == "custom" and not recipient_ids:
+        errors.append("Au moins un destinataire est requis pour une alerte personnalisée.")
 
     if errors:
         ctx = _panel_context(table, user, db)
@@ -171,6 +225,12 @@ async def create_alert(
         is_active=True,
     )
     db.add(alert)
+    db.flush()  # obtenir alert.id avant d'ajouter les destinataires
+
+    if scope_val == "custom":
+        for uid in recipient_ids:
+            db.add(AlertRecipient(alert_id=alert.id, user_id=uid))
+
     db.commit()
 
     # Évaluation immédiate sur toutes les lignes existantes
@@ -208,12 +268,15 @@ def edit_alert_form(
         {"id": col.id, "name": col.name, "type": col.col_type.value}
         for col in table.columns
     ])
+    alert_recipients_json = json.dumps([r.user_id for r in alert.recipients])
     return templates.TemplateResponse(request, "alerts/edit_form.html", {
         "table": table,
         "user": user,
         "alert": alert,
         "columns": table.columns,
         "columns_json": columns_json,
+        "table_users_json": json.dumps(_get_table_users(table, db)),
+        "alert_recipients_json": alert_recipients_json,
         "is_owner": is_table_owner(table, user, db),
         "conditions_json": alert.conditions,
         "actions_json": alert.actions or "{}",
@@ -243,6 +306,17 @@ async def update_alert(
     logics = form.getlist("logics")
     value_types = form.getlist("value_types")
     value_col_ids = form.getlist("value_col_ids")
+    recipient_ids_raw = form.getlist("recipient_user_ids")
+
+    # Scope global/custom réservé aux propriétaires/admins
+    if scope_val in ("global", "custom") and not (user.is_admin or is_table_owner(table, user, db)):
+        scope_val = "private"
+
+    # Validation des destinataires pour le scope custom
+    recipient_ids: list[int] = []
+    if scope_val == "custom":
+        valid_user_ids = {u["id"] for u in _get_table_users(table, db)}
+        recipient_ids = [int(x) for x in recipient_ids_raw if x.strip().isdigit() and int(x) in valid_user_ids]
 
     errors: list[str] = []
     if not name:
@@ -250,9 +324,8 @@ async def update_alert(
     conditions = _build_conditions(col_ids, operators, values, logics, value_types, value_col_ids)
     if not conditions:
         errors.append("Au moins une condition est requise.")
-
-    if scope_val == "global" and not (user.is_admin or is_table_owner(table, user, db)):
-        scope_val = "private"
+    if scope_val == "custom" and not recipient_ids:
+        errors.append("Au moins un destinataire est requis pour une alerte personnalisée.")
 
     if errors:
         columns_json = json.dumps([
@@ -265,6 +338,8 @@ async def update_alert(
             "alert": alert,
             "columns": table.columns,
             "columns_json": columns_json,
+            "table_users_json": json.dumps(_get_table_users(table, db)),
+            "alert_recipients_json": json.dumps([r.user_id for r in alert.recipients]),
             "is_owner": is_table_owner(table, user, db),
             "conditions_json": json.dumps(conditions) if conditions else alert.conditions,
             "actions_json": alert.actions or "{}",
@@ -292,6 +367,13 @@ async def update_alert(
     alert.scope = AlertScope(scope_val)
     alert.conditions = json.dumps(conditions)
     alert.actions = json.dumps(actions)
+
+    # Mise à jour des destinataires : on remplace entièrement la liste
+    db.query(AlertRecipient).filter_by(alert_id=alert.id).delete()
+    if scope_val == "custom":
+        for uid in recipient_ids:
+            db.add(AlertRecipient(alert_id=alert.id, user_id=uid))
+
     db.commit()
 
     # Réévaluation sur toutes les lignes existantes
