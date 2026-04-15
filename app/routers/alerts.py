@@ -233,14 +233,13 @@ async def create_alert(
 
     db.commit()
 
-    # Évaluation immédiate sur toutes les lignes existantes
-    # pour que les couleurs apparaissent sans attendre une modification
+    # Réévaluation initiale sur les lignes existantes : couleurs uniquement, sans notifications
     rows = db.query(TableRow).filter(
         TableRow.table_id == table_id,
         TableRow.deleted_at == None,
     ).all()
     for row in rows:
-        evaluate_alerts_for_row(db, row, table)
+        evaluate_alerts_for_row(db, row, table, silent=True)
     if rows:
         db.commit()
 
@@ -376,12 +375,12 @@ async def update_alert(
 
     db.commit()
 
-    # Réévaluation sur toutes les lignes existantes
+    # Réévaluation initiale sur les lignes existantes : couleurs uniquement, sans notifications
     rows = db.query(TableRow).filter(
         TableRow.table_id == table_id, TableRow.deleted_at == None
     ).all()
     for row in rows:
-        evaluate_alerts_for_row(db, row, table)
+        evaluate_alerts_for_row(db, row, table, silent=True)
     if rows:
         db.commit()
 
@@ -405,14 +404,14 @@ def toggle_alert(
     alert.is_active = not alert.is_active
     db.commit()
 
-    # Réévaluer toutes les lignes pour mettre à jour les états (couleurs + notifications)
+    # Réévaluation : couleurs uniquement, sans notifications (toggle = action admin, pas événement data)
     table = db.get(DataTable, table_id)
     if table:
         rows = db.query(TableRow).filter(
             TableRow.table_id == table_id, TableRow.deleted_at == None
         ).all()
         for row in rows:
-            evaluate_alerts_for_row(db, row, table)
+            evaluate_alerts_for_row(db, row, table, silent=True)
         if rows:
             db.commit()
 

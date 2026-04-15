@@ -918,6 +918,140 @@ class TestCustomScopeAlerts:
             assert data[row.id]["row_style"] == ""
 
 
+# ── Mode silencieux ───────────────────────────────────────────────────────────
+
+class TestSilentMode:
+    """
+    silent=True : les AlertState sont créés (couleurs + amorçage anti-spam)
+    mais aucune notification in-app ni email n'est générée.
+    """
+
+    def test_silent_creates_state_but_no_notification(self, db, admin_user, table_with_cols):
+        """En mode silencieux, l'état est créé mais aucune notification n'est émise."""
+        from app.alerts import evaluate_alerts_for_row
+        table, cols = table_with_cols
+        col = cols[0]
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "100", "logic": "AND"}
+        ])
+
+        row = _make_row(db, table, admin_user, {col.id: "200"})
+        evaluate_alerts_for_row(db, row, table, silent=True)
+        db.commit()
+
+        state = db.query(AlertState).filter_by(alert_id=alert.id, row_id=row.id).first()
+        assert state is not None
+        assert state.is_triggered is True  # état bien enregistré pour les couleurs
+
+        notifs = db.query(AlertNotification).filter_by(user_id=admin_user.id).all()
+        assert len(notifs) == 0  # aucune notification
+
+    def test_silent_primes_antispam_no_notification_on_next_live_eval(self, db, admin_user, table_with_cols):
+        """
+        Après une réévaluation silencieuse (création d'alerte), une modification live
+        sur une ligne déjà en état True ne génère pas de notification (anti-spam actif).
+        """
+        from app.alerts import evaluate_alerts_for_row
+        table, cols = table_with_cols
+        col = cols[0]
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "100", "logic": "AND"}
+        ])
+
+        row = _make_row(db, table, admin_user, {col.id: "200"})
+
+        # Réévaluation initiale silencieuse (simule create_alert)
+        evaluate_alerts_for_row(db, row, table, silent=True)
+        db.commit()
+
+        # Modification live de la ligne (condition toujours vraie)
+        evaluate_alerts_for_row(db, row, table, silent=False)
+        db.commit()
+
+        notifs = db.query(AlertNotification).filter_by(user_id=admin_user.id).all()
+        assert len(notifs) == 0  # état déjà True → anti-spam → pas de notification
+
+    def test_live_eval_notifies_after_false_to_true_following_silent_init(self, db, admin_user, table_with_cols):
+        """
+        Après réévaluation silencieuse (ligne ne matchait pas), une modification live
+        qui fait passer la condition à True génère bien une notification.
+        """
+        from app.alerts import evaluate_alerts_for_row
+        table, cols = table_with_cols
+        col = cols[0]
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "100", "logic": "AND"}
+        ])
+
+        # Ligne qui ne matche pas au moment de la création de l'alerte
+        row = _make_row(db, table, admin_user, {col.id: "50"})
+        evaluate_alerts_for_row(db, row, table, silent=True)
+        db.commit()
+
+        state = db.query(AlertState).filter_by(alert_id=alert.id, row_id=row.id).first()
+        assert state.is_triggered is False
+
+        # L'utilisateur modifie la ligne → condition passe à True
+        cell = next(cv for cv in row.cell_values if cv.column_id == col.id)
+        cell.value = "200"
+        db.flush()
+        evaluate_alerts_for_row(db, row, table, silent=False)
+        db.commit()
+
+        notifs = db.query(AlertNotification).filter_by(user_id=admin_user.id).all()
+        assert len(notifs) == 1  # vrai passage False → True → notification envoyée
+
+    def test_create_alert_route_generates_no_notification_for_existing_rows(
+        self, admin_client, db, admin_user, table_with_cols
+    ):
+        """La création d'une alerte via la route ne génère aucune notification
+        pour les lignes existantes qui matchent déjà."""
+        from app.alerts import evaluate_alerts_for_row
+        table, cols = table_with_cols
+        col = cols[0]
+
+        # Créer des lignes AVANT l'alerte
+        row1 = _make_row(db, table, admin_user, {col.id: "500"})
+        row2 = _make_row(db, table, admin_user, {col.id: "10"})
+        db.commit()
+
+        admin_client.post(f"/tables/{table.id}/alerts", data={
+            "name": "Alerte silencieuse",
+            "scope": "private",
+            "col_ids": [str(col.id)],
+            "operators": ["gt"],
+            "values": ["100"],
+            "logics": ["AND"],
+        })
+
+        notifs = db.query(AlertNotification).filter_by(user_id=admin_user.id).all()
+        assert len(notifs) == 0  # aucune notification rétroactive
+
+        # Vérifier que l'état est quand même créé (pour les couleurs)
+        alert = db.query(Alert).filter_by(table_id=table.id).first()
+        state = db.query(AlertState).filter_by(alert_id=alert.id, row_id=row1.id).first()
+        assert state is not None
+        assert state.is_triggered is True
+
+    def test_toggle_alert_generates_no_notification(self, admin_client, db, admin_user, table_with_cols):
+        """La réactivation d'une alerte ne génère pas de notifications."""
+        from app.alerts import evaluate_alerts_for_row
+        table, cols = table_with_cols
+        col = cols[0]
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}
+        ])
+        row = _make_row(db, table, admin_user, {col.id: "1"})
+        db.commit()
+
+        # Désactiver puis réactiver
+        admin_client.post(f"/tables/{table.id}/alerts/{alert.id}/toggle")  # désactive
+        admin_client.post(f"/tables/{table.id}/alerts/{alert.id}/toggle")  # réactive
+
+        notifs = db.query(AlertNotification).filter_by(user_id=admin_user.id).all()
+        assert len(notifs) == 0
+
+
 # ── get_alerted_row_ids ───────────────────────────────────────────────────────
 
 def test_get_alerted_row_ids(db, admin_user, table_with_cols):

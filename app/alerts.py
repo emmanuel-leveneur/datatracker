@@ -212,11 +212,21 @@ def _build_message(alert_name: str, conditions: list[dict], col_names: dict[int,
     return f"Alerte « {alert_name} » : {cond_str} — ligne #{row_id} dans {table_name}"
 
 
-def evaluate_alerts_for_row(db: Session, row: TableRow, table: DataTable) -> None:
+def evaluate_alerts_for_row(
+    db: Session,
+    row: TableRow,
+    table: DataTable,
+    silent: bool = False,
+) -> None:
     """
     Évalue toutes les alertes actives de la table sur la ligne donnée.
     Crée des notifications uniquement lors du passage False → True (anti-spam).
     À appeler après db.flush() (row.id et cell_values disponibles) et avant db.commit().
+
+    silent=True : met à jour les AlertState (couleurs + amorçage anti-spam) sans
+    envoyer aucune notification in-app ni email. À utiliser lors de la réévaluation
+    initiale à la création/modification/toggle d'une alerte, pour éviter d'inonder
+    les destinataires avec des données déjà existantes.
     """
     alerts = db.query(Alert).filter_by(table_id=table.id, is_active=True).all()
     if not alerts:
@@ -241,8 +251,8 @@ def evaluate_alerts_for_row(db: Session, row: TableRow, table: DataTable) -> Non
         if is_triggered_now:
             state.last_triggered_at = datetime.utcnow()
 
-        # Notifier uniquement si passage False → True
-        if is_triggered_now and not was_triggered:
+        # Notifier uniquement si passage False → True ET mode non silencieux
+        if is_triggered_now and not was_triggered and not silent:
             try:
                 actions = json.loads(alert.actions or "{}")
             except Exception:
