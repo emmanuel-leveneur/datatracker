@@ -230,30 +230,42 @@
 | Fonctionnalité | Description |
 |---|---|
 | Nom de l'alerte | Libellé libre |
-| Portée | `private` (soi uniquement) ou `global` (tous les accédants) — global réservé aux propriétaires/admins |
+| Portée | Trois niveaux : `Privée` (soi uniquement), `Globale` (tous les accédants), `Personnalisée` (destinataires choisis) — global et personnalisée réservés aux propriétaires/admins |
+| Portée personnalisée | Sélection des destinataires parmi les utilisateurs ayant accès à la table via un tag input avec autocomplete (badges supprimables, pré-rempli à l'édition) |
 | Jusqu'à 5 conditions | Combinaison avec opérateurs logiques AND/OR |
 | Opérateurs de comparaison | `=`, `≠`, `>`, `≥`, `<`, `≤`, `contient`, `ne contient pas`, `est vide`, `n'est pas vide` |
 | Comparaison littérale | Valeur de référence saisie manuellement |
 | Comparaison colonne-à-colonne | La valeur de référence est une autre colonne de la même ligne |
 | Activation/désactivation | Toggle sans supprimer la configuration |
 | Modification | Formulaire pré-rempli avec la configuration existante |
-| Suppression | Suppression alerte + états + notifications associés |
+| Suppression | Suppression alerte + états + notifications + destinataires associés |
 
 ### Actions déclenchées
 
 | Action | Description |
 |---|---|
-| Notification in-app | Génère une `AlertNotification` pour chaque utilisateur concerné (portée globale → tous les accédants) |
+| Notification in-app | Génère une `AlertNotification` pour chaque utilisateur concerné selon la portée |
+| Notification email | Envoie un email avec le nom de l'alerte, le nom de la table et la fiche de la ligne déclenchante (valeurs mises en évidence) |
 | Surbrillance ligne | Colorisation de toute la ligne avec la couleur choisie |
 | Surbrillance cellules | Colorisation uniquement des cellules impliquées dans la condition |
+
+### Portée des notifications et de la surbrillance
+
+| Portée | Notifications | Surbrillance |
+|---|---|---|
+| **Privée** | Créateur uniquement | Créateur uniquement |
+| **Globale** | Tous les utilisateurs ayant accès à la table | Tous les utilisateurs ayant accès à la table |
+| **Personnalisée** | Destinataires explicites ∩ utilisateurs ayant encore accès | Destinataires explicites uniquement (portée stricte) |
 
 ### Évaluation
 
 | Fonctionnalité | Description |
 |---|---|
-| Évaluation à la modification | Déclenchée à chaque `create_row` et `update_row` |
-| Évaluation initiale | À la création d'une alerte, toutes les lignes existantes sont évaluées |
+| Évaluation à la modification | Déclenchée à chaque `create_row` et `update_row` — notifications envoyées si passage False → True |
+| Évaluation initiale silencieuse | À la création, modification ou toggle d'une alerte, les lignes existantes sont évaluées pour les couleurs uniquement — aucune notification rétroactive |
+| Anti-spam amorcé | Les lignes déjà en état `True` à la création de l'alerte ne déclencheront pas de notification lors de la prochaine modification live |
 | Persistance d'état | `AlertState` stocke si l'alerte est actuellement déclenchée sur chaque ligne |
+| Sécurité destinataires | Un destinataire personnalisé ayant perdu son accès à la table ne reçoit plus les notifications |
 | Indicateur visuel | Icône 🔔 dans la colonne alerte du tableau si ligne déclenchée avec notification non lue |
 
 ---

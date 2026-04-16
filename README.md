@@ -118,7 +118,8 @@ User
  │    ├── TableOwner (user_id)                          ← co-propriétaires
  │    └── Alert (name, scope, conditions JSON, actions JSON, is_active)
  │         ├── AlertState (row_id, is_triggered, last_triggered_at)
- │         └── AlertNotification (user_id, message, is_read, ...)
+ │         ├── AlertNotification (user_id, message, is_read, ...)
+ │         └── AlertRecipient (user_id)                ← destinataires scope CUSTOM
  │
  ├── ColumnPermission (column_id, hidden, readonly)
  ├── TableFavorite (table_id)
@@ -398,13 +399,15 @@ Les alertes surveillent les données d'une table et déclenchent des actions vis
 - **Portée** :
   - `private` : visible uniquement par le créateur
   - `global` : visible par tous les utilisateurs ayant accès à la table (réservé aux propriétaires/admins)
+  - `custom` : destinataires explicites choisis via un champ tag-input avec autocomplete (réservé aux propriétaires/admins) — seuls les destinataires voient la surbrillance et reçoivent les notifications (le créateur n'est pas implicitement inclus)
 
 ### Évaluation
 
 - Réévaluée à chaque **création ou modification de ligne** (`evaluate_alerts_for_row()` dans `app/alerts.py`)
-- Réévaluée immédiatement à la **création d'une alerte** sur toutes les lignes existantes
+- Réévaluée immédiatement à la **création ou modification d'une alerte** sur toutes les lignes existantes, en mode **silencieux** (`silent=True`) : les états `AlertState` sont initialisés pour la surbrillance et l'anti-spam, mais aucune notification n'est envoyée pour les lignes déjà existantes
 - L'état courant est persisté dans `AlertState` (déclenché ou non, horodatage)
 - L'indicateur 🔔 (bell-ring) est affiché dans la colonne alerte du tableau si la ligne déclenche une alerte avec notification non lue
+- **Anti-spam** : une notification n'est envoyée qu'au passage `False → True` ; une ligne qui reste déclenchée après une modification ne re-notifie pas
 
 ### Notifications
 
@@ -412,6 +415,7 @@ Les alertes surveillent les données d'une table et déclenchent des actions vis
 - Centre de notifications : `/notifications`
 - Badge de comptage dans la navbar : rechargement HTMX toutes les 30 secondes
 - Marquage individuel ou global comme lu
+- Pour la portée `custom`, les destinataires sont intersectés avec les utilisateurs ayant encore accès à la table au moment de l'envoi
 
 ---
 
@@ -507,8 +511,8 @@ datatracker/
 │   ├── main.py              # Création FastAPI, lifespan, include_router, handlers 403/404
 │   ├── models.py            # Tous les modèles SQLAlchemy (User, DataTable, TableColumn,
 │   │                        #   TableRow, CellValue, TablePermission, ColumnPermission,
-│   │                        #   TableOwner, TableFavorite, Alert, AlertState,
-│   │                        #   AlertNotification, ActivityLog, RowComment)
+│   │                        #   TableOwner, TableFavorite, Alert, AlertRecipient,
+│   │                        #   AlertState, AlertNotification, ActivityLog, RowComment)
 │   ├── database.py          # Engine SQLite, get_db(), create_tables(), _run_migrations()
 │   ├── auth.py              # bcrypt, sessions itsdangerous (encode/decode cookie)
 │   ├── activity.py          # log_action() — helper transversal
@@ -624,7 +628,7 @@ pytest tests/test_data.py::test_create_row_as_owner -v
 
 Les tests utilisent une base SQLite **en mémoire** (`StaticPool`). Chaque test part d'un schéma vierge (`create_all` / `drop_all` via fixture `autouse`).
 
-Couverture actuelle : **209 tests**, tous verts.
+Couverture actuelle : **225 tests**, tous verts.
 
 ---
 
