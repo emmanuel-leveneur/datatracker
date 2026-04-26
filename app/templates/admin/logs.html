@@ -29,7 +29,8 @@
       <tbody class="divide-y divide-gray-100">
         {% for entry in logs %}
         <tr class="hover:bg-gray-50">
-          <td class="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
+          <td class="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap"
+              data-order="{{ entry.timestamp.strftime('%Y%m%d%H%M%S') }}">
             {{ entry.timestamp.strftime('%d/%m/%Y %H:%M:%S') }}
           </td>
           <td class="px-4 py-2.5 font-medium text-gray-800">{{ entry.username }}</td>

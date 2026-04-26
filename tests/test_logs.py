@@ -200,3 +200,57 @@ def test_update_user_permissions_creates_log(admin_client, db, admin_user, regul
     log = db.query(ActivityLog).filter_by(action="update_user_permissions").first()
     assert log is not None
     assert log.resource_name == regular_user.username
+
+
+# ── Tri chronologique (data-order) ───────────────────────────────────────────
+
+def test_logs_date_cell_has_data_order(admin_client, db, admin_user):
+    """Chaque cellule date du journal doit exposer data-order pour un tri chronologique correct."""
+    admin_client.post("/tables/create", data={
+        "name": "LogOrderTest",
+        "col_names": ["Col"], "col_types": ["text"],
+        "col_required": [], "col_options": [""],
+    })
+
+    resp = admin_client.get("/admin/logs")
+
+    assert resp.status_code == 200
+    assert 'data-order="' in resp.text
+
+
+def test_logs_data_order_is_sortable_format(admin_client, db, admin_user):
+    """data-order doit être au format YYYYMMDDHHMMSS (14 chiffres, triable sans plugin)."""
+    import re
+    admin_client.post("/tables/create", data={
+        "name": "LogOrderTest",
+        "col_names": ["Col"], "col_types": ["text"],
+        "col_required": [], "col_options": [""],
+    })
+
+    resp = admin_client.get("/admin/logs")
+
+    match = re.search(r'data-order="(\d+)"', resp.text)
+    assert match is not None, "Attribut data-order introuvable dans le journal"
+    assert len(match.group(1)) == 14, (
+        f"Format attendu YYYYMMDDHHMMSS (14 chiffres), obtenu : {match.group(1)!r}"
+    )
+
+
+def test_logs_data_order_matches_displayed_date(admin_client, db, admin_user):
+    """data-order doit correspondre à la date affichée (même instant, formats différents)."""
+    import re
+    from datetime import datetime
+    admin_client.post("/tables/create", data={
+        "name": "LogOrderTest",
+        "col_names": ["Col"], "col_types": ["text"],
+        "col_required": [], "col_options": [""],
+    })
+
+    resp = admin_client.get("/admin/logs")
+
+    order_match = re.search(r'data-order="(\d{14})"', resp.text)
+    date_match = re.search(r'(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})', resp.text)
+    assert order_match and date_match, "data-order ou date affichée introuvable"
+
+    dt = datetime.strptime(date_match.group(1), "%d/%m/%Y %H:%M:%S")
+    assert order_match.group(1) == dt.strftime("%Y%m%d%H%M%S")

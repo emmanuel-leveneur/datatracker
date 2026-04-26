@@ -136,3 +136,48 @@ def test_tracabilite_button_visible_on_table_detail(admin_client, db, admin_user
     resp = admin_client.get(f"/tables/{table.id}")
     assert resp.status_code == 200
     assert "tracabilite" in resp.text
+
+
+# ── Tri chronologique (data-order) ───────────────────────────────────────────
+
+def test_tracabilite_date_cell_has_data_order(admin_client, db, admin_user):
+    """Chaque cellule date doit exposer data-order pour que DataTables trie correctement."""
+    table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.TEXT)])
+    admin_client.post(f"/tables/{table.id}/rows/new", data={f"col_{cols[0].id}": "x"})
+
+    resp = admin_client.get(f"/tables/{table.id}/tracabilite")
+
+    assert resp.status_code == 200
+    assert 'data-order="' in resp.text
+
+
+def test_tracabilite_data_order_is_sortable_format(admin_client, db, admin_user):
+    """data-order doit être au format YYYYMMDDHHMMSS (14 chiffres, triable sans plugin)."""
+    import re
+    table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.TEXT)])
+    admin_client.post(f"/tables/{table.id}/rows/new", data={f"col_{cols[0].id}": "x"})
+
+    resp = admin_client.get(f"/tables/{table.id}/tracabilite")
+
+    match = re.search(r'data-order="(\d+)"', resp.text)
+    assert match is not None, "Attribut data-order introuvable dans la traçabilité"
+    assert len(match.group(1)) == 14, (
+        f"Format attendu YYYYMMDDHHMMSS (14 chiffres), obtenu : {match.group(1)!r}"
+    )
+
+
+def test_tracabilite_data_order_matches_displayed_date(admin_client, db, admin_user):
+    """data-order doit correspondre à la date affichée (même instant, formats différents)."""
+    import re
+    from datetime import datetime
+    table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.TEXT)])
+    admin_client.post(f"/tables/{table.id}/rows/new", data={f"col_{cols[0].id}": "x"})
+
+    resp = admin_client.get(f"/tables/{table.id}/tracabilite")
+
+    order_match = re.search(r'data-order="(\d{14})"', resp.text)
+    date_match = re.search(r'(\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})', resp.text)
+    assert order_match and date_match, "data-order ou date affichée introuvable"
+
+    dt = datetime.strptime(date_match.group(1), "%d/%m/%Y %H:%M:%S")
+    assert order_match.group(1) == dt.strftime("%Y%m%d%H%M%S")
