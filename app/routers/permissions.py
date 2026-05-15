@@ -84,6 +84,8 @@ async def bulk_set_permissions(
     diff = []
 
     for u in all_users:
+        if f"table_perm_{u.id}" not in form:
+            continue
         # Table permission
         table_level = form.get(f"table_perm_{u.id}")
         new_level = table_level if table_level and table_level in [e.value for e in PermissionLevel] else "none"

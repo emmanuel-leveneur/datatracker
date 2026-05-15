@@ -298,3 +298,53 @@ def test_remove_owner_creates_log(admin_client, db, admin_user, regular_user):
     db.expire_all()
     log = db.query(ActivityLog).filter_by(action="remove_owner").first()
     assert log is not None
+
+
+# ── Pagination : soumission partielle du formulaire ───────────────────────────
+
+def test_bulk_permissions_partial_form_preserves_absent_user_table_perm(
+    admin_client, db, admin_user, regular_user, second_user
+):
+    """Soumettre uniquement la page 1 (alice) ne doit pas effacer les droits de bob (page 2)."""
+    table, _ = make_table(db, admin_user)
+    db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+    db.add(TablePermission(table_id=table.id, user_id=second_user.id, level=PermissionLevel.WRITE))
+    db.commit()
+
+    # Formulaire partiel : seul alice est soumis (bob absent = autre page DataTables)
+    admin_client.post(
+        f"/tables/{table.id}/permissions/bulk",
+        data={f"table_perm_{regular_user.id}": "none"},  # on révoque alice
+    )
+
+    db.expire_all()
+    # alice révoquée
+    assert db.query(TablePermission).filter_by(table_id=table.id, user_id=regular_user.id).first() is None
+    # bob inchangé
+    perm = db.query(TablePermission).filter_by(table_id=table.id, user_id=second_user.id).first()
+    assert perm is not None
+    assert perm.level == PermissionLevel.WRITE
+
+
+def test_bulk_permissions_partial_form_preserves_absent_user_column_perm(
+    admin_client, db, admin_user, regular_user, second_user
+):
+    """Les permissions de colonne d'un utilisateur absent du formulaire ne doivent pas être supprimées."""
+    table, cols = make_table(db, admin_user, columns=[("Confidentiel", ColumnType.TEXT)])
+    col = cols[0]
+    db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+    db.add(TablePermission(table_id=table.id, user_id=second_user.id, level=PermissionLevel.READ))
+    db.add(ColumnPermission(column_id=col.id, user_id=second_user.id, hidden=True))
+    db.commit()
+
+    # Formulaire partiel : seul alice est soumis, bob est absent
+    admin_client.post(
+        f"/tables/{table.id}/permissions/bulk",
+        data={f"table_perm_{regular_user.id}": "read"},
+    )
+
+    db.expire_all()
+    # La ColumnPermission de bob doit être intacte
+    cp = db.query(ColumnPermission).filter_by(column_id=col.id, user_id=second_user.id).first()
+    assert cp is not None
+    assert cp.hidden is True
