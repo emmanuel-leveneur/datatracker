@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from app.models import DataTable, TableColumn, ColumnType
+from tests.helpers import make_table
 
 
 def test_list_tables_requires_auth(client: TestClient):
@@ -201,3 +202,86 @@ def test_column_hidden_for_user(user_client: TestClient, db, admin_user, regular
     assert "visible_value" in resp.text
     assert "secret_value" not in resp.text
     assert "Secret" not in resp.text
+
+
+# ── Endpoint GeoJSON ──────────────────────────────────────────────────────────
+
+def _make_geo_table(db, owner):
+    """Table avec colonnes LAT/LON + une colonne texte, et 2 lignes."""
+    from app.models import TableRow, CellValue
+    table, cols = make_table(db, owner, name="GeoTable", columns=[
+        ("Nom", ColumnType.TEXT),
+        ("lat", ColumnType.LATITUDE),
+        ("lon", ColumnType.LONGITUDE),
+    ])
+    col_nom, col_lat, col_lon = cols
+    for nom, lat, lon in [("Paris", "48.8566", "2.3522"), ("Lyon", "45.7640", "4.8357")]:
+        row = TableRow(table_id=table.id, created_by_id=owner.id)
+        db.add(row)
+        db.flush()
+        db.add(CellValue(row_id=row.id, column_id=col_nom.id, value=nom))
+        db.add(CellValue(row_id=row.id, column_id=col_lat.id, value=lat))
+        db.add(CellValue(row_id=row.id, column_id=col_lon.id, value=lon))
+    db.commit()
+    return table, cols
+
+
+def test_geojson_returns_all_points(admin_client, db, admin_user):
+    table, _ = _make_geo_table(db, admin_user)
+
+    resp = admin_client.get(f"/tables/{table.id}/geojson")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["type"] == "FeatureCollection"
+    assert len(data["features"]) == 2
+    coords = {tuple(f["geometry"]["coordinates"]) for f in data["features"]}
+    assert (2.3522, 48.8566) in coords
+    assert (4.8357, 45.7640) in coords
+
+
+def test_geojson_popup_contains_text_columns(admin_client, db, admin_user):
+    table, _ = _make_geo_table(db, admin_user)
+
+    resp = admin_client.get(f"/tables/{table.id}/geojson")
+
+    names = {f["properties"].get("Nom") for f in resp.json()["features"]}
+    assert "Paris" in names
+    assert "Lyon" in names
+
+
+def test_geojson_filter_q(admin_client, db, admin_user):
+    table, _ = _make_geo_table(db, admin_user)
+
+    resp = admin_client.get(f"/tables/{table.id}/geojson?q=Paris")
+
+    data = resp.json()
+    assert len(data["features"]) == 1
+    assert data["features"][0]["properties"]["Nom"] == "Paris"
+
+
+def test_geojson_filter_column(admin_client, db, admin_user):
+    table, cols = _make_geo_table(db, admin_user)
+    col_nom = cols[0]
+
+    resp = admin_client.get(f"/tables/{table.id}/geojson?filter_{col_nom.id}=Lyon")
+
+    data = resp.json()
+    assert len(data["features"]) == 1
+    assert data["features"][0]["properties"]["Nom"] == "Lyon"
+
+
+def test_geojson_no_geo_cols_returns_empty(admin_client, db, admin_user):
+    table, _ = make_table(db, admin_user, name="NoGeo", columns=[("Texte", ColumnType.TEXT)])
+
+    resp = admin_client.get(f"/tables/{table.id}/geojson")
+
+    assert resp.json() == {"type": "FeatureCollection", "features": []}
+
+
+def test_geojson_forbidden_without_access(user_client, db, admin_user):
+    table, _ = _make_geo_table(db, admin_user)
+
+    resp = user_client.get(f"/tables/{table.id}/geojson")
+
+    assert resp.status_code == 403
