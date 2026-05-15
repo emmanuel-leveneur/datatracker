@@ -252,6 +252,9 @@ def table_detail(
         for row in trashed_rows
     ]
 
+    lat_col = next((c for c in visible_cols if c.col_type == ColumnType.LATITUDE), None)
+    lon_col = next((c for c in visible_cols if c.col_type == ColumnType.LONGITUDE), None)
+
     is_owner = is_table_owner(table, user, db)
     can_write = can_access_table(table, user, db, require_write=True)
 
@@ -292,8 +295,58 @@ def table_detail(
             "q": q,
             "col_filters": col_filters,
             "comment_counts": comment_counts,
+            "lat_col": lat_col,
+            "lon_col": lon_col,
         },
     )
+
+
+@router.get("/{table_id}/geojson")
+def table_geojson(
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    from app.dependencies import get_visible_columns
+    visible_cols = get_visible_columns(table, user, db)
+    lat_col = next((c for c in visible_cols if c.col_type == ColumnType.LATITUDE), None)
+    lon_col = next((c for c in visible_cols if c.col_type == ColumnType.LONGITUDE), None)
+
+    if not lat_col or not lon_col:
+        return {"type": "FeatureCollection", "features": []}
+
+    visible_col_ids = {c.id for c in visible_cols}
+    geo_ids = {lat_col.id, lon_col.id}
+    other_cols = [c for c in visible_cols if c.col_type not in (ColumnType.LATITUDE, ColumnType.LONGITUDE)]
+
+    rows = db.query(TableRow).options(
+        subqueryload(TableRow.cell_values)
+    ).filter(
+        TableRow.table_id == table.id,
+        TableRow.deleted_at == None,
+    ).all()
+
+    features = []
+    for row in rows:
+        cells = {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
+        try:
+            lat = float(cells.get(lat_col.id) or "")
+            lon = float(cells.get(lon_col.id) or "")
+        except ValueError:
+            continue
+        props = {"row_id": row.id}
+        for col in other_cols:
+            props[col.name] = cells.get(col.id, "")
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+            "properties": props,
+        })
+
+    return {"type": "FeatureCollection", "features": features}
 
 
 @router.get("/{table_id}/edit", response_class=HTMLResponse)
