@@ -49,6 +49,10 @@ _BOOL_ALL   = _BOOL_TRUE | _BOOL_FALSE
 
 _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
+# Mots-clés de noms de colonnes géographiques (signal primaire pour LAT/LON)
+_LATITUDE_KEYWORDS  = {"lat", "latitude"}
+_LONGITUDE_KEYWORDS = {"lon", "lng", "long", "longitude"}
+
 
 # ── Encodage & séparateur ──────────────────────────────────────────────────────
 
@@ -197,7 +201,21 @@ def _is_email(val: str) -> bool:
     return bool(_EMAIL_RE.match(val))
 
 
-def infer_column_type(all_values: list[str]) -> ColumnType:
+def _is_lat_value(val: str) -> bool:
+    try:
+        return -90 <= float(val.replace(',', '.')) <= 90
+    except ValueError:
+        return False
+
+
+def _is_lon_value(val: str) -> bool:
+    try:
+        return -180 <= float(val.replace(',', '.')) <= 180
+    except ValueError:
+        return False
+
+
+def infer_column_type(all_values: list[str], col_name: str = "") -> ColumnType:
     """
     Infère le type d'une colonne à partir de toutes ses valeurs.
     - Utilise un échantillon de SAMPLE_SIZE valeurs non vides pour le type
@@ -212,6 +230,16 @@ def infer_column_type(all_values: list[str]) -> ColumnType:
 
     # Chaque type doit matcher sur au moins 95 % de l'échantillon
     threshold = 0.95
+
+    # LATITUDE / LONGITUDE : le nom de colonne est le signal primaire
+    if col_name:
+        normalized = re.sub(r'[\s_\-]', '', col_name.lower())
+        if any(kw in normalized for kw in _LATITUDE_KEYWORDS):
+            if sum(_is_lat_value(v) for v in sample) / total >= threshold:
+                return ColumnType.LATITUDE
+        elif any(kw in normalized for kw in _LONGITUDE_KEYWORDS):
+            if sum(_is_lon_value(v) for v in sample) / total >= threshold:
+                return ColumnType.LONGITUDE
 
     # BOOLEAN : toutes les valeurs distinctes doivent être dans _BOOL_ALL
     if _is_bool_column(sample):
@@ -289,7 +317,7 @@ def normalize_value(val: str, col_type: ColumnType) -> str:
                     pass
         return val  # stocké tel quel si non parseable
 
-    if col_type == ColumnType.FLOAT:
+    if col_type in (ColumnType.FLOAT, ColumnType.LATITUDE, ColumnType.LONGITUDE):
         return val.replace(',', '.', 1)
 
     return val

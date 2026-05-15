@@ -52,6 +52,8 @@ def _col_type_label(col_type: ColumnType) -> str:
         ColumnType.BOOLEAN: "Oui/Non",
         ColumnType.EMAIL: "Email",
         ColumnType.SELECT: "Liste",
+        ColumnType.LATITUDE: "Latitude",
+        ColumnType.LONGITUDE: "Longitude",
     }
     return labels.get(col_type, col_type.value)
 
@@ -130,9 +132,9 @@ async def analyze_file(
     # Inférence des types
     col_types: list[ColumnType] = []
     select_options: list[str] = []  # options pour les colonnes SELECT
-    for i, _ in enumerate(headers):
+    for i, col_name in enumerate(headers):
         col_values = [row[i] for row in rows]
-        ct = infer_column_type(col_values)
+        ct = infer_column_type(col_values, col_name=col_name)
         col_types.append(ct)
         if ct == ColumnType.SELECT:
             opts = sorted(set(v.strip() for v in col_values if v.strip()))

@@ -23,6 +23,8 @@ class ColumnType(str, enum.Enum):
     EMAIL = "email"
     SELECT = "select"
     RELATION = "relation"
+    LATITUDE = "latitude"
+    LONGITUDE = "longitude"
 
 
 class PermissionLevel(str, enum.Enum):
