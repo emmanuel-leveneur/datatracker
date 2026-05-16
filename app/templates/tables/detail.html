@@ -134,8 +134,22 @@
 
 {% if lat_col and lon_col %}
 <!-- Map view -->
-<div id="map-view" class="hidden mb-4">
-  <div id="leaflet-map" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm" style="height:600px;"></div>
+<div id="map-view" class="hidden">
+  <div id="map-filter-bar" class="mb-3 flex flex-wrap gap-x-3 gap-y-1.5 items-center bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
+    <span class="text-xs font-semibold text-gray-500 shrink-0">Filtres</span>
+    {% for col in columns %}{% if col.col_type.value not in ('latitude', 'longitude') %}
+    <label class="flex items-center gap-1.5 shrink-0">
+      <span class="text-xs text-gray-400 whitespace-nowrap">{{ col.name }}</span>
+      <input type="search" name="filter_{{ col.id }}" placeholder="…" autocomplete="off"
+        class="w-28 border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+    </label>
+    {% endif %}{% endfor %}
+    <button type="button" onclick="clearMapFilters()"
+      class="ml-auto flex items-center gap-1 px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded hover:bg-gray-50 transition">
+      <i data-lucide="x" class="w-3 h-3"></i> Effacer
+    </button>
+  </div>
+  <div id="leaflet-map" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm"></div>
 </div>
 {% endif %}
 
@@ -545,19 +559,58 @@ document.addEventListener('keydown', function(e) {
   var VIEW_KEY = 'viewmode_{{ table.id }}';
   var _map = null;
   var _markersLayer = null;
+  var _filterTimer  = null;
   var activeClass   = ['bg-blue-600', 'text-white'];
   var inactiveClass = ['bg-white', 'text-gray-600', 'hover:bg-gray-50'];
 
-  // ── Collecte des filtres actifs dans la vue liste ──────────────────────────
+  // ── Collecte des filtres (mode-aware) ─────────────────────────────────────
   function collectFilterParams() {
     var params = new URLSearchParams();
     var qEl = document.getElementById('global-search');
     if (qEl && qEl.value) params.set('q', qEl.value);
-    document.querySelectorAll('[name^="filter_"]').forEach(function (el) {
-      if (el.value) params.set(el.name, el.value);
-    });
+    var mapView = document.getElementById('map-view');
+    var isMap = mapView && !mapView.classList.contains('hidden');
+    var container = document.getElementById(isMap ? 'map-filter-bar' : 'filters-zone');
+    if (container) {
+      container.querySelectorAll('[name^="filter_"]').forEach(function(el) {
+        if (el.value) params.set(el.name, el.value);
+      });
+    }
     return params;
   }
+
+  // ── Synchronisation des valeurs entre les deux barres ────────────────────
+  function syncFilters(fromId, toId) {
+    var from = document.getElementById(fromId);
+    var to   = document.getElementById(toId);
+    if (!from || !to) return;
+    from.querySelectorAll('[name^="filter_"]').forEach(function(el) {
+      var target = to.querySelector('[name="' + el.name + '"]');
+      if (target) target.value = el.value;
+    });
+  }
+
+  // ── Rechargement différé des marqueurs (debounce 350 ms) ─────────────────
+  function scheduleReload() {
+    clearTimeout(_filterTimer);
+    _filterTimer = setTimeout(function() {
+      if (_map) loadMarkers(collectFilterParams());
+    }, 350);
+  }
+
+  // ── Hauteur dynamique : mesurée depuis le haut de #leaflet-map ───────────
+  function resizeMap() {
+    var leafletEl = document.getElementById('leaflet-map');
+    var mapViewEl = document.getElementById('map-view');
+    if (!leafletEl || mapViewEl.classList.contains('hidden')) return;
+    var footerEl = document.querySelector('footer');
+    var footerH  = footerEl ? footerEl.offsetHeight : 0;
+    var top      = leafletEl.getBoundingClientRect().top;
+    var availH   = window.innerHeight - top - footerH - 4;
+    leafletEl.style.height = Math.max(300, availH) + 'px';
+    if (_map) _map.invalidateSize();
+  }
+  window.addEventListener('resize', resizeMap);
 
   // ── Bascule liste ↔ carte ─────────────────────────────────────────────────
   function applyViewMode(mode) {
@@ -567,14 +620,18 @@ document.addEventListener('keydown', function(e) {
     var btnMap   = document.getElementById('btn-map-view');
 
     if (mode === 'map') {
+      syncFilters('filters-zone', 'map-filter-bar');
       listView.classList.add('hidden');
       mapView.classList.remove('hidden');
       btnList.classList.remove(...activeClass);
       btnList.classList.add(...inactiveClass);
       btnMap.classList.remove(...inactiveClass);
       btnMap.classList.add(...activeClass);
+      resizeMap();
       initMap(collectFilterParams());
+      lucide.createIcons();
     } else {
+      syncFilters('map-filter-bar', 'filters-zone');
       mapView.classList.add('hidden');
       listView.classList.remove('hidden');
       btnMap.classList.remove(...activeClass);
@@ -589,17 +646,57 @@ document.addEventListener('keydown', function(e) {
     applyViewMode(mode);
   };
 
-  // ── Initialisation Leaflet ─────────────────────────────────────────────────
+  // ── Effacer filtres carte + recherche globale ─────────────────────────────
+  window.clearMapFilters = function() {
+    var bar = document.getElementById('map-filter-bar');
+    if (bar) bar.querySelectorAll('[name^="filter_"]').forEach(function(el) { el.value = ''; });
+    var qEl = document.getElementById('global-search');
+    if (qEl) qEl.value = '';
+    if (_map) loadMarkers(new URLSearchParams());
+  };
+
+  // ── Initialisation Leaflet (une seule fois) ────────────────────────────────
   function initMap(params) {
     if (!_map) {
-      _map = L.map('leaflet-map');
-      L.tileLayer(
+      var ignOrtho = L.tileLayer(
         'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0' +
         '&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg' +
         '&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
         { maxZoom: 20, attribution: '© <a href="https://www.ign.fr/" target="_blank">IGN</a>-F / Géoplateforme' }
-      ).addTo(_map);
+      );
+      var ignPlan = L.tileLayer(
+        'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0' +
+        '&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png' +
+        '&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+        { maxZoom: 20, attribution: '© <a href="https://www.ign.fr/" target="_blank">IGN</a>-F / Géoplateforme' }
+      );
+      var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
+      });
+      _map = L.map('leaflet-map', { layers: [ignOrtho] });
+      L.control.layers({
+        'Orthophoto (IGN)': ignOrtho,
+        'Plan IGN': ignPlan,
+        'OpenStreetMap': osm
+      }).addTo(_map);
       _markersLayer = L.layerGroup().addTo(_map);
+
+      // Inputs de la barre de filtres carte → rechargement live
+      var bar = document.getElementById('map-filter-bar');
+      if (bar) {
+        bar.addEventListener('input', function(e) {
+          if (e.target.name && e.target.name.startsWith('filter_')) scheduleReload();
+        });
+      }
+      // Recherche globale → rechargement live quand on est en mode carte
+      var qEl = document.getElementById('global-search');
+      if (qEl) {
+        qEl.addEventListener('input', function() {
+          var mv = document.getElementById('map-view');
+          if (mv && !mv.classList.contains('hidden')) scheduleReload();
+        });
+      }
     } else {
       _map.invalidateSize();
     }
