@@ -18,6 +18,7 @@
 
   <form action="/import-auto/confirm" method="post">
     <input type="hidden" name="payload_json" value="{{ payload_json | e }}">
+    <input type="hidden" name="operations_json" id="operations-json" value="[]">
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
       <!-- Nom de la table -->
@@ -32,7 +33,7 @@
       <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm flex flex-col justify-center">
         <div class="text-2xl font-bold text-gray-800">{{ total_rows }}</div>
         <div class="text-xs text-gray-400">ligne(s) à importer</div>
-        <div class="text-2xl font-bold text-gray-800 mt-2">{{ headers | length }}</div>
+        <div class="text-2xl font-bold text-gray-800 mt-2" id="col-count-display">{{ headers | length }}</div>
         <div class="text-xs text-gray-400">colonne(s) détectée(s)</div>
       </div>
     </div>
@@ -58,7 +59,10 @@
     <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden mb-5">
       <div class="px-4 py-3 border-b bg-gray-50 flex items-center justify-between">
         <h2 class="text-sm font-semibold text-gray-700">Configuration des colonnes</h2>
-        <span class="text-xs text-gray-400">Modifiez les noms et types si nécessaire</span>
+        <div class="flex items-center gap-3">
+          <span id="ops-badge" class="hidden text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-0.5"></span>
+          <span class="text-xs text-gray-400">Modifiez les noms et types si nécessaire</span>
+        </div>
       </div>
       <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
@@ -70,35 +74,32 @@
               <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Nom de la colonne</th>
               <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide w-36">Type détecté</th>
               <th class="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Exemples de valeurs</th>
+              <th class="px-3 py-2 w-10"></th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-gray-100">
+          <tbody id="config-tbody" class="divide-y divide-gray-100">
             {% for i in range(headers | length) %}
             {% set col_type = col_types[i] %}
             <tr class="hover:bg-gray-50 transition" id="col-row-{{ i }}">
-              <!-- Exclure -->
               <td class="px-3 py-2.5 text-center">
                 <input type="checkbox" name="col_ignore" value="{{ i }}"
                        onchange="toggleColRow({{ i }}, this.checked)"
                        class="rounded border-gray-300 text-red-500">
               </td>
-              <!-- Nom -->
               <td class="px-3 py-2.5">
                 <input type="text" name="col_name" value="{{ headers[i] }}" maxlength="128"
                        class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
               </td>
-              <!-- Type -->
               <td class="px-3 py-2.5">
                 <select name="col_type"
                         class="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
                   {% for t in all_types %}
                   <option value="{{ t }}" {% if t == col_type.value %}selected{% endif %}>
-                    {{ {"text":"Texte","integer":"Entier","float":"Décimal","date":"Date","datetime":"Date+Heure","boolean":"Oui/Non","email":"Email","select":"Liste"}.get(t, t) }}
+                    {{ {"text":"Texte","integer":"Entier","float":"Décimal","date":"Date","datetime":"Date+Heure","boolean":"Oui/Non","email":"Email","select":"Liste","latitude":"Latitude","longitude":"Longitude"}.get(t, t) }}
                   </option>
                   {% endfor %}
                 </select>
               </td>
-              <!-- Exemples -->
               <td class="px-3 py-2.5 text-gray-500 text-xs">
                 {% set examples = [] %}
                 {% for row in preview_rows %}
@@ -113,10 +114,79 @@
                 </div>
                 {% endif %}
               </td>
+              <td class="px-3 py-2.5 text-right">
+                <button type="button" onclick="openTransformPanel({{ i }})"
+                  title="Transformer cette colonne"
+                  class="text-gray-300 hover:text-blue-500 p-1 rounded hover:bg-blue-50 transition">
+                  <i data-lucide="split" class="w-4 h-4"></i>
+                </button>
+              </td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- Panneau de transformation (masqué par défaut) -->
+    <div id="col-transform-panel" class="hidden mb-5 bg-white border border-blue-200 rounded-xl shadow-sm overflow-hidden">
+      <div class="px-4 py-3 border-b bg-blue-50 flex items-center justify-between">
+        <h3 class="text-sm font-semibold text-blue-800 flex items-center gap-2">
+          <i data-lucide="wand-2" class="w-4 h-4"></i>
+          Transformer : <span id="transform-col-name" class="font-bold ml-1"></span>
+        </h3>
+        <button type="button" onclick="closeTransformPanel()"
+          class="text-blue-400 hover:text-blue-600 p-1 rounded hover:bg-blue-100 transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div class="p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <!-- Éclater -->
+        <div>
+          <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5">
+            <i data-lucide="split" class="w-4 h-4 text-blue-500"></i> Éclater la colonne
+          </h4>
+          <div class="space-y-3">
+            <div>
+              <label class="text-xs font-medium text-gray-500">Séparateur</label>
+              <input type="text" id="split-sep" value=" " placeholder="espace, ;, ,  …" maxlength="10"
+                oninput="updateSplitPreview()"
+                class="mt-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-xs font-medium text-gray-500">Partie gauche</label>
+                <input type="text" id="split-name-a" maxlength="128"
+                  class="mt-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+              </div>
+              <div>
+                <label class="text-xs font-medium text-gray-500">Partie droite</label>
+                <input type="text" id="split-name-b" maxlength="128"
+                  class="mt-1 w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">
+              </div>
+            </div>
+            <div id="split-preview" class="text-xs min-h-[2rem]"></div>
+            <button type="button" onclick="applySplitOp()"
+              class="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">
+              Appliquer l'éclatement
+            </button>
+          </div>
+        </div>
+
+        <!-- Nettoyer -->
+        <div class="border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-6">
+          <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5">
+            <i data-lucide="scissors" class="w-4 h-4 text-green-500"></i> Nettoyer les espaces
+          </h4>
+          <p class="text-xs text-gray-500 mb-3">Supprime les espaces en début et fin de chaque valeur.</p>
+          <div id="trim-preview" class="text-xs mb-4 min-h-[2rem]"></div>
+          <button type="button" onclick="applyTrimOp()"
+            class="w-full bg-green-600 hover:bg-green-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">
+            Appliquer le nettoyage
+          </button>
+        </div>
+
       </div>
     </div>
 
@@ -131,13 +201,13 @@
       <div class="overflow-x-auto">
         <table class="min-w-full text-xs">
           <thead class="bg-gray-50 border-b">
-            <tr>
+            <tr id="preview-thead">
               {% for h in headers %}
               <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{{ h }}</th>
               {% endfor %}
             </tr>
           </thead>
-          <tbody class="divide-y divide-gray-100">
+          <tbody id="preview-tbody" class="divide-y divide-gray-100">
             {% for row in preview_rows %}
             <tr class="hover:bg-gray-50">
               {% for i in range(headers | length) %}
@@ -194,39 +264,320 @@
 {% endblock %}
 {% block scripts %}
 <script>
+// ── État import (initialisé depuis le serveur) ─────────────────────────────────
+var _importState = {
+  headers:       {{ js_headers | safe }},
+  previewRows:   {{ js_preview_rows | safe }},
+  colTypes:      {{ js_col_types | safe }},
+  selectOptions: {{ js_select_options | safe }},
+  allTypes:      {{ js_all_types | safe }},
+  operations:    [],
+};
+
+var _typeLabels = {
+  "text":"Texte", "integer":"Entier", "float":"Décimal",
+  "date":"Date", "datetime":"Date+Heure", "boolean":"Oui/Non",
+  "email":"Email", "select":"Liste",
+  "latitude":"Latitude", "longitude":"Longitude",
+};
+
+var _currentTransformCol = -1;
+
+// ── Utilitaire ────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Rendu du tableau de configuration (après toute opération) ─────────────────
+function renderConfigTable() {
+  var s = _importState;
+  var html = '';
+  for (var i = 0; i < s.headers.length; i++) {
+    var examples = [];
+    for (var r = 0; r < s.previewRows.length && examples.length < 3; r++) {
+      var v = (s.previewRows[r][i] || '').trim();
+      if (v && examples.indexOf(v) < 0) examples.push(v);
+    }
+    var typeOpts = '';
+    for (var t = 0; t < s.allTypes.length; t++) {
+      var tv = s.allTypes[t];
+      typeOpts += '<option value="' + esc(tv) + '"' + (tv === s.colTypes[i] ? ' selected' : '') + '>' +
+        esc(_typeLabels[tv] || tv) + '</option>';
+    }
+    var selOpt = s.selectOptions[i] || '';
+    var selHtml = (s.colTypes[i] === 'select' && selOpt)
+      ? '<div class="mt-0.5 text-gray-400">Liste : ' + esc(selOpt.split(',').slice(0,5).join(', ')) +
+        (selOpt.split(',').length > 5 ? '…' : '') + '</div>'
+      : '';
+    html +=
+      '<tr class="hover:bg-gray-50 transition" id="col-row-' + i + '">' +
+        '<td class="px-3 py-2.5 text-center">' +
+          '<input type="checkbox" name="col_ignore" value="' + i + '" ' +
+          'onchange="toggleColRow(' + i + ',this.checked)" class="rounded border-gray-300 text-red-500">' +
+        '</td>' +
+        '<td class="px-3 py-2.5">' +
+          '<input type="text" name="col_name" value="' + esc(s.headers[i]) + '" maxlength="128" ' +
+          'class="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400">' +
+        '</td>' +
+        '<td class="px-3 py-2.5">' +
+          '<select name="col_type" class="w-full border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">' +
+          typeOpts + '</select>' +
+        '</td>' +
+        '<td class="px-3 py-2.5 text-gray-500 text-xs">' +
+          '<span class="line-clamp-1">' + esc(examples.join(' · ') || '—') + '</span>' +
+          selHtml +
+        '</td>' +
+        '<td class="px-3 py-2.5 text-right">' +
+          '<button type="button" onclick="openTransformPanel(' + i + ')" title="Transformer" ' +
+          'class="text-gray-300 hover:text-blue-500 p-1 rounded hover:bg-blue-50 transition">' +
+          '<i data-lucide="split" class="w-4 h-4"></i></button>' +
+        '</td>' +
+      '</tr>';
+  }
+  document.getElementById('config-tbody').innerHTML = html;
+  lucide.createIcons();
+  // Mettre à jour le compteur de colonnes
+  var ccd = document.getElementById('col-count-display');
+  if (ccd) ccd.textContent = s.headers.length;
+}
+
+// ── Rendu du tableau d'aperçu ─────────────────────────────────────────────────
+function renderPreviewTable() {
+  var s = _importState;
+  // En-têtes
+  var thHtml = '';
+  for (var i = 0; i < s.headers.length; i++) {
+    thHtml += '<th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">' +
+      esc(s.headers[i]) + '</th>';
+  }
+  document.getElementById('preview-thead').innerHTML = thHtml;
+  // Corps
+  var tbHtml = '';
+  for (var r = 0; r < s.previewRows.length; r++) {
+    tbHtml += '<tr class="hover:bg-gray-50">';
+    for (var i = 0; i < s.headers.length; i++) {
+      var val = (i < s.previewRows[r].length) ? s.previewRows[r][i] : '';
+      tbHtml += '<td class="px-3 py-2 text-gray-600 whitespace-nowrap max-w-[180px] truncate">' + esc(val) + '</td>';
+    }
+    tbHtml += '</tr>';
+  }
+  document.getElementById('preview-tbody').innerHTML = tbHtml;
+}
+
+// ── Badge "N transformation(s)" ───────────────────────────────────────────────
+function updateOpsCount() {
+  var n = _importState.operations.length;
+  var badge = document.getElementById('ops-badge');
+  if (!badge) return;
+  if (n > 0) {
+    badge.textContent = n + ' transformation' + (n > 1 ? 's' : '') + ' appliquée' + (n > 1 ? 's' : '');
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+
+// ── Panneau de transformation ─────────────────────────────────────────────────
+function openTransformPanel(colIndex) {
+  _currentTransformCol = colIndex;
+  var colName = _importState.headers[colIndex] || ('Colonne ' + colIndex);
+  document.getElementById('transform-col-name').textContent = colName;
+  document.getElementById('split-name-a').value = colName + '_1';
+  document.getElementById('split-name-b').value = colName + '_2';
+  document.getElementById('split-sep').value = ' ';
+  updateSplitPreview();
+  updateTrimPreview();
+  var panel = document.getElementById('col-transform-panel');
+  panel.classList.remove('hidden');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  lucide.createIcons();
+}
+
+function closeTransformPanel() {
+  document.getElementById('col-transform-panel').classList.add('hidden');
+  _currentTransformCol = -1;
+}
+
+// ── Aperçu live du split ──────────────────────────────────────────────────────
+function updateSplitPreview() {
+  var sep = document.getElementById('split-sep').value;
+  var el  = document.getElementById('split-preview');
+  if (!el || _currentTransformCol < 0) return;
+  var ci = _currentTransformCol;
+  var examples = [];
+  for (var r = 0; r < _importState.previewRows.length && examples.length < 3; r++) {
+    var v = (_importState.previewRows[r][ci] || '').trim();
+    if (v) examples.push(v);
+  }
+  if (!examples.length) {
+    el.innerHTML = '<span class="text-gray-400 italic">Aucun exemple disponible.</span>';
+    return;
+  }
+  var html = '<div class="space-y-1.5">';
+  for (var e = 0; e < examples.length; e++) {
+    var val = examples[e];
+    var parts;
+    if (sep && val.indexOf(sep) >= 0) {
+      var idx = val.indexOf(sep);
+      parts = [val.slice(0, idx), val.slice(idx + sep.length)];
+    } else {
+      parts = [val, ''];
+    }
+    html += '<div class="flex items-center gap-1.5 flex-wrap">' +
+      '<span class="font-mono bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-xs">' + esc(val) + '</span>' +
+      '<span class="text-gray-300 text-xs">→</span>' +
+      '<span class="font-mono bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs">' + esc(parts[0]) + '</span>' +
+      '<span class="text-gray-300 text-xs">+</span>' +
+      '<span class="font-mono bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs">' + esc(parts[1]) + '</span>' +
+    '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+// ── Aperçu du trim ────────────────────────────────────────────────────────────
+function updateTrimPreview() {
+  var el = document.getElementById('trim-preview');
+  if (!el || _currentTransformCol < 0) return;
+  var ci = _currentTransformCol;
+  var dirty = [];
+  for (var r = 0; r < _importState.previewRows.length && dirty.length < 3; r++) {
+    var v = _importState.previewRows[r][ci] || '';
+    if (v !== v.trim()) dirty.push(v);
+  }
+  if (!dirty.length) {
+    el.innerHTML = '<span class="text-green-600 text-xs">✓ Aucun espace parasite détecté sur l\'aperçu.</span>';
+    return;
+  }
+  var html = '<div class="space-y-1.5">';
+  for (var e = 0; e < dirty.length; e++) {
+    html += '<div class="flex items-center gap-1.5">' +
+      '<span class="font-mono bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-xs">"' + esc(dirty[e]) + '"</span>' +
+      '<span class="text-gray-300 text-xs">→</span>' +
+      '<span class="font-mono bg-green-50 text-green-700 px-1.5 py-0.5 rounded text-xs">"' + esc(dirty[e].trim()) + '"</span>' +
+    '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+// ── Appliquer l'éclatement ────────────────────────────────────────────────────
+function applySplitOp() {
+  var ci = _currentTransformCol;
+  if (ci < 0) return;
+  var sep = document.getElementById('split-sep').value;
+  if (!sep) { alert('Veuillez saisir un séparateur.'); return; }
+  var nameA = (document.getElementById('split-name-a').value.trim()) || (_importState.headers[ci] + '_1');
+  var nameB = (document.getElementById('split-name-b').value.trim()) || (_importState.headers[ci] + '_2');
+  var s = _importState;
+
+  // Mise à jour des métadonnées
+  var newHeaders = s.headers.slice();
+  newHeaders.splice(ci, 1, nameA, nameB);
+
+  var newColTypes = s.colTypes.slice();
+  newColTypes.splice(ci, 1, 'text', 'text');
+
+  var newSelectOptions = s.selectOptions.slice();
+  newSelectOptions.splice(ci, 1, '', '');
+
+  // Mise à jour des lignes preview
+  var newRows = s.previewRows.map(function(row) {
+    var newRow = row.slice();
+    var val = row[ci] || '';
+    var idx = val.indexOf(sep);
+    var parts = idx >= 0 ? [val.slice(0, idx), val.slice(idx + sep.length)] : [val, ''];
+    newRow.splice(ci, 1, parts[0], parts[1]);
+    return newRow;
+  });
+
+  s.headers       = newHeaders;
+  s.colTypes      = newColTypes;
+  s.selectOptions = newSelectOptions;
+  s.previewRows   = newRows;
+  s.operations.push({ op: 'split', col_index: ci, separator: sep, max_split: 1, names: [nameA, nameB] });
+
+  updateOperationsField();
+  renderConfigTable();
+  renderPreviewTable();
+  updateOpsCount();
+  closeTransformPanel();
+
+  // Surbrillance des nouvelles colonnes
+  setTimeout(function() {
+    [ci, ci + 1].forEach(function(i) {
+      var row = document.getElementById('col-row-' + i);
+      if (row) {
+        row.classList.add('bg-blue-50');
+        setTimeout(function() { row.classList.remove('bg-blue-50'); }, 1200);
+      }
+    });
+  }, 50);
+}
+
+// ── Appliquer le nettoyage des espaces ────────────────────────────────────────
+function applyTrimOp() {
+  var ci = _currentTransformCol;
+  if (ci < 0) return;
+  var s = _importState;
+  s.previewRows = s.previewRows.map(function(row) {
+    var newRow = row.slice();
+    if (ci < newRow.length) newRow[ci] = (newRow[ci] || '').trim();
+    return newRow;
+  });
+  s.operations.push({ op: 'trim', col_index: ci });
+
+  updateOperationsField();
+  renderPreviewTable();
+  updateOpsCount();
+  closeTransformPanel();
+
+  // Surbrillance
+  setTimeout(function() {
+    var row = document.getElementById('col-row-' + ci);
+    if (row) {
+      row.classList.add('bg-green-50');
+      setTimeout(function() { row.classList.remove('bg-green-50'); }, 1200);
+    }
+  }, 50);
+}
+
+// ── Synchronisation du champ caché operations_json ────────────────────────────
+function updateOperationsField() {
+  var f = document.getElementById('operations-json');
+  if (f) f.value = JSON.stringify(_importState.operations);
+}
+
+// ── Fonction existante : basculer l'état d'une ligne ignorée ──────────────────
 function toggleColRow(idx, ignored) {
   var row = document.getElementById('col-row-' + idx);
   if (ignored) {
     row.classList.add('opacity-40');
-    row.querySelectorAll('input:not([type=checkbox]), select').forEach(function(el) {
-      el.disabled = true;
-    });
+    row.querySelectorAll('input:not([type=checkbox]), select').forEach(function(el) { el.disabled = true; });
   } else {
     row.classList.remove('opacity-40');
-    row.querySelectorAll('input:not([type=checkbox]), select').forEach(function(el) {
-      el.disabled = false;
-    });
+    row.querySelectorAll('input:not([type=checkbox]), select').forEach(function(el) { el.disabled = false; });
   }
 }
 
+// ── Overlay SSE de progression ────────────────────────────────────────────────
 (function () {
-  var form = document.querySelector('form[action="/import-auto/confirm"]');
+  var form    = document.querySelector('form[action="/import-auto/confirm"]');
   var overlay = document.getElementById('import-overlay');
-  var bar = document.getElementById('overlay-bar');
-  var msg = document.getElementById('overlay-message');
-  var pct = document.getElementById('overlay-percent');
-  var detail = document.getElementById('overlay-detail');
-  var btn = document.getElementById('import-submit-btn');
+  var bar     = document.getElementById('overlay-bar');
+  var msg     = document.getElementById('overlay-message');
+  var pct     = document.getElementById('overlay-percent');
+  var detail  = document.getElementById('overlay-detail');
+  var btn     = document.getElementById('import-submit-btn');
   if (!form || !overlay) return;
 
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
-
-    // Désactiver le bouton pour éviter le double-submit
     btn.disabled = true;
     overlay.classList.remove('hidden');
 
-    // Sérialiser le formulaire (gère les champs multiples comme col_name[])
     var params = new URLSearchParams();
     new FormData(form).forEach(function (v, k) { params.append(k, v); });
 
@@ -236,17 +587,14 @@ function toggleColRow(idx, ignored) {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: params.toString(),
       });
-
-      var reader = response.body.getReader();
+      var reader  = response.body.getReader();
       var decoder = new TextDecoder();
-      var buffer = '';
+      var buffer  = '';
 
       while (true) {
         var chunk = await reader.read();
         if (chunk.done) break;
         buffer += decoder.decode(chunk.value, { stream: true });
-
-        // Traiter chaque ligne SSE complète
         var lines = buffer.split('\n');
         buffer = lines.pop();
 
@@ -254,15 +602,11 @@ function toggleColRow(idx, ignored) {
           if (!line.startsWith('data: ')) continue;
           var evt;
           try { evt = JSON.parse(line.slice(6)); } catch (_) { continue; }
-
           if (evt.progress !== undefined) {
             bar.style.width = evt.progress + '%';
             pct.textContent = evt.progress + ' %';
           }
-          if (evt.message) {
-            msg.textContent = evt.message;
-            detail.textContent = '';
-          }
+          if (evt.message) { msg.textContent = evt.message; detail.textContent = ''; }
           if (evt.done && evt.redirect) {
             bar.style.width = '100%';
             pct.textContent = '100 %';

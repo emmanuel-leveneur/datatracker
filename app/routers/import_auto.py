@@ -42,6 +42,53 @@ def _unique_table_name(db: Session, base_name: str) -> str:
     return name
 
 
+def _js_json(data) -> str:
+    """Sérialise data en JSON sûr pour embedding dans une balise <script>."""
+    return (json.dumps(data, ensure_ascii=False)
+            .replace("&", "\\u0026")
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e"))
+
+
+def _apply_operations(
+    headers: list[str],
+    rows: list[list[str]],
+    operations: list[dict],
+) -> tuple[list[str], list[list[str]]]:
+    """Applique une suite de transformations (split, trim) sur les colonnes."""
+    for op in operations:
+        op_type = op.get("op", "")
+        try:
+            ci = int(op.get("col_index", 0))
+        except (TypeError, ValueError):
+            continue
+        if ci < 0 or ci >= len(headers):
+            continue
+
+        if op_type == "split":
+            sep = op.get("separator") or " "
+            names = op.get("names", ["", ""])
+            name_a = str(names[0]) if len(names) > 0 and names[0] else headers[ci] + "_1"
+            name_b = str(names[1]) if len(names) > 1 and names[1] else headers[ci] + "_2"
+            headers = headers[:ci] + [name_a, name_b] + headers[ci + 1:]
+            new_rows: list[list[str]] = []
+            for row in rows:
+                val = row[ci] if ci < len(row) else ""
+                parts = val.split(sep, 1)
+                if len(parts) < 2:
+                    parts.append("")
+                new_rows.append(list(row[:ci]) + [parts[0], parts[1]] + list(row[ci + 1:]))
+            rows = new_rows
+
+        elif op_type == "trim":
+            rows = [
+                list(row[:ci]) + [(row[ci].strip() if ci < len(row) else "")] + list(row[ci + 1:])
+                for row in rows
+            ]
+
+    return headers, rows
+
+
 def _col_type_label(col_type: ColumnType) -> str:
     labels = {
         ColumnType.TEXT: "Texte",
@@ -169,6 +216,12 @@ async def analyze_file(
         "sheet_index": sheet_index,
         "payload_json": payload,
         "is_excel": bool(sheet_names),
+        # Données pré-encodées pour le state JS côté client
+        "js_headers": _js_json(headers),
+        "js_preview_rows": _js_json(rows[:PREVIEW_ROWS]),
+        "js_col_types": _js_json([ct.value for ct in col_types]),
+        "js_select_options": _js_json(select_options),
+        "js_all_types": _js_json(COLUMN_TYPES),
     })
 
 
@@ -198,6 +251,14 @@ async def confirm_import(
 
     if not headers:
         return RedirectResponse(url="/import-auto/", status_code=303)
+
+    # Appliquer les transformations (split, trim…)
+    try:
+        operations = json.loads(str(form.get("operations_json", "[]")))
+        if isinstance(operations, list) and operations:
+            headers, rows = _apply_operations(headers, rows, operations)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
 
     # Récupérer les overrides de type et de nom saisis par l'utilisateur
     col_names_override = form.getlist("col_name")
@@ -311,6 +372,14 @@ async def confirm_import_stream(
 
     if not headers:
         return RedirectResponse(url="/import-auto/", status_code=303)
+
+    # Appliquer les transformations (split, trim…)
+    try:
+        operations = json.loads(str(form.get("operations_json", "[]")))
+        if isinstance(operations, list) and operations:
+            headers, rows = _apply_operations(headers, rows, operations)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
 
     col_names_override = form.getlist("col_name")
     col_types_override = form.getlist("col_type")
