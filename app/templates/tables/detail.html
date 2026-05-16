@@ -10,6 +10,18 @@
 </style>
 {% if lat_col and lon_col %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+.halo-marker {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 4px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.35), 0 1px 4px rgba(0,0,0,.18);
+}
+</style>
 {% endif %}
 {% endblock %}
 
@@ -718,7 +730,14 @@ document.addEventListener('keydown', function(e) {
         data.features.forEach(function (f) {
           var lon = f.geometry.coordinates[0];
           var lat = f.geometry.coordinates[1];
-          L.marker([lat, lon]).addTo(_markersLayer).bindPopup(buildPopup(f.properties));
+          var icon = L.divIcon({
+            className: '',
+            html: '<span class="halo-marker"></span>',
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+            popupAnchor: [0, -10],
+          });
+          L.marker([lat, lon], { icon: icon }).addTo(_markersLayer).bindPopup(buildPopup(f.properties));
           bounds.push([lat, lon]);
         });
         if (bounds.length > 0) {
