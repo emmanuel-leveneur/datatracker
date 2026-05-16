@@ -21,6 +21,10 @@
   border: 2px solid #fff;
   box-shadow: 0 0 0 3px rgba(59,130,246,.35), 0 1px 4px rgba(0,0,0,.18);
 }
+#map-panel { transform: translateX(100%); transition: transform .28s cubic-bezier(.4,0,.2,1); }
+#map-panel.open { transform: translateX(0); }
+#map-panel-backdrop { opacity: 0; transition: opacity .28s ease; pointer-events: none; }
+#map-panel-backdrop.open { opacity: 1; pointer-events: auto; }
 </style>
 {% endif %}
 {% endblock %}
@@ -163,6 +167,20 @@
   </div>
   <div id="leaflet-map" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm"></div>
 </div>
+
+{# ── Panneau détail marqueur ──────────────────────────────────────────────── #}
+<div id="map-panel-backdrop" class="fixed inset-0 bg-black/30 z-[1000]" onclick="closeMapPanel()"></div>
+<aside id="map-panel" class="fixed top-0 right-0 h-full w-full sm:w-[420px] bg-white shadow-2xl z-[1001] flex flex-col">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+    <h2 class="font-semibold text-gray-800 text-sm">Détail</h2>
+    <button onclick="closeMapPanel()"
+      class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+      <i data-lucide="x" class="w-4 h-4"></i>
+    </button>
+  </div>
+  <div id="map-panel-content" class="flex-1 overflow-y-auto px-5 py-4 text-sm"></div>
+  <div id="map-panel-footer" class="shrink-0 px-5 py-3 border-t border-gray-100 empty:hidden"></div>
+</aside>
 {% endif %}
 
 <!-- Table data -->
@@ -568,10 +586,11 @@ document.addEventListener('keydown', function(e) {
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 (function () {
-  var VIEW_KEY = 'viewmode_{{ table.id }}';
-  var _map = null;
+  var VIEW_KEY  = 'viewmode_{{ table.id }}';
+  var _map      = null;
   var _markersLayer = null;
   var _filterTimer  = null;
+  var _canWrite = {{ 'true' if can_write else 'false' }};
   var activeClass   = ['bg-blue-600', 'text-white'];
   var inactiveClass = ['bg-white', 'text-gray-600', 'hover:bg-gray-50'];
 
@@ -737,7 +756,10 @@ document.addEventListener('keydown', function(e) {
             iconAnchor: [10, 10],
             popupAnchor: [0, -10],
           });
-          L.marker([lat, lon], { icon: icon }).addTo(_markersLayer).bindPopup(buildPopup(f.properties));
+          (function(props) {
+            L.marker([lat, lon], { icon: icon }).addTo(_markersLayer)
+              .on('click', function() { openMapPanel(props); });
+          })(f.properties);
           bounds.push([lat, lon]);
         });
         if (bounds.length > 0) {
@@ -749,25 +771,59 @@ document.addEventListener('keydown', function(e) {
       .catch(function () { _map.setView([46.5, 2.3], 6); });
   }
 
-  // ── Popup ─────────────────────────────────────────────────────────────────
-  function buildPopup(props) {
-    var lines = [];
-    Object.keys(props).forEach(function (k) {
-      if (k === 'row_id') return;
-      if (props[k] !== '' && props[k] != null) {
-        lines.push('<tr><td class="pr-2 text-gray-500 text-xs">' + escHtml(k) + '</td>' +
-                   '<td class="text-xs font-medium">' + escHtml(String(props[k])) + '</td></tr>');
-      }
-    });
-    var body = lines.length
-      ? '<table class="border-collapse">' + lines.join('') + '</table>'
-      : '<span class="text-xs text-gray-400">Aucune donnée</span>';
-    return '<div class="min-w-[140px]">' + body + '</div>';
-  }
-
   function escHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
+
+  // ── Panneau détail marqueur ───────────────────────────────────────────────
+  function openMapPanel(props) {
+    var lines = '';
+    Object.keys(props).forEach(function(k) {
+      if (k === 'row_id') return;
+      var val = props[k];
+      if (val === '' || val == null) return;
+      lines +=
+        '<div class="flex gap-3 py-3 border-b border-gray-50 last:border-0">' +
+        '<dt class="text-xs text-gray-400 uppercase tracking-wide w-36 shrink-0 pt-0.5">' + escHtml(k) + '</dt>' +
+        '<dd class="text-sm text-gray-800 flex-1 break-words">' + escHtml(String(val)) + '</dd>' +
+        '</div>';
+    });
+    document.getElementById('map-panel-content').innerHTML = lines
+      ? '<dl>' + lines + '</dl>'
+      : '<p class="text-sm text-gray-400 text-center py-10">Aucune donnée</p>';
+
+    var footer = document.getElementById('map-panel-footer');
+    if (footer) {
+      footer.innerHTML = (_canWrite && props.row_id)
+        ? '<button onclick="editMapRow(' + parseInt(props.row_id, 10) + ')" ' +
+          'class="w-full flex items-center justify-center gap-1.5 text-sm font-medium text-blue-600 ' +
+          'hover:text-blue-800 py-2 rounded-lg hover:bg-blue-50 transition">' +
+          '<i data-lucide="pencil" class="w-4 h-4"></i> Modifier cette ligne</button>'
+        : '';
+      lucide.createIcons();
+    }
+
+    document.getElementById('map-panel').classList.add('open');
+    document.getElementById('map-panel-backdrop').classList.add('open');
+  }
+
+  window.closeMapPanel = function() {
+    document.getElementById('map-panel').classList.remove('open');
+    document.getElementById('map-panel-backdrop').classList.remove('open');
+  };
+
+  window.editMapRow = function(rowId) {
+    window.closeMapPanel();
+    window.setViewMode('list');
+    htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + rowId + '/edit', {
+      target: '#row-form-area',
+      swap: 'innerHTML'
+    });
+  };
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') window.closeMapPanel();
+  });
 
   // ── Init : restaurer le dernier mode ─────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function () {
