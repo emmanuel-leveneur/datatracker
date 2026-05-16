@@ -182,6 +182,40 @@ class TestInferColumnType:
         assert result == ColumnType.DATETIME
         assert result != ColumnType.DATE
 
+    # ── Géolocalisation ──────────────────────────────────────────────────────
+
+    def test_latitude_detected_by_name_and_values(self):
+        vals = ['48.8566', '43.2965', '-33.8688', '51.5074', '40.7128'] * 4
+        assert infer_column_type(vals, col_name='latitude') == ColumnType.LATITUDE
+
+    def test_latitude_name_variants(self):
+        vals = ['48.8566', '43.2965', '51.5074'] * 6
+        for name in ('lat', 'Lat', 'LAT', 'coord_lat', 'lat_wgs84', 'latitude_gps'):
+            assert infer_column_type(vals, col_name=name) == ColumnType.LATITUDE, name
+
+    def test_longitude_detected_by_name_and_values(self):
+        vals = ['2.3522', '-73.9857', '139.6917', '18.0686', '-0.1276'] * 4
+        assert infer_column_type(vals, col_name='longitude') == ColumnType.LONGITUDE
+
+    def test_longitude_name_variants(self):
+        vals = ['2.3522', '-73.9857', '18.0686'] * 6
+        for name in ('lon', 'lng', 'Long', 'LNG', 'coord_lon', 'longitude_wgs84'):
+            assert infer_column_type(vals, col_name=name) == ColumnType.LONGITUDE, name
+
+    def test_lat_name_but_out_of_range_falls_back(self):
+        # Valeurs hors [-90, 90] → nom lat insuffisant, retombe sur FLOAT
+        vals = ['95.0', '120.5', '-95.3', '110.0'] * 5
+        assert infer_column_type(vals, col_name='lat') == ColumnType.FLOAT
+
+    def test_float_in_lat_range_without_name_is_float(self):
+        # Pas de nom → jamais détecté comme LATITUDE
+        vals = ['48.8566', '43.2965', '51.5074'] * 6
+        assert infer_column_type(vals) == ColumnType.FLOAT
+
+    def test_latitude_french_comma(self):
+        vals = ['48,8566', '43,2965', '51,5074'] * 6
+        assert infer_column_type(vals, col_name='lat') == ColumnType.LATITUDE
+
 
 # ── Normalisation ─────────────────────────────────────────────────────────────
 
@@ -218,6 +252,15 @@ class TestNormalizeValue:
 
     def test_empty_unchanged(self):
         assert normalize_value('', ColumnType.INTEGER) == ''
+
+    def test_latitude_comma_to_dot(self):
+        assert normalize_value('48,8566', ColumnType.LATITUDE) == '48.8566'
+
+    def test_longitude_comma_to_dot(self):
+        assert normalize_value('2,3522', ColumnType.LONGITUDE) == '2.3522'
+
+    def test_latitude_dot_unchanged(self):
+        assert normalize_value('48.8566', ColumnType.LATITUDE) == '48.8566'
 
 
 # ── Nettoyage en-têtes ────────────────────────────────────────────────────────

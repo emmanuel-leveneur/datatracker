@@ -8,6 +8,25 @@
   #comment-backdrop { opacity: 0; transition: opacity .28s ease; pointer-events: none; }
   #comment-backdrop.open { opacity: 1; pointer-events: auto; }
 </style>
+{% if lat_col and lon_col %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+.halo-marker {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 4px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.35), 0 1px 4px rgba(0,0,0,.18);
+}
+#map-panel { transform: translateX(100%); transition: transform .28s cubic-bezier(.4,0,.2,1); }
+#map-panel.open { transform: translateX(0); }
+#map-panel-backdrop { opacity: 0; transition: opacity .28s ease; pointer-events: none; }
+#map-panel-backdrop.open { opacity: 1; pointer-events: auto; }
+</style>
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -29,6 +48,18 @@
     {% endif %}
   </div>
   <div class="flex flex-wrap gap-2 items-center">
+    {% if lat_col and lon_col %}
+    <div class="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm font-medium">
+      <button id="btn-list-view" onclick="setViewMode('list')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition">
+        <i data-lucide="list" class="w-4 h-4"></i> Liste
+      </button>
+      <button id="btn-map-view" onclick="setViewMode('map')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
+        <i data-lucide="map" class="w-4 h-4"></i> Carte
+      </button>
+    </div>
+    {% endif %}
     {% if columns %}
     <input
       id="global-search"
@@ -116,6 +147,41 @@
 
 <!-- Row form area (HTMX) -->
 <div id="row-form-area" class="mb-4"></div>
+
+{% if lat_col and lon_col %}
+<!-- Map view -->
+<div id="map-view" class="hidden">
+  <div id="map-filter-bar" class="mb-3 flex flex-wrap gap-x-3 gap-y-1.5 items-center bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
+    <span class="text-xs font-semibold text-gray-500 shrink-0">Filtres</span>
+    {% for col in columns %}{% if col.col_type.value not in ('latitude', 'longitude') %}
+    <label class="flex items-center gap-1.5 shrink-0">
+      <span class="text-xs text-gray-400 whitespace-nowrap">{{ col.name }}</span>
+      <input type="search" name="filter_{{ col.id }}" placeholder="…" autocomplete="off"
+        class="w-28 border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+    </label>
+    {% endif %}{% endfor %}
+    <button type="button" onclick="clearMapFilters()"
+      class="ml-auto flex items-center gap-1 px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded hover:bg-gray-50 transition">
+      <i data-lucide="x" class="w-3 h-3"></i> Effacer
+    </button>
+  </div>
+  <div id="leaflet-map" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm"></div>
+</div>
+
+{# ── Panneau détail marqueur ──────────────────────────────────────────────── #}
+<div id="map-panel-backdrop" class="fixed inset-0 bg-black/30 z-[1000]" onclick="closeMapPanel()"></div>
+<aside id="map-panel" class="fixed top-0 right-0 h-full w-full sm:w-[420px] bg-white shadow-2xl z-[1001] flex flex-col">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+    <h2 class="font-semibold text-gray-800 text-sm">Détail</h2>
+    <button onclick="closeMapPanel()"
+      class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+      <i data-lucide="x" class="w-4 h-4"></i>
+    </button>
+  </div>
+  <div id="map-panel-content" class="flex-1 overflow-y-auto px-5 py-4 text-sm"></div>
+  <div id="map-panel-footer" class="shrink-0 px-5 py-3 border-t border-gray-100 empty:hidden"></div>
+</aside>
+{% endif %}
 
 <!-- Table data -->
 {% if columns %}
@@ -515,4 +581,257 @@ document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') closeCommentPanel();
 });
 </script>
+
+{% if lat_col and lon_col %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  var VIEW_KEY  = 'viewmode_{{ table.id }}';
+  var _map      = null;
+  var _markersLayer = null;
+  var _filterTimer  = null;
+  var _canWrite = {{ 'true' if can_write else 'false' }};
+  var activeClass   = ['bg-blue-600', 'text-white'];
+  var inactiveClass = ['bg-white', 'text-gray-600', 'hover:bg-gray-50'];
+
+  // ── Collecte des filtres (mode-aware) ─────────────────────────────────────
+  function collectFilterParams() {
+    var params = new URLSearchParams();
+    var qEl = document.getElementById('global-search');
+    if (qEl && qEl.value) params.set('q', qEl.value);
+    var mapView = document.getElementById('map-view');
+    var isMap = mapView && !mapView.classList.contains('hidden');
+    var container = document.getElementById(isMap ? 'map-filter-bar' : 'filters-zone');
+    if (container) {
+      container.querySelectorAll('[name^="filter_"]').forEach(function(el) {
+        if (el.value) params.set(el.name, el.value);
+      });
+    }
+    return params;
+  }
+
+  // ── Synchronisation des valeurs entre les deux barres ────────────────────
+  function syncFilters(fromId, toId) {
+    var from = document.getElementById(fromId);
+    var to   = document.getElementById(toId);
+    if (!from || !to) return;
+    from.querySelectorAll('[name^="filter_"]').forEach(function(el) {
+      var target = to.querySelector('[name="' + el.name + '"]');
+      if (target) target.value = el.value;
+    });
+  }
+
+  // ── Rechargement différé des marqueurs (debounce 350 ms) ─────────────────
+  function scheduleReload() {
+    clearTimeout(_filterTimer);
+    _filterTimer = setTimeout(function() {
+      if (_map) loadMarkers(collectFilterParams());
+    }, 350);
+  }
+
+  // ── Hauteur dynamique : mesurée depuis le haut de #leaflet-map ───────────
+  function resizeMap() {
+    var leafletEl = document.getElementById('leaflet-map');
+    var mapViewEl = document.getElementById('map-view');
+    if (!leafletEl || mapViewEl.classList.contains('hidden')) return;
+    var footerEl = document.querySelector('footer');
+    var footerH  = footerEl ? footerEl.offsetHeight : 0;
+    var top      = leafletEl.getBoundingClientRect().top;
+    var availH   = window.innerHeight - top - footerH - 4;
+    leafletEl.style.height = Math.max(300, availH) + 'px';
+    if (_map) _map.invalidateSize();
+  }
+  window.addEventListener('resize', resizeMap);
+
+  // ── Bascule liste ↔ carte ─────────────────────────────────────────────────
+  function applyViewMode(mode) {
+    var listView = document.getElementById('filters-zone');
+    var mapView  = document.getElementById('map-view');
+    var btnList  = document.getElementById('btn-list-view');
+    var btnMap   = document.getElementById('btn-map-view');
+
+    if (mode === 'map') {
+      syncFilters('filters-zone', 'map-filter-bar');
+      listView.classList.add('hidden');
+      mapView.classList.remove('hidden');
+      btnList.classList.remove(...activeClass);
+      btnList.classList.add(...inactiveClass);
+      btnMap.classList.remove(...inactiveClass);
+      btnMap.classList.add(...activeClass);
+      resizeMap();
+      initMap(collectFilterParams());
+      lucide.createIcons();
+    } else {
+      syncFilters('map-filter-bar', 'filters-zone');
+      mapView.classList.add('hidden');
+      listView.classList.remove('hidden');
+      btnMap.classList.remove(...activeClass);
+      btnMap.classList.add(...inactiveClass);
+      btnList.classList.remove(...inactiveClass);
+      btnList.classList.add(...activeClass);
+    }
+  }
+
+  window.setViewMode = function (mode) {
+    try { localStorage.setItem(VIEW_KEY, mode); } catch (e) {}
+    applyViewMode(mode);
+  };
+
+  // ── Effacer filtres carte + recherche globale ─────────────────────────────
+  window.clearMapFilters = function() {
+    var bar = document.getElementById('map-filter-bar');
+    if (bar) bar.querySelectorAll('[name^="filter_"]').forEach(function(el) { el.value = ''; });
+    var qEl = document.getElementById('global-search');
+    if (qEl) qEl.value = '';
+    if (_map) loadMarkers(new URLSearchParams());
+  };
+
+  // ── Initialisation Leaflet (une seule fois) ────────────────────────────────
+  function initMap(params) {
+    if (!_map) {
+      var ignOrtho = L.tileLayer(
+        'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0' +
+        '&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg' +
+        '&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+        { maxZoom: 20, attribution: '© <a href="https://www.ign.fr/" target="_blank">IGN</a>-F / Géoplateforme' }
+      );
+      var ignPlan = L.tileLayer(
+        'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0' +
+        '&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png' +
+        '&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+        { maxZoom: 20, attribution: '© <a href="https://www.ign.fr/" target="_blank">IGN</a>-F / Géoplateforme' }
+      );
+      var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
+      });
+      _map = L.map('leaflet-map', { layers: [ignOrtho] });
+      L.control.layers({
+        'Orthophoto (IGN)': ignOrtho,
+        'Plan IGN': ignPlan,
+        'OpenStreetMap': osm
+      }).addTo(_map);
+      _markersLayer = L.layerGroup().addTo(_map);
+
+      // Inputs de la barre de filtres carte → rechargement live
+      var bar = document.getElementById('map-filter-bar');
+      if (bar) {
+        bar.addEventListener('input', function(e) {
+          if (e.target.name && e.target.name.startsWith('filter_')) scheduleReload();
+        });
+      }
+      // Recherche globale → rechargement live quand on est en mode carte
+      var qEl = document.getElementById('global-search');
+      if (qEl) {
+        qEl.addEventListener('input', function() {
+          var mv = document.getElementById('map-view');
+          if (mv && !mv.classList.contains('hidden')) scheduleReload();
+        });
+      }
+    } else {
+      _map.invalidateSize();
+    }
+    loadMarkers(params);
+  }
+
+  // ── Chargement des marqueurs (filtrés) ────────────────────────────────────
+  function loadMarkers(params) {
+    var url = '/tables/{{ table.id }}/geojson';
+    var qs = params ? params.toString() : '';
+    if (qs) url += '?' + qs;
+
+    _markersLayer.clearLayers();
+
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var bounds = [];
+        data.features.forEach(function (f) {
+          var lon = f.geometry.coordinates[0];
+          var lat = f.geometry.coordinates[1];
+          var icon = L.divIcon({
+            className: '',
+            html: '<span class="halo-marker"></span>',
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+            popupAnchor: [0, -10],
+          });
+          (function(props) {
+            L.marker([lat, lon], { icon: icon }).addTo(_markersLayer)
+              .on('click', function() { openMapPanel(props); });
+          })(f.properties);
+          bounds.push([lat, lon]);
+        });
+        if (bounds.length > 0) {
+          _map.fitBounds(bounds, { padding: [40, 40] });
+        } else {
+          _map.setView([46.5, 2.3], 6);
+        }
+      })
+      .catch(function () { _map.setView([46.5, 2.3], 6); });
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Panneau détail marqueur ───────────────────────────────────────────────
+  function openMapPanel(props) {
+    var lines = '';
+    Object.keys(props).forEach(function(k) {
+      if (k === 'row_id') return;
+      var val = props[k];
+      if (val === '' || val == null) return;
+      lines +=
+        '<div class="flex gap-3 py-3 border-b border-gray-50 last:border-0">' +
+        '<dt class="text-xs text-gray-400 uppercase tracking-wide w-36 shrink-0 pt-0.5">' + escHtml(k) + '</dt>' +
+        '<dd class="text-sm text-gray-800 flex-1 break-words">' + escHtml(String(val)) + '</dd>' +
+        '</div>';
+    });
+    document.getElementById('map-panel-content').innerHTML = lines
+      ? '<dl>' + lines + '</dl>'
+      : '<p class="text-sm text-gray-400 text-center py-10">Aucune donnée</p>';
+
+    var footer = document.getElementById('map-panel-footer');
+    if (footer) {
+      footer.innerHTML = (_canWrite && props.row_id)
+        ? '<button onclick="editMapRow(' + parseInt(props.row_id, 10) + ')" ' +
+          'class="w-full flex items-center justify-center gap-1.5 text-sm font-medium text-blue-600 ' +
+          'hover:text-blue-800 py-2 rounded-lg hover:bg-blue-50 transition">' +
+          '<i data-lucide="pencil" class="w-4 h-4"></i> Modifier cette ligne</button>'
+        : '';
+      lucide.createIcons();
+    }
+
+    document.getElementById('map-panel').classList.add('open');
+    document.getElementById('map-panel-backdrop').classList.add('open');
+  }
+
+  window.closeMapPanel = function() {
+    document.getElementById('map-panel').classList.remove('open');
+    document.getElementById('map-panel-backdrop').classList.remove('open');
+  };
+
+  window.editMapRow = function(rowId) {
+    window.closeMapPanel();
+    window.setViewMode('list');
+    htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + rowId + '/edit', {
+      target: '#row-form-area',
+      swap: 'innerHTML'
+    });
+  };
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') window.closeMapPanel();
+  });
+
+  // ── Init : restaurer le dernier mode ─────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', function () {
+    var saved;
+    try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
+    applyViewMode(saved === 'map' ? 'map' : 'list');
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}
