@@ -25,6 +25,18 @@
 #map-panel.open { transform: translateX(0); }
 #map-panel-backdrop { opacity: 0; transition: opacity .28s ease; pointer-events: none; }
 #map-panel-backdrop.open { opacity: 1; pointer-events: auto; }
+.map-label-tooltip {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #374151;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  white-space: nowrap;
+}
+.map-label-tooltip::before { display: none; }
 </style>
 {% endif %}
 {% endblock %}
@@ -160,8 +172,24 @@
         class="w-28 border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
     </label>
     {% endif %}{% endfor %}
+    <div class="ml-auto flex items-center gap-2 border-l border-gray-200 pl-3 shrink-0">
+      <i data-lucide="tag" class="w-3 h-3 text-gray-400 shrink-0"></i>
+      <span class="text-xs text-gray-400 whitespace-nowrap">Label</span>
+      <select id="map-label-select" onchange="onLabelColChange()"
+        class="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
+        <option value="">Aucun</option>
+        {% for col in columns %}{% if col.col_type.value not in ('latitude', 'longitude') %}
+        <option value="{{ col.name }}">{{ col.name }}</option>
+        {% endif %}{% endfor %}
+      </select>
+      <button type="button" id="map-label-toggle" onclick="toggleMapLabels()"
+        title="Afficher / masquer les labels"
+        class="p-1 rounded text-blue-600 hover:bg-blue-50 transition">
+        <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+      </button>
+    </div>
     <button type="button" onclick="clearMapFilters()"
-      class="ml-auto flex items-center gap-1 px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded hover:bg-gray-50 transition">
+      class="flex items-center gap-1 px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded hover:bg-gray-50 transition">
       <i data-lucide="x" class="w-3 h-3"></i> Effacer
     </button>
   </div>
@@ -705,7 +733,7 @@ document.addEventListener('keydown', function(e) {
         maxZoom: 19,
         attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
       });
-      _map = L.map('leaflet-map', { layers: [ignOrtho] });
+      _map = L.map('leaflet-map', { layers: [osm] });
       L.control.layers({
         'Orthophoto (IGN)': ignOrtho,
         'Plan IGN': ignPlan,
@@ -735,12 +763,16 @@ document.addEventListener('keydown', function(e) {
   }
 
   // ── Chargement des marqueurs (filtrés) ────────────────────────────────────
-  function loadMarkers(params) {
+  var _labelsVisible = true;
+
+  function loadMarkers(params, skipFit) {
     var url = '/tables/{{ table.id }}/geojson';
     var qs = params ? params.toString() : '';
     if (qs) url += '?' + qs;
 
     _markersLayer.clearLayers();
+
+    var labelCol = (document.getElementById('map-label-select') || {}).value || '';
 
     fetch(url)
       .then(function (r) { return r.json(); })
@@ -757,19 +789,53 @@ document.addEventListener('keydown', function(e) {
             popupAnchor: [0, -10],
           });
           (function(props) {
-            L.marker([lat, lon], { icon: icon }).addTo(_markersLayer)
-              .on('click', function() { openMapPanel(props); });
+            var marker = L.marker([lat, lon], { icon: icon });
+            marker.on('click', function() { openMapPanel(props); });
+            if (labelCol && props[labelCol] != null && props[labelCol] !== '') {
+              marker.bindTooltip(escHtml(String(props[labelCol])), {
+                permanent: true,
+                direction: 'right',
+                className: 'map-label-tooltip',
+              });
+              if (!_labelsVisible) marker.closeTooltip();
+            }
+            marker.addTo(_markersLayer);
           })(f.properties);
           bounds.push([lat, lon]);
         });
-        if (bounds.length > 0) {
-          _map.fitBounds(bounds, { padding: [40, 40] });
-        } else {
-          _map.setView([46.5, 2.3], 6);
+        if (!skipFit) {
+          if (bounds.length > 0) {
+            _map.fitBounds(bounds, { padding: [40, 40] });
+          } else {
+            _map.setView([46.5, 2.3], 6);
+          }
         }
       })
-      .catch(function () { _map.setView([46.5, 2.3], 6); });
+      .catch(function () { if (!skipFit) _map.setView([46.5, 2.3], 6); });
   }
+
+  window.onLabelColChange = function() {
+    loadMarkers(collectFilterParams(), true);
+  };
+
+  window.toggleMapLabels = function() {
+    _labelsVisible = !_labelsVisible;
+    _markersLayer.eachLayer(function(m) {
+      if (typeof m.getTooltip === 'function' && m.getTooltip()) {
+        if (_labelsVisible) { m.openTooltip(); } else { m.closeTooltip(); }
+      }
+    });
+    var btn = document.getElementById('map-label-toggle');
+    if (btn) {
+      var icon = btn.querySelector('i');
+      if (icon) {
+        icon.setAttribute('data-lucide', _labelsVisible ? 'eye' : 'eye-off');
+        lucide.createIcons({ nodes: [icon] });
+      }
+      btn.classList.toggle('text-blue-600', _labelsVisible);
+      btn.classList.toggle('text-gray-400', !_labelsVisible);
+    }
+  };
 
   function escHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
