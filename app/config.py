@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # URL publique de l'application (utilisée dans les liens des emails)
     APP_URL: str = "http://localhost:8000"
 
+    # Identité de l'organisation (optionnel — utilisé dans le footer et les mentions RGPD)
+    ORG_NAME: str = ""
+    DPO_EMAIL: str = ""
+
     # SMTP (optionnel — si non configuré, les emails ne sont pas envoyés)
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587

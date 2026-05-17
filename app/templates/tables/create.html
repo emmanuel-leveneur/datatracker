@@ -142,7 +142,8 @@
       '{{ user.username }}',
     ].join('\n');
 
-    window.location.href = 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+    var mailto = 'mailto:{{ dpo_email }}?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+    window.location.href = mailto;
   }
 
   // ── Onglet Webservice ───────────────────────────────────────────────────────
@@ -269,7 +270,7 @@
             <label class="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" name="dpo_declared" value="1"
                 class="rounded border-amber-300 text-amber-600 focus:ring-amber-400" />
-              <span class="text-xs text-amber-800 font-medium">Oui, j'ai déclaré ce traitement au DPO EDF.</span>
+              <span class="text-xs text-amber-800 font-medium">Oui, j'ai déclaré ce traitement au DPO{% if org_name %} {{ org_name }}{% endif %}.</span>
             </label>
           </div>
         </div>

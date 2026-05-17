@@ -33,9 +33,13 @@ def _dt_reunion(dt: datetime | None, fmt: str = "%d/%m/%Y %H:%M") -> str:
     return dt.astimezone(_REUNION_TZ).strftime(fmt)
 
 
+from app.config import settings as _settings
+
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["from_json"] = json.loads
 templates.env.filters["dt_reunion"] = _dt_reunion
+templates.env.globals["org_name"] = _settings.ORG_NAME
+templates.env.globals["dpo_email"] = _settings.DPO_EMAIL
 
 app.include_router(auth.router)
 app.include_router(tables.router)
@@ -58,6 +62,8 @@ _router_modules = [
 for _mod in _router_modules:
     if hasattr(_mod, "templates"):
         _mod.templates.env.filters["dt_reunion"] = _dt_reunion
+        _mod.templates.env.globals["org_name"] = _settings.ORG_NAME
+        _mod.templates.env.globals["dpo_email"] = _settings.DPO_EMAIL
 
 
 @app.get("/")
