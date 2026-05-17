@@ -108,6 +108,43 @@
   }
 
   document.addEventListener('DOMContentLoaded', () => addColumn());
+
+  function openDpoMail(e) {
+    e.preventDefault();
+    var tableName = (document.querySelector('input[name="name"]') || {}).value || '(non renseigné)';
+    var desc = (document.querySelector('textarea[name="description"]') || {}).value || 'Non précisée';
+    var today = new Date().toLocaleDateString('fr-FR');
+
+    var cols = [];
+    document.querySelectorAll('.col-row').forEach(function(row) {
+      var n = (row.querySelector('input[name="col_names"]') || {}).value || '';
+      var t = (row.querySelector('select[name="col_types"]') || {}).value || '';
+      if (n) cols.push('  - ' + n + ' (type : ' + t + ')');
+    });
+    var colsList = cols.length ? cols.join('\n') : '  (aucune colonne définie)';
+
+    var subject = 'Déclaration de traitement de données personnelles — ' + tableName;
+    var body = [
+      'Bonjour,',
+      '',
+      'Je vous contacte afin de déclarer un nouveau traitement de données personnelles conformément au RGPD.',
+      '',
+      'Intitulé du traitement : ' + tableName,
+      'Finalité / description  : ' + desc,
+      'Responsable du traitement : {{ user.username }} ({{ user.email }})',
+      'Date de déclaration : ' + today,
+      '',
+      'Catégories de données traitées (colonnes de la table) :',
+      colsList,
+      '',
+      'Merci de bien vouloir enregistrer ce traitement dans le registre des activités de traitement.',
+      '',
+      'Cordialement,',
+      '{{ user.username }}',
+    ].join('\n');
+
+    window.location.href = 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  }
 </script>
 {% endblock %}
 {% block content %}
@@ -136,6 +173,26 @@
           class="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Ajouter une colonne</button>
       </div>
       <div id="columns-container" class="space-y-2"></div>
+    </div>
+
+    <div class="border border-amber-200 bg-amber-50 rounded-lg p-4">
+      <div class="flex items-start gap-3">
+        <i data-lucide="shield-alert" class="w-5 h-5 text-amber-500 shrink-0 mt-0.5"></i>
+        <div class="space-y-2">
+          <p class="text-sm text-amber-800 font-medium">Données personnelles (RGPD)</p>
+          <p class="text-xs text-amber-700">Si cette table contient des données personnelles, vous êtes responsable de traitement. La déclaration au DPO n'est pas obligatoire pour créer la table, mais votre réponse sera enregistrée.</p>
+          <a href="#" onclick="openDpoMail(event)"
+            class="inline-flex items-center gap-1.5 text-xs text-amber-700 underline underline-offset-2 hover:text-amber-900 transition">
+            <i data-lucide="mail" class="w-3.5 h-3.5 shrink-0"></i>
+            Envoyer un email au DPO avec les éléments de cette table
+          </a>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" name="dpo_declared" value="1"
+              class="rounded border-amber-300 text-amber-600 focus:ring-amber-400" />
+            <span class="text-xs text-amber-800 font-medium">Oui, j'ai déclaré ce traitement au DPO EDF.</span>
+          </label>
+        </div>
+      </div>
     </div>
 
     <div class="flex gap-3 pt-2">

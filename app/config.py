@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = _DEFAULT_DB
     SECRET_KEY: str = "change-me-in-production-use-env-var"
 
+    # Chiffrement SQLCipher (AES-256). Laisser vide pour SQLite non chiffré.
+    DB_ENCRYPTION_KEY: str = ""
+
     # URL publique de l'application (utilisée dans les liens des emails)
     APP_URL: str = "http://localhost:8000"
 

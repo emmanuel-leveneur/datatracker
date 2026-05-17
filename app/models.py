@@ -60,6 +60,7 @@ class DataTable(Base):
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    dpo_declared: Mapped[bool] = mapped_column(Boolean, default=False)
 
     owner: Mapped["User"] = relationship(back_populates="tables")
     columns: Mapped[list["TableColumn"]] = relationship(

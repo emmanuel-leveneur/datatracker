@@ -133,10 +133,12 @@ def create_table(
     col_related_table_ids: list[str] = Form(default=[]),
     col_related_display_col_ids: list[str] = Form(default=[]),
     col_related_value_col_ids: list[str] = Form(default=[]),
+    dpo_declared: str = Form(default=""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    table = DataTable(name=name, description=description, created_by_id=user.id)
+    table = DataTable(name=name, description=description, created_by_id=user.id,
+                      dpo_declared=bool(dpo_declared))
     db.add(table)
     db.flush()
     db.add(TableOwner(table_id=table.id, user_id=user.id))

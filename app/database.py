@@ -4,11 +4,28 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from app.config import settings
 
 DATABASE_URL = settings.DATABASE_URL
+_ENCRYPTION_KEY = settings.DB_ENCRYPTION_KEY
 
-# connect_args spécifique à SQLite (check_same_thread non applicable à PostgreSQL)
-_connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
-engine = create_engine(DATABASE_URL, connect_args=_connect_args)
+def _make_engine():
+    if _ENCRYPTION_KEY and DATABASE_URL.startswith("sqlite:///"):
+        import sqlcipher3
+
+        db_path = DATABASE_URL[len("sqlite:///"):]
+
+        def _creator():
+            conn = sqlcipher3.connect(db_path, check_same_thread=False)
+            safe_key = _ENCRYPTION_KEY.replace('"', '""')
+            conn.execute(f'PRAGMA key="{safe_key}"')
+            return conn
+
+        return create_engine("sqlite://", creator=_creator)
+
+    connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+    return create_engine(DATABASE_URL, connect_args=connect_args)
+
+
+engine = _make_engine()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -40,6 +57,7 @@ def _run_migrations():
         ],
         "data_tables": [
             ("deleted_at", "ALTER TABLE data_tables ADD COLUMN deleted_at DATETIME"),
+            ("dpo_declared", "ALTER TABLE data_tables ADD COLUMN dpo_declared BOOLEAN DEFAULT 0"),
         ],
         "table_rows": [
             ("deleted_at", "ALTER TABLE table_rows ADD COLUMN deleted_at DATETIME"),
