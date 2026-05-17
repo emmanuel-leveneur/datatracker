@@ -73,6 +73,9 @@ def _run_migrations():
         "users": [
             ("is_email_verified", "ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN DEFAULT 0"),
         ],
+        "table_syncs": [
+            ("sync_mode", "ALTER TABLE table_syncs ADD COLUMN sync_mode VARCHAR DEFAULT 'overwrite'"),
+        ],
     }
     with engine.connect() as conn:
         for table_name, columns in migrations_by_table.items():

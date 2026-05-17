@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session, subqueryload
 from app.activity import log_action
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
-from app.models import CellValue, ColumnType, DataTable, TableColumn, TableFavorite, TableOwner, TablePermission, TableRow, User
+from app.import_utils import infer_column_type, normalize_value, MAX_ROWS
+from app.models import (
+    CellValue, ColumnType, DataTable, SyncAuthType, TableColumn,
+    TableFavorite, TableOwner, TablePermission, TableRow, TableSync, User,
+)
 
 router = APIRouter(prefix="/tables", tags=["tables"])
 templates = Jinja2Templates(directory="app/templates")
@@ -181,6 +185,168 @@ def create_table(
 PAGE_SIZE = 25  # taille de page par défaut
 ALLOWED_PAGE_SIZES = [25, 50, 100, 250, 500]
 
+
+# ── Wizard : créer une table depuis un webservice ──────────────────────────
+
+_WS_AUTH_TYPES = [e.value for e in SyncAuthType]
+_WS_PREVIEW_ROWS = 5
+
+
+def _ws_detect_fields(url, auth_type, auth_value, auth_header, response_path):
+    import httpx
+    import types
+    from app.sync_service import _build_headers, _resolve_path
+    from app.models import SyncAuthType as SAT
+    tmp = types.SimpleNamespace(
+        auth_type=SAT(auth_type) if auth_type in _WS_AUTH_TYPES else SAT.NONE,
+        auth_value=auth_value,
+        auth_header=auth_header or "X-API-Key",
+    )
+    headers = _build_headers(tmp)
+    try:
+        resp = httpx.get(url, headers=headers, timeout=30, follow_redirects=True)
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        raise ValueError(f"Erreur HTTP {e.response.status_code} — {e.response.text[:200]}")
+    except httpx.RequestError as e:
+        raise ValueError(f"Erreur réseau : {e}")
+    try:
+        raw = resp.json()
+    except Exception:
+        raise ValueError("La réponse n'est pas du JSON valide.")
+    records = _resolve_path(raw, response_path)
+    if not records:
+        raise ValueError("Le tableau retourné est vide.")
+    first = records[0]
+    if not isinstance(first, dict):
+        raise ValueError("Les enregistrements ne sont pas des objets JSON (dict attendu).")
+    detected_cols = []
+    for key in first.keys():
+        sample = [str(r.get(key, "")) for r in records[:50] if r.get(key) is not None]
+        detected_cols.append({"json_key": key, "name": key, "type": infer_column_type(sample, col_name=key).value})
+    return records, detected_cols
+
+
+@router.get("/create-from-webservice", response_class=HTMLResponse)
+def create_from_webservice_page(request: Request, user: User = Depends(get_current_user)):
+    return templates.TemplateResponse(
+        request, "tables/create_from_webservice.html", {"auth_types": _WS_AUTH_TYPES},
+    )
+
+
+@router.post("/create-from-webservice/detect", response_class=HTMLResponse)
+def detect_webservice(
+    request: Request,
+    user: User = Depends(get_current_user),
+    url: str = Form(...),
+    auth_type: str = Form("none"),
+    auth_value: str = Form(""),
+    auth_header: str = Form("X-API-Key"),
+    response_path: str = Form(""),
+):
+    try:
+        records, detected_cols = _ws_detect_fields(url, auth_type, auth_value, auth_header, response_path)
+    except ValueError as e:
+        return templates.TemplateResponse(
+            request, "partials/webservice_detect_preview.html", {"error": str(e)},
+        )
+    return templates.TemplateResponse(
+        request, "partials/webservice_detect_preview.html",
+        {
+            "detected_cols": detected_cols,
+            "preview": records[:_WS_PREVIEW_ROWS],
+            "total_records": len(records),
+            "column_types": COLUMN_TYPES,
+            "auth_types": _WS_AUTH_TYPES,
+            "url": url, "auth_type": auth_type, "auth_value": auth_value,
+            "auth_header": auth_header, "response_path": response_path,
+        },
+    )
+
+
+@router.post("/create-from-webservice/confirm")
+def confirm_webservice_table(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    table_name: str = Form(...),
+    url: str = Form(...),
+    auth_type: str = Form("none"),
+    auth_value: str = Form(""),
+    auth_header: str = Form("X-API-Key"),
+    response_path: str = Form(""),
+    sync_interval_minutes: int = Form(60),
+    is_auto: str = Form(""),
+    dedup_col_json_key: str = Form(""),
+    col_json_keys: list[str] = Form(default=[]),
+    col_names: list[str] = Form(default=[]),
+    col_types: list[str] = Form(default=[]),
+):
+    try:
+        records, _ = _ws_detect_fields(url, auth_type, auth_value, auth_header, response_path)
+    except ValueError as e:
+        return templates.TemplateResponse(
+            request, "partials/webservice_detect_preview.html",
+            {"error": f"Erreur lors de la récupération des données : {e}"},
+        )
+    final_cols = []
+    for json_key, col_name, col_type_str in zip(col_json_keys, col_names, col_types):
+        name = col_name.strip()
+        if not name:
+            continue
+        try:
+            ct = ColumnType(col_type_str)
+        except ValueError:
+            ct = ColumnType.TEXT
+        final_cols.append({"json_key": json_key, "name": name, "type": ct})
+    if not final_cols:
+        return templates.TemplateResponse(
+            request, "partials/webservice_detect_preview.html",
+            {"error": "Aucune colonne sélectionnée."},
+        )
+    table = DataTable(name=table_name.strip() or "Table webservice", created_by_id=user.id)
+    db.add(table)
+    db.flush()
+    db.add(TableOwner(table_id=table.id, user_id=user.id))
+    col_objects = []
+    for order, col_def in enumerate(final_cols):
+        tc = TableColumn(table_id=table.id, name=col_def["name"], col_type=col_def["type"], order=order)
+        db.add(tc)
+        col_objects.append(tc)
+    db.flush()
+    field_mapping = {str(tc.id): col_def["json_key"] for tc, col_def in zip(col_objects, final_cols)}
+    dedup_col_id = None
+    if dedup_col_json_key:
+        for tc, col_def in zip(col_objects, final_cols):
+            if col_def["json_key"] == dedup_col_json_key:
+                dedup_col_id = tc.id
+                break
+    for record in records[:MAX_ROWS]:
+        if not isinstance(record, dict):
+            continue
+        row = TableRow(table_id=table.id, created_by_id=user.id)
+        db.add(row)
+        db.flush()
+        for tc, col_def in zip(col_objects, final_cols):
+            val = normalize_value(str(record.get(col_def["json_key"], "")), col_def["type"])
+            db.add(CellValue(row_id=row.id, column_id=tc.id, value=val))
+    import json as _json
+    db.add(TableSync(
+        table_id=table.id, url=url.strip(),
+        auth_type=SyncAuthType(auth_type) if auth_type in _WS_AUTH_TYPES else SyncAuthType.NONE,
+        auth_value=auth_value.strip(), auth_header=auth_header.strip() or "X-API-Key",
+        response_path=response_path.strip(), field_mapping=_json.dumps(field_mapping),
+        dedup_col_id=dedup_col_id, is_auto=bool(is_auto),
+        sync_interval_minutes=max(1, sync_interval_minutes),
+    ))
+    log_action(db, user, "create_from_webservice", "table",
+               resource_id=table.id, resource_name=table.name,
+               details=f"{len(records[:MAX_ROWS])} ligne(s), {len(final_cols)} colonne(s) depuis {url}",
+               table_id=table.id)
+    db.commit()
+    return RedirectResponse(url=f"/tables/{table.id}", status_code=303)
+
+
 @router.get("/{table_id}", response_class=HTMLResponse)
 def table_detail(
     request: Request,
@@ -275,6 +441,8 @@ def table_detail(
         ).group_by(RowComment.row_id).all()
         comment_counts = dict(_counts)
 
+    table_sync = db.query(TableSync).filter_by(table_id=table.id).first()
+
     return templates.TemplateResponse(
         request, "tables/detail.html",
         {
@@ -299,6 +467,7 @@ def table_detail(
             "comment_counts": comment_counts,
             "lat_col": lat_col,
             "lon_col": lon_col,
+            "table_sync": table_sync,
         },
     )
 

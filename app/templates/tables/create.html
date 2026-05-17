@@ -2,6 +2,7 @@
 {% block title %}Nouvelle table — DataTracker{% endblock %}
 {% block head %}
 <script>
+  // ── Gestion des colonnes (onglet Manuel) ────────────────────────────────────
   let colIndex = 0;
   const allTablesData = {{ all_tables_json | safe }};
 
@@ -107,8 +108,6 @@
     container.appendChild(div);
   }
 
-  document.addEventListener('DOMContentLoaded', () => addColumn());
-
   function openDpoMail(e) {
     e.preventDefault();
     var tableName = (document.querySelector('input[name="name"]') || {}).value || '(non renseigné)';
@@ -145,8 +144,74 @@
 
     window.location.href = 'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
   }
+
+  // ── Onglet Webservice ───────────────────────────────────────────────────────
+  function wsToggleAuth(val) {
+    document.getElementById('ws-auth-value-field').classList.toggle('hidden', val === 'none');
+    document.getElementById('ws-header-field').classList.toggle('hidden', val !== 'api_key');
+    var lbl = document.getElementById('ws-auth-value-label');
+    if (lbl) lbl.textContent = val === 'basic' ? 'Identifiants (user:password)' : 'Token / clé';
+  }
+
+  function detectFields() {
+    var btn = document.getElementById('ws-detect-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<svg class="animate-spin w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Détection en cours…';
+
+    var body = new URLSearchParams({
+      url:           document.getElementById('ws-url').value,
+      auth_type:     document.getElementById('ws-auth-type').value,
+      auth_value:    document.getElementById('ws-auth-value').value,
+      auth_header:   document.getElementById('ws-auth-header').value,
+      response_path: document.getElementById('ws-response-path').value,
+    });
+
+    fetch('/tables/create-from-webservice/detect', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: body.toString(),
+    })
+    .then(function(r) { return r.text(); })
+    .then(function(html) {
+      document.getElementById('ws-detect-result').innerHTML = html;
+      lucide.createIcons();
+      document.getElementById('ws-detect-result').scrollIntoView({behavior: 'smooth', block: 'start'});
+    })
+    .finally(function() {
+      btn.disabled = false;
+      btn.innerHTML = '<i data-lucide="search" class="w-4 h-4"></i> Tester et détecter les champs';
+      lucide.createIcons();
+    });
+  }
+
+  // ── Gestion des onglets ─────────────────────────────────────────────────────
+  var TABS = ['manual', 'fichier', 'webservice'];
+
+  function switchTab(name) {
+    TABS.forEach(function(t) {
+      document.getElementById('tab-content-' + t).classList.toggle('hidden', t !== name);
+      var btn = document.getElementById('tab-btn-' + t);
+      var isActive = t === name;
+      btn.className = isActive
+        ? 'inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold bg-blue-600 text-white'
+        : 'inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium border border-gray-200 text-gray-600 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition';
+    });
+    if (name !== 'manual') {
+      history.replaceState(null, '', '#' + name);
+    } else {
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    var hash = location.hash.replace('#', '');
+    var initial = TABS.indexOf(hash) !== -1 ? hash : 'manual';
+    switchTab(initial);
+    addColumn();
+  });
 </script>
 {% endblock %}
+
 {% block content %}
 <div class="max-w-2xl">
   <div class="flex items-center gap-3 mb-6">
@@ -154,56 +219,212 @@
     <h1 class="text-2xl font-bold text-gray-800">Nouvelle table</h1>
   </div>
 
-  <form method="post" action="/tables/create" class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-6">
-    <div>
-      <label class="block text-sm font-medium text-gray-700 mb-1">Nom de la table <span class="text-red-500">*</span></label>
-      <input type="text" name="name" required
-        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-    </div>
-    <div>
-      <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
-      <textarea name="description" rows="2"
-        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
-    </div>
+  {# ── Sélecteur d'onglets ──────────────────────────────────────────────────── #}
+  <div class="flex gap-3 mb-6">
+    <button type="button" id="tab-btn-manual" onclick="switchTab('manual')">
+      <i data-lucide="table" class="w-4 h-4"></i> Manuellement
+    </button>
+    <button type="button" id="tab-btn-fichier" onclick="switchTab('fichier')">
+      <i data-lucide="file-up" class="w-4 h-4"></i> Depuis un fichier
+    </button>
+    <button type="button" id="tab-btn-webservice" onclick="switchTab('webservice')">
+      <i data-lucide="globe" class="w-4 h-4"></i> Depuis un webservice
+    </button>
+  </div>
 
-    <div>
-      <div class="flex items-center justify-between mb-2">
-        <h2 class="text-sm font-semibold text-gray-700">Colonnes</h2>
-        <button type="button" onclick="addColumn()"
-          class="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Ajouter une colonne</button>
+  {# ── Onglet 1 : Manuellement ──────────────────────────────────────────────── #}
+  <div id="tab-content-manual">
+    <form method="post" action="/tables/create" class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-6">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Nom de la table <span class="text-red-500">*</span></label>
+        <input type="text" name="name" required
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
       </div>
-      <div id="columns-container" class="space-y-2"></div>
-    </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
+        <textarea name="description" rows="2"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+      </div>
 
-    <div class="border border-amber-200 bg-amber-50 rounded-lg p-4">
-      <div class="flex items-start gap-3">
-        <i data-lucide="shield-alert" class="w-5 h-5 text-amber-500 shrink-0 mt-0.5"></i>
-        <div class="space-y-2">
-          <p class="text-sm text-amber-800 font-medium">Données personnelles (RGPD)</p>
-          <p class="text-xs text-amber-700">Si cette table contient des données personnelles, vous êtes responsable de traitement. La déclaration au DPO n'est pas obligatoire pour créer la table, mais votre réponse sera enregistrée.</p>
-          <a href="#" onclick="openDpoMail(event)"
-            class="inline-flex items-center gap-1.5 text-xs text-amber-700 underline underline-offset-2 hover:text-amber-900 transition">
-            <i data-lucide="mail" class="w-3.5 h-3.5 shrink-0"></i>
-            Envoyer un email au DPO avec les éléments de cette table
-          </a>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" name="dpo_declared" value="1"
-              class="rounded border-amber-300 text-amber-600 focus:ring-amber-400" />
-            <span class="text-xs text-amber-800 font-medium">Oui, j'ai déclaré ce traitement au DPO EDF.</span>
-          </label>
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-sm font-semibold text-gray-700">Colonnes</h2>
+          <button type="button" onclick="addColumn()"
+            class="text-sm text-blue-600 hover:text-blue-800 font-medium">+ Ajouter une colonne</button>
+        </div>
+        <div id="columns-container" class="space-y-2"></div>
+      </div>
+
+      <div class="border border-amber-200 bg-amber-50 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+          <i data-lucide="shield-alert" class="w-5 h-5 text-amber-500 shrink-0 mt-0.5"></i>
+          <div class="space-y-2">
+            <p class="text-sm text-amber-800 font-medium">Données personnelles (RGPD)</p>
+            <p class="text-xs text-amber-700">Si cette table contient des données personnelles, vous êtes responsable de traitement. La déclaration au DPO n'est pas obligatoire pour créer la table, mais votre réponse sera enregistrée.</p>
+            <a href="#" onclick="openDpoMail(event)"
+              class="inline-flex items-center gap-1.5 text-xs text-amber-700 underline underline-offset-2 hover:text-amber-900 transition">
+              <i data-lucide="mail" class="w-3.5 h-3.5 shrink-0"></i>
+              Envoyer un email au DPO avec les éléments de cette table
+            </a>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" name="dpo_declared" value="1"
+                class="rounded border-amber-300 text-amber-600 focus:ring-amber-400" />
+              <span class="text-xs text-amber-800 font-medium">Oui, j'ai déclaré ce traitement au DPO EDF.</span>
+            </label>
+          </div>
         </div>
       </div>
+
+      <div class="flex gap-3 pt-2">
+        <button type="submit"
+          class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm transition">
+          Créer la table
+        </button>
+        <a href="/tables/" class="px-6 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100 border border-gray-300 transition">
+          Annuler
+        </a>
+      </div>
+    </form>
+  </div>
+
+  {# ── Onglet 2 : Depuis un fichier ─────────────────────────────────────────── #}
+  <div id="tab-content-fichier" class="hidden">
+    <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+      <form action="/import-auto/analyze" method="post" enctype="multipart/form-data" id="upload-form">
+        <div id="drop-zone"
+             class="border-2 border-dashed border-gray-300 rounded-xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition"
+             onclick="document.getElementById('file-input').click()">
+          <div class="flex justify-center mb-3">
+            <div class="w-14 h-14 bg-blue-50 rounded-full flex items-center justify-center">
+              <i data-lucide="file-up" class="w-7 h-7 text-blue-500"></i>
+            </div>
+          </div>
+          <p class="text-sm font-medium text-gray-700">Glissez votre fichier ici</p>
+          <p class="text-xs text-gray-400 mt-1">ou cliquez pour sélectionner</p>
+          <p class="text-xs text-gray-400 mt-3">CSV (tout séparateur) · Excel (.xlsx)</p>
+          <p class="text-xs text-gray-300 mt-1">Max 10 Mo · 10 000 lignes</p>
+        </div>
+
+        <input type="file" id="file-input" name="file" accept=".csv,.xlsx,.xls,.xlsm,.txt"
+               class="hidden" onchange="onFileSelected(this)">
+        <input type="hidden" name="sheet_index" value="0">
+
+        <div id="file-info" class="hidden mt-4 flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+          <i data-lucide="file-text" class="w-5 h-5 text-blue-500 shrink-0"></i>
+          <span id="file-name" class="text-sm text-gray-700 truncate flex-1"></span>
+          <span id="file-size" class="text-xs text-gray-400 shrink-0"></span>
+        </div>
+
+        <button type="submit" id="submit-btn"
+                class="mt-5 w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold py-2.5 rounded-lg transition"
+                disabled>
+          Analyser le fichier
+        </button>
+      </form>
+    </div>
+  </div>
+
+  {# ── Onglet 3 : Depuis un webservice ──────────────────────────────────────── #}
+  <div id="tab-content-webservice" class="hidden">
+    <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-5 mb-4">
+      <h2 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+        <i data-lucide="globe" class="w-4 h-4 text-indigo-400"></i>
+        Source webservice
+      </h2>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">URL <span class="text-red-400">*</span></label>
+        <input type="url" id="ws-url" name="url" required
+          placeholder="https://api.example.com/data"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Authentification</label>
+          <select id="ws-auth-type" name="auth_type"
+            onchange="wsToggleAuth(this.value)"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <option value="none">Aucune</option>
+            <option value="bearer">Bearer token</option>
+            <option value="api_key">API Key (header)</option>
+            <option value="basic">Basic Auth (user:pass)</option>
+          </select>
+        </div>
+        <div id="ws-header-field" class="hidden">
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Nom du header</label>
+          <input type="text" id="ws-auth-header" name="auth_header" value="X-API-Key"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        </div>
+      </div>
+
+      <div id="ws-auth-value-field" class="hidden">
+        <label class="block text-xs font-semibold text-gray-600 mb-1" id="ws-auth-value-label">Token / clé</label>
+        <input type="password" id="ws-auth-value" name="auth_value"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">
+          Chemin vers le tableau dans la réponse
+          <span class="font-normal text-gray-400">(vide = racine, ex : <code>data</code>, <code>results.items</code>)</span>
+        </label>
+        <input type="text" id="ws-response-path" name="response_path" placeholder="data"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+      </div>
+
+      <button type="button" id="ws-detect-btn"
+        onclick="detectFields()"
+        class="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-5 py-2 rounded-lg transition">
+        <i data-lucide="search" class="w-4 h-4"></i>
+        Tester et détecter les champs
+      </button>
     </div>
 
-    <div class="flex gap-3 pt-2">
-      <button type="submit"
-        class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm transition">
-        Créer la table
-      </button>
-      <a href="/tables/" class="px-6 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-100 border border-gray-300 transition">
-        Annuler
-      </a>
-    </div>
-  </form>
+    <div id="ws-detect-result"></div>
+  </div>
+
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var dropZone = document.getElementById('drop-zone');
+var fileInput = document.getElementById('file-input');
+var submitBtn = document.getElementById('submit-btn');
+var fileInfo  = document.getElementById('file-info');
+var fileName  = document.getElementById('file-name');
+var fileSize  = document.getElementById('file-size');
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' o';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' Ko';
+  return (bytes / 1024 / 1024).toFixed(1) + ' Mo';
+}
+
+function onFileSelected(input) {
+  if (!input.files.length) return;
+  var f = input.files[0];
+  fileName.textContent = f.name;
+  fileSize.textContent = formatSize(f.size);
+  fileInfo.classList.remove('hidden');
+  submitBtn.disabled = false;
+}
+
+dropZone.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  dropZone.classList.add('border-blue-400', 'bg-blue-50/30');
+});
+dropZone.addEventListener('dragleave', function() {
+  dropZone.classList.remove('border-blue-400', 'bg-blue-50/30');
+});
+dropZone.addEventListener('drop', function(e) {
+  e.preventDefault();
+  dropZone.classList.remove('border-blue-400', 'bg-blue-50/30');
+  var dt = new DataTransfer();
+  dt.items.add(e.dataTransfer.files[0]);
+  fileInput.files = dt.files;
+  onFileSelected(fileInput);
+});
+</script>
 {% endblock %}

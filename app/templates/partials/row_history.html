@@ -33,7 +33,7 @@
         <span class="text-gray-300 text-xs">·</span>
         <span class="text-xs text-gray-600 font-medium">{{ entry.username }}</span>
         <span class="text-gray-300 text-xs">·</span>
-        <span class="text-xs text-gray-400">{{ entry.timestamp.strftime('%d/%m/%Y à %H:%M') }}</span>
+        <span class="text-xs text-gray-400">{{ entry.timestamp | dt_reunion('%d/%m/%Y à %H:%M') }}</span>
       </div>
       {% if entry.details %}
         {% if entry.action == 'update_row' %}

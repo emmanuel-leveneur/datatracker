@@ -87,6 +87,41 @@ def reevaluate_temporal_alerts():
         db.close()
 
 
+def run_auto_syncs():
+    """Lance les synchronisations automatiques dont l'intervalle est échu."""
+    from datetime import datetime, timezone, timedelta
+    from app.database import SessionLocal
+    from app.models import TableSync
+    from app.sync_service import run_sync
+
+    db = SessionLocal()
+    try:
+        syncs = db.query(TableSync).filter_by(is_auto=True).all()
+        now = datetime.now(timezone.utc)
+        for sync in syncs:
+            last = sync.last_sync_at
+            if last is not None and last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            interval = timedelta(minutes=max(1, sync.sync_interval_minutes))
+            if last is None or (now - last) >= interval:
+                from app.models import DataTable
+                table = db.get(DataTable, sync.table_id)
+                if not table:
+                    continue
+                system_user = db.get(User, table.created_by_id)
+                if not system_user:
+                    continue
+                try:
+                    run_sync(sync.table_id, system_user, db)
+                    logger.info(f"[scheduler] auto-sync table_id={sync.table_id} OK")
+                except Exception as e:
+                    logger.error(f"[scheduler] auto-sync table_id={sync.table_id} error: {e}")
+    except Exception as e:
+        logger.error(f"[scheduler] run_auto_syncs error: {e}")
+    finally:
+        db.close()
+
+
 def start_scheduler():
     scheduler.add_job(
         cleanup_orphan_rows,
@@ -98,6 +133,13 @@ def start_scheduler():
         reevaluate_temporal_alerts,
         CronTrigger(hour=6, minute=0),  # Chaque jour à 6h00
         id="reevaluate_temporal_alerts",
+        replace_existing=True,
+    )
+    from apscheduler.triggers.interval import IntervalTrigger
+    scheduler.add_job(
+        run_auto_syncs,
+        IntervalTrigger(minutes=1),
+        id="run_auto_syncs",
         replace_existing=True,
     )
     scheduler.start()

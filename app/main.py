@@ -1,5 +1,6 @@
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -9,6 +10,7 @@ from app.routers import auth, tables, data, export, permissions, admin, logs, tr
 from app.routers import alerts as alerts_router
 from app.routers import import_auto as import_auto_router
 from app.routers import comments as comments_router
+from app.routers import sync as sync_router
 
 
 @asynccontextmanager
@@ -20,8 +22,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DataTracker", lifespan=lifespan)
+_REUNION_TZ = timezone(timedelta(hours=4))
+
+
+def _dt_reunion(dt: datetime | None, fmt: str = "%d/%m/%Y %H:%M") -> str:
+    if dt is None:
+        return "—"
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_REUNION_TZ).strftime(fmt)
+
+
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["from_json"] = json.loads
+templates.env.filters["dt_reunion"] = _dt_reunion
 
 app.include_router(auth.router)
 app.include_router(tables.router)
@@ -34,6 +48,16 @@ app.include_router(tracabilite.router)
 app.include_router(alerts_router.router)
 app.include_router(import_auto_router.router)
 app.include_router(comments_router.router)
+app.include_router(sync_router.router)
+
+# Propagate dt_reunion filter to every router's Jinja2Templates instance
+_router_modules = [
+    auth, tables, data, export, permissions, admin, logs, tracabilite,
+    alerts_router, import_auto_router, comments_router, sync_router,
+]
+for _mod in _router_modules:
+    if hasattr(_mod, "templates"):
+        _mod.templates.env.filters["dt_reunion"] = _dt_reunion
 
 
 @app.get("/")

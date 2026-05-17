@@ -63,6 +63,26 @@
   </div>
 </div>
 
+{# ── Modal synchronisation webservice ─────────────────────────────────────── #}
+<div id="sync-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeSyncModal()"></div>
+<div id="sync-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="refresh-cw" class="w-4 h-4 text-indigo-400"></i>
+        Synchronisation webservice
+      </h2>
+      <button onclick="closeSyncModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="sync-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
 {# ── Panneau latéral commentaires ─────────────────────────────────────────── #}
 <div id="comment-backdrop"
      class="fixed inset-0 bg-black/40 z-40"
@@ -142,6 +162,15 @@
       class="bg-amber-50 hover:bg-amber-100 text-amber-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-amber-200 transition flex items-center gap-1.5">
       <i data-lucide="bell" class="w-4 h-4"></i> Alertes
     </button>
+    {% if table_sync and (is_owner or user.is_admin) %}
+    <button
+      hx-get="/tables/{{ table.id }}/sync/panel"
+      hx-target="#sync-modal-body"
+      hx-swap="innerHTML"
+      class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-indigo-200 transition flex items-center gap-1.5">
+      <i data-lucide="refresh-cw" class="w-4 h-4"></i> Synchro
+    </button>
+    {% endif %}
   </div>
 </div>
 
@@ -287,6 +316,15 @@
   <summary class="cursor-pointer flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-700 select-none list-none">
     <span class="transition-transform group-open:rotate-90">▶</span>
     <i data-lucide="trash-2" class="w-4 h-4"></i> Corbeille — {{ trashed_rows_data | length }} ligne(s)
+    {% if can_write %}
+    <form method="post" action="/tables/{{ table.id }}/trash/empty" class="ml-auto"
+          onsubmit="return confirm('Vider définitivement la corbeille ({{ trashed_rows_data | length }} ligne(s)) ? Cette action est irréversible.')">
+      <button type="submit" onclick="event.stopPropagation()"
+        class="inline-flex items-center gap-1 text-xs font-medium text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 bg-white hover:bg-red-50 px-2 py-0.5 rounded transition">
+        <i data-lucide="trash" class="w-3 h-3"></i> Vider
+      </button>
+    </form>
+    {% endif %}
   </summary>
   <div class="mt-3 bg-white border border-red-100 rounded-xl shadow-sm overflow-hidden">
     <div class="overflow-x-auto">
@@ -589,6 +627,22 @@ function closeAlertsPanel() {
   });
 })();
 
+// ── Modal synchronisation webservice ──────────────────────────────────────
+function openSyncModal() {
+  document.getElementById('sync-backdrop').classList.remove('hidden');
+  document.getElementById('sync-modal').classList.remove('hidden');
+}
+function closeSyncModal() {
+  document.getElementById('sync-backdrop').classList.add('hidden');
+  document.getElementById('sync-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'sync-modal-body') {
+    openSyncModal();
+    lucide.createIcons();
+  }
+});
+
 // ── Modal historique ───────────────────────────────────────────────────────
 function openHistoryModal() {
   document.getElementById('history-backdrop').classList.remove('hidden');
@@ -642,7 +696,7 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
 
 // Touche Échap pour fermer
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closeCommentPanel(); closeHistoryModal(); }
+  if (e.key === 'Escape') { closeCommentPanel(); closeHistoryModal(); closeSyncModal(); }
 });
 </script>
 

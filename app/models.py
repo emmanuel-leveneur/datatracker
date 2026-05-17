@@ -7,6 +7,20 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+class SyncAuthType(str, enum.Enum):
+    NONE = "none"
+    BEARER = "bearer"
+    API_KEY = "api_key"
+    BASIC = "basic"
+
+
+class SyncMode(str, enum.Enum):
+    OVERWRITE = "overwrite"       # supprime tout, réinsère
+    UPSERT = "upsert"             # met à jour + insère + supprime absents (dedup requis)
+    APPEND_NO_DUP = "append_no_dup"  # insère uniquement si clé absente (dedup requis)
+    APPEND_DUP = "append_dup"    # insère toujours tout
+
+
 class AlertScope(str, enum.Enum):
     PRIVATE = "private"
     GLOBAL = "global"
@@ -271,6 +285,29 @@ class ActivityLog(Base):
     details: Mapped[str] = mapped_column(Text, default="")
     # table_id sans FK — permet de filtrer par table sans cascade sur suppression
     table_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class TableSync(Base):
+    __tablename__ = "table_syncs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("data_tables.id"), nullable=False, unique=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    auth_type: Mapped[SyncAuthType] = mapped_column(Enum(SyncAuthType), default=SyncAuthType.NONE)
+    auth_value: Mapped[str] = mapped_column(Text, default="")   # token / "user:pass" / api key value
+    auth_header: Mapped[str] = mapped_column(String(128), default="X-API-Key")  # pour auth_type=api_key
+    response_path: Mapped[str] = mapped_column(String(256), default="")         # "data", "results.items", etc.
+    field_mapping: Mapped[str] = mapped_column(Text, default="{}")              # JSON {"col_id": "json_key"}
+    dedup_col_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    sync_mode: Mapped[SyncMode] = mapped_column(String(32), default=SyncMode.OVERWRITE)
+    is_auto: Mapped[bool] = mapped_column(Boolean, default=False)
+    sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    last_sync_status: Mapped[str] = mapped_column(String(16), default="")       # "ok" | "error" | ""
+    last_sync_message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    table: Mapped["DataTable"] = relationship()
 
 
 class RowComment(Base):

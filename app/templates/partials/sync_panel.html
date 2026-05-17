@@ -1,0 +1,275 @@
+{# Panneau de configuration de la synchronisation webservice #}
+
+{% if success_msg %}
+<div class="mb-4 px-3 py-2 rounded-lg text-sm
+  {% if run_status == 'error' %}bg-red-50 text-red-700 border border-red-200
+  {% else %}bg-green-50 text-green-700 border border-green-200{% endif %}">
+  {{ success_msg }}
+</div>
+{% endif %}
+
+{% if run_status == 'ok' %}
+<div class="mb-4 px-3 py-2 rounded-lg text-sm bg-green-50 text-green-700 border border-green-200 flex items-center gap-2">
+  <i data-lucide="check-circle" class="w-4 h-4 shrink-0"></i>
+  {{ run_msg }}
+</div>
+{% elif run_status == 'error' %}
+<div class="mb-4 px-3 py-2 rounded-lg text-sm bg-red-50 text-red-700 border border-red-200 flex items-start gap-2">
+  <i data-lucide="alert-circle" class="w-4 h-4 shrink-0 mt-0.5"></i>
+  <span>{{ run_msg }}</span>
+</div>
+{% endif %}
+
+{# ── Statut de la dernière sync ────────────────────────────────────────────── #}
+{% if sync %}
+<div class="mb-5 p-3 rounded-xl border
+  {% if sync.last_sync_status == 'ok' %}bg-green-50 border-green-200
+  {% elif sync.last_sync_status == 'error' %}bg-red-50 border-red-200
+  {% else %}bg-gray-50 border-gray-200{% endif %}
+  flex items-start gap-3">
+  <div class="shrink-0 mt-0.5">
+    {% if sync.last_sync_status == 'ok' %}
+    <i data-lucide="check-circle" class="w-4 h-4 text-green-500"></i>
+    {% elif sync.last_sync_status == 'error' %}
+    <i data-lucide="alert-circle" class="w-4 h-4 text-red-500"></i>
+    {% else %}
+    <i data-lucide="clock" class="w-4 h-4 text-gray-400"></i>
+    {% endif %}
+  </div>
+  <div class="text-xs">
+    {% if sync.last_sync_at %}
+    <p class="font-medium text-gray-700">Dernière synchronisation : {{ sync.last_sync_at | dt_reunion('%d/%m/%Y à %H:%M') }}</p>
+    {% if sync.last_sync_message %}
+    <p class="text-gray-500 mt-0.5">{{ sync.last_sync_message }}</p>
+    {% endif %}
+    {% else %}
+    <p class="text-gray-500">Aucune synchronisation effectuée.</p>
+    {% endif %}
+    <div class="mt-1.5 flex items-center gap-2">
+      <span class="text-gray-400">Synchro auto :</span>
+      {% if sync.is_auto %}
+      <span class="text-green-600 font-medium">Activée — toutes les {{ sync.sync_interval_minutes }} min</span>
+      {% else %}
+      <span class="text-gray-400">Désactivée</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── Actions rapides ───────────────────────────────────────────────────────── #}
+<div class="flex flex-wrap gap-2 mb-6">
+  {# Lancer une synchro one-shot #}
+  <button
+    hx-post="/tables/{{ table.id }}/sync/run"
+    hx-target="#sync-modal-body"
+    hx-swap="innerHTML"
+    hx-confirm="{% if sync and sync.sync_mode == 'overwrite' %}⚠️ Mode écrasement total : toutes les lignes existantes seront supprimées et remplacées par les données du webservice. Continuer ?{% elif sync and sync.sync_mode == 'upsert' %}⚠️ Mode upsert : les lignes existantes seront mises à jour, les lignes absentes du WS seront supprimées. Continuer ?{% elif sync and sync.sync_mode == 'append_no_dup' %}Ajout sans doublon : seules les nouvelles entrées (clé absente) seront insérées. Continuer ?{% else %}Ajout avec doublon : toutes les lignes du WS seront insérées sans vérification. Continuer ?{% endif %}"
+    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-700 text-white transition">
+    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+    Lancer une synchronisation
+  </button>
+
+  {# Toggle auto-sync #}
+  <button
+    hx-post="/tables/{{ table.id }}/sync/toggle"
+    hx-target="#sync-modal-body"
+    hx-swap="innerHTML"
+    {% if not sync.is_auto %}
+    hx-confirm="Activer la synchronisation automatique ? Les données seront écrasées périodiquement par le webservice."
+    {% endif %}
+    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition
+      {% if sync.is_auto %}bg-green-50 border-green-300 text-green-700 hover:bg-green-100
+      {% else %}bg-gray-50 border-gray-300 text-gray-600 hover:bg-gray-100{% endif %}">
+    <i data-lucide="{% if sync.is_auto %}pause{% else %}play{% endif %}" class="w-3.5 h-3.5"></i>
+    {% if sync.is_auto %}Désactiver la synchro auto{% else %}Activer la synchro auto{% endif %}
+  </button>
+</div>
+{% endif %}
+
+{# ── Formulaire de configuration ───────────────────────────────────────────── #}
+<form
+  hx-post="/tables/{{ table.id }}/sync/config"
+  hx-target="#sync-modal-body"
+  hx-swap="innerHTML"
+  class="space-y-5">
+
+  {# URL #}
+  <div>
+    <label class="block text-xs font-semibold text-gray-600 mb-1">URL du webservice <span class="text-red-400">*</span></label>
+    <input type="url" name="url" required
+      value="{{ sync.url if sync else '' }}"
+      placeholder="https://api.example.com/data"
+      class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+  </div>
+
+  {# Authentification #}
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <div>
+      <label class="block text-xs font-semibold text-gray-600 mb-1">Type d'authentification</label>
+      <select name="auth_type" id="sync-auth-type"
+        onchange="syncToggleAuth(this.value)"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        {% for at in auth_types %}
+        <option value="{{ at }}" {% if sync and sync.auth_type.value == at %}selected{% endif %}>
+          {% if at == 'none' %}Aucune
+          {% elif at == 'bearer' %}Bearer token
+          {% elif at == 'api_key' %}API Key (header)
+          {% elif at == 'basic' %}Basic Auth (user:pass)
+          {% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div id="sync-auth-header-field" class="{% if not (sync and sync.auth_type.value == 'api_key') %}hidden{% endif %}">
+      <label class="block text-xs font-semibold text-gray-600 mb-1">Nom du header</label>
+      <input type="text" name="auth_header"
+        value="{{ sync.auth_header if sync else 'X-API-Key' }}"
+        placeholder="X-API-Key"
+        class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+    </div>
+  </div>
+  <div id="sync-auth-value-field" class="{% if sync and sync.auth_type.value == 'none' %}hidden{% endif %}">
+    <label class="block text-xs font-semibold text-gray-600 mb-1">
+      {% if sync and sync.auth_type.value == 'basic' %}Identifiants (user:password){% else %}Valeur du token / clé{% endif %}
+    </label>
+    <input type="password" name="auth_value"
+      value="{{ sync.auth_value if sync else '' }}"
+      placeholder="{% if sync and sync.auth_type.value == 'basic' %}user:password{% else %}token ou clé API{% endif %}"
+      class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+  </div>
+
+  {# Chemin de réponse #}
+  <div>
+    <label class="block text-xs font-semibold text-gray-600 mb-1">
+      Chemin vers le tableau dans la réponse
+      <span class="font-normal text-gray-400">(vide = racine, ex: <code>data</code> ou <code>results.items</code>)</span>
+    </label>
+    <input type="text" name="response_path"
+      value="{{ sync.response_path if sync else '' }}"
+      placeholder="data"
+      class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+  </div>
+
+  {# Mapping champs #}
+  <div>
+    <label class="block text-xs font-semibold text-gray-600 mb-2">
+      Correspondance colonnes → champs JSON
+      <span class="font-normal text-gray-400">(laisser vide pour ignorer la colonne)</span>
+    </label>
+    <div class="space-y-1.5">
+      {% for col in table.columns %}
+      <div class="flex items-center gap-2">
+        <span class="w-40 text-xs text-gray-700 font-medium truncate shrink-0">{{ col.name }}</span>
+        <span class="text-gray-300 text-xs shrink-0">←</span>
+        <input type="hidden" name="col_ids" value="{{ col.id }}" />
+        <input type="text" name="json_keys"
+          value="{{ mapping.get(col.id | string, '') }}"
+          placeholder="nom_du_champ_json"
+          class="flex-1 border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Mode de synchronisation #}
+  <div>
+    <label class="block text-xs font-semibold text-gray-600 mb-2">Mode de synchronisation</label>
+    <div class="space-y-2">
+      {% set current_mode = sync.sync_mode if sync else 'overwrite' %}
+      <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-gray-200 hover:bg-gray-50 has-[:checked]:border-indigo-400 has-[:checked]:bg-indigo-50">
+        <input type="radio" name="sync_mode" value="overwrite" class="mt-0.5 shrink-0"
+          {% if current_mode == 'overwrite' %}checked{% endif %}
+          onchange="syncUpdateDedup()">
+        <div>
+          <p class="text-xs font-semibold text-gray-700">Écrasement total</p>
+          <p class="text-xs text-gray-400">Supprime toutes les lignes existantes puis réinsère les données du WS.</p>
+        </div>
+      </label>
+      <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-gray-200 hover:bg-gray-50 has-[:checked]:border-indigo-400 has-[:checked]:bg-indigo-50">
+        <input type="radio" name="sync_mode" value="upsert" class="mt-0.5 shrink-0"
+          {% if current_mode == 'upsert' %}checked{% endif %}
+          onchange="syncUpdateDedup()">
+        <div>
+          <p class="text-xs font-semibold text-gray-700">Mise à jour (upsert)</p>
+          <p class="text-xs text-gray-400">Met à jour les lignes existantes, insère les nouvelles, supprime les absentes. Clé de dédup requise.</p>
+        </div>
+      </label>
+      <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-gray-200 hover:bg-gray-50 has-[:checked]:border-indigo-400 has-[:checked]:bg-indigo-50">
+        <input type="radio" name="sync_mode" value="append_no_dup" class="mt-0.5 shrink-0"
+          {% if current_mode == 'append_no_dup' %}checked{% endif %}
+          onchange="syncUpdateDedup()">
+        <div>
+          <p class="text-xs font-semibold text-gray-700">Ajout sans doublon</p>
+          <p class="text-xs text-gray-400">Insère uniquement les enregistrements dont la clé de dédup n'existe pas encore. Les lignes existantes ne sont pas modifiées. Clé de dédup requise.</p>
+        </div>
+      </label>
+      <label class="flex items-start gap-2.5 cursor-pointer p-2.5 rounded-lg border border-gray-200 hover:bg-gray-50 has-[:checked]:border-indigo-400 has-[:checked]:bg-indigo-50">
+        <input type="radio" name="sync_mode" value="append_dup" class="mt-0.5 shrink-0"
+          {% if current_mode == 'append_dup' %}checked{% endif %}
+          onchange="syncUpdateDedup()">
+        <div>
+          <p class="text-xs font-semibold text-gray-700">Ajout avec doublon</p>
+          <p class="text-xs text-gray-400">Insère toujours toutes les lignes du WS sans vérification. Utile pour des logs ou relevés horodatés.</p>
+        </div>
+      </label>
+    </div>
+  </div>
+
+  {# Clé de déduplication — visible uniquement si upsert ou append_no_dup #}
+  <div id="sync-dedup-field" class="{% if sync and sync.sync_mode not in ('upsert', 'append_no_dup') %}hidden{% endif %}">
+    <label class="block text-xs font-semibold text-gray-600 mb-1">
+      Colonne de déduplication <span class="text-red-400">*</span>
+    </label>
+    <select name="dedup_col_id"
+      class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400">
+      <option value="">— Choisir une colonne —</option>
+      {% for col in table.columns %}
+      <option value="{{ col.id }}" {% if sync and sync.dedup_col_id == col.id %}selected{% endif %}>
+        {{ col.name }}
+      </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  {# Intervalle auto-sync #}
+  <div>
+    <label class="block text-xs font-semibold text-gray-600 mb-1">Intervalle de synchro automatique (minutes)</label>
+    <input type="number" name="sync_interval_minutes" min="1"
+      value="{{ sync.sync_interval_minutes if sync else 60 }}"
+      class="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+  </div>
+
+  <div class="flex items-center gap-3 pt-1">
+    <button type="submit"
+      class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-5 py-2 rounded-lg transition">
+      Enregistrer la configuration
+    </button>
+    {% if sync %}
+    <button type="button"
+      hx-post="/tables/{{ table.id }}/sync/delete"
+      hx-target="#sync-modal-body"
+      hx-swap="innerHTML"
+      hx-confirm="Supprimer la configuration de synchronisation ?"
+      class="text-red-500 hover:text-red-700 text-sm px-3 py-2 rounded-lg hover:bg-red-50 transition border border-red-200">
+      Supprimer la config
+    </button>
+    {% endif %}
+  </div>
+</form>
+
+<script>
+function syncToggleAuth(val) {
+  var valField = document.getElementById('sync-auth-value-field');
+  var headerField = document.getElementById('sync-auth-header-field');
+  if (valField) valField.classList.toggle('hidden', val === 'none');
+  if (headerField) headerField.classList.toggle('hidden', val !== 'api_key');
+}
+
+function syncUpdateDedup() {
+  var mode = document.querySelector('input[name="sync_mode"]:checked');
+  var dedupField = document.getElementById('sync-dedup-field');
+  if (!mode || !dedupField) return;
+  var needsDedup = mode.value === 'upsert' || mode.value === 'append_no_dup';
+  dedupField.classList.toggle('hidden', !needsDedup);
+}
+</script>
