@@ -8,7 +8,7 @@
     {# En-tête : nom + timestamp #}
     <div class="flex items-baseline gap-2 mb-1">
       <span class="text-sm font-semibold text-gray-800">{{ comment.author.email.split('@')[0] }}</span>
-      <span class="text-xs text-gray-400" title="{{ comment.created_at.strftime('%d/%m/%Y à %H:%M') }}">
+      <span class="text-xs text-gray-400" title="{{ comment.created_at | dt_reunion('%d/%m/%Y à %H:%M') }}">
         {{ comment.created_at | relative_time }}
       </span>
       {% if comment.edited_at %}

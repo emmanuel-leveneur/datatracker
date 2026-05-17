@@ -1,5 +1,6 @@
 import csv
 import io
+from datetime import timezone, timedelta
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -180,7 +181,8 @@ def _row_details(row, columns) -> str:
         for cid, val in cells.items()
         if cid in col_map and val not in (None, "")
     ]
-    created = row.created_at.strftime("%d/%m/%Y %H:%M") if row.created_at else ""
+    _reu = timezone(timedelta(hours=4))
+    created = row.created_at.replace(tzinfo=timezone.utc).astimezone(_reu).strftime("%d/%m/%Y %H:%M") if row.created_at else ""
     return f"Ligne #{row.id} avec {', '.join(parts)} créée le {created}"
 
 
@@ -355,7 +357,8 @@ async def create_row(
             cell_parts.append(f"{col.name} -> {value}")
 
     from datetime import datetime as _dt
-    created_str = _dt.utcnow().strftime("%d/%m/%Y %H:%M")
+    _reu = timezone(timedelta(hours=4))
+    created_str = _dt.now(timezone.utc).astimezone(_reu).strftime("%d/%m/%Y %H:%M")
     details = f"Ligne #{row.id} avec {', '.join(cell_parts)} créée le {created_str}"
     log_action(db, user, "create_row", "row",
                resource_id=row.id, resource_name=table.name, table_id=table.id,
@@ -525,6 +528,32 @@ def restore_row(
     log_action(db, user, "restore_row", "row",
                resource_id=row.id, resource_name=table.name, table_id=table.id,
                details=_row_details(row, table.columns))
+    db.commit()
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/trash/empty")
+def empty_trash(
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    trashed = db.query(TableRow).filter(
+        TableRow.table_id == table_id,
+        TableRow.deleted_at.isnot(None),
+    ).all()
+    count = len(trashed)
+    for row in trashed:
+        db.delete(row)
+    if count:
+        log_action(db, user, "empty_trash", "table",
+                   resource_id=table.id, resource_name=table.name, table_id=table.id,
+                   details=f"{count} ligne(s) supprimée(s) définitivement")
     db.commit()
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 

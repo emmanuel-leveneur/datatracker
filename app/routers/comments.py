@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -32,7 +32,9 @@ def _relative_time(dt: datetime) -> str:
     if seconds < 604800:
         d = seconds // 86400
         return f"il y a {d} jours"
-    return dt.strftime("%d/%m/%Y")
+    _reu = timezone(timedelta(hours=4))
+    dt_local = dt.replace(tzinfo=timezone.utc).astimezone(_reu)
+    return dt_local.strftime("%d/%m/%Y")
 
 
 def _avatar_color(username: str) -> str:

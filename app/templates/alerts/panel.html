@@ -63,7 +63,7 @@
             {% endfor %}
           </div>
           <div class="mt-1.5 text-xs text-gray-400">
-            Par {{ alert.created_by.email.split('@')[0] }} — {{ alert.created_at.strftime('%d/%m/%Y') }}
+            Par {{ alert.created_by.email.split('@')[0] }} — {{ alert.created_at | dt_reunion('%d/%m/%Y') }}
           </div>
         </div>
         <!-- Actions (créateur ou admin) -->
