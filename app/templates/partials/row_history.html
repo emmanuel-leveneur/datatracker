@@ -1,0 +1,63 @@
+{% if entries %}
+<div class="space-y-0">
+  {% for entry in entries %}
+  <div class="flex gap-3 {% if not loop.last %}pb-5{% endif %}">
+    {# Ligne de timeline #}
+    <div class="flex flex-col items-center shrink-0 pt-1">
+      <span class="w-2.5 h-2.5 rounded-full ring-2 ring-white shrink-0
+        {% if entry.action == 'create_row' %}bg-green-400
+        {% elif entry.action == 'update_row' %}bg-blue-400
+        {% elif entry.action == 'trash_row' %}bg-red-400
+        {% elif entry.action == 'restore_row' %}bg-amber-400
+        {% else %}bg-gray-300{% endif %}"></span>
+      {% if not loop.last %}
+      <div class="w-px flex-1 bg-gray-200 mt-1"></div>
+      {% endif %}
+    </div>
+    {# Contenu #}
+    <div class="flex-1 min-w-0">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 mb-1">
+        <span class="text-xs font-semibold
+          {% if entry.action == 'create_row' %}text-green-700
+          {% elif entry.action == 'update_row' %}text-blue-700
+          {% elif entry.action == 'trash_row' %}text-red-600
+          {% elif entry.action == 'restore_row' %}text-amber-600
+          {% else %}text-gray-500{% endif %}">
+          {% if entry.action == 'create_row' %}Création
+          {% elif entry.action == 'update_row' %}Modification
+          {% elif entry.action == 'trash_row' %}Mise à la corbeille
+          {% elif entry.action == 'restore_row' %}Restauration
+          {% elif entry.action == 'delete_row' %}Suppression définitive
+          {% else %}{{ entry.action }}{% endif %}
+        </span>
+        <span class="text-gray-300 text-xs">·</span>
+        <span class="text-xs text-gray-600 font-medium">{{ entry.username }}</span>
+        <span class="text-gray-300 text-xs">·</span>
+        <span class="text-xs text-gray-400">{{ entry.timestamp.strftime('%d/%m/%Y à %H:%M') }}</span>
+      </div>
+      {% if entry.details %}
+        {% if entry.action == 'update_row' %}
+          {% if entry.details == 'Aucune modification' %}
+          <p class="text-xs text-gray-400 italic">Aucune modification détectée</p>
+          {% else %}
+          <div class="space-y-1 mt-1">
+            {% for line in entry.details.split('\n') %}{% if line.strip() %}
+            <div class="text-xs font-mono bg-gray-50 border border-gray-100 rounded px-2.5 py-1 text-gray-700 break-all">{{ line }}</div>
+            {% endif %}{% endfor %}
+          </div>
+          {% endif %}
+        {% else %}
+        <p class="text-xs text-gray-500 mt-0.5">{{ entry.details }}</p>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="flex flex-col items-center justify-center py-12 text-gray-400">
+  <i data-lucide="history" class="w-10 h-10 mb-3 opacity-30"></i>
+  <p class="text-sm font-medium text-gray-500">Aucun historique disponible</p>
+  <p class="text-xs mt-1 text-center max-w-xs">Cette ligne a peut-être été créée avant l'activation de la journalisation.</p>
+</div>
+{% endif %}

@@ -43,6 +43,26 @@
 
 {% block content %}
 
+{# ── Modal historique ligne ────────────────────────────────────────────────── #}
+<div id="history-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeHistoryModal()"></div>
+<div id="history-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[80vh] flex flex-col pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="history" class="w-4 h-4 text-gray-400"></i>
+        Historique de la ligne
+      </h2>
+      <button onclick="closeHistoryModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="history-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
 {# ── Panneau latéral commentaires ─────────────────────────────────────────── #}
 <div id="comment-backdrop"
      class="fixed inset-0 bg-black/40 z-40"
@@ -569,6 +589,22 @@ function closeAlertsPanel() {
   });
 })();
 
+// ── Modal historique ───────────────────────────────────────────────────────
+function openHistoryModal() {
+  document.getElementById('history-backdrop').classList.remove('hidden');
+  document.getElementById('history-modal').classList.remove('hidden');
+}
+function closeHistoryModal() {
+  document.getElementById('history-backdrop').classList.add('hidden');
+  document.getElementById('history-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'history-modal-body') {
+    openHistoryModal();
+    lucide.createIcons();
+  }
+});
+
 // ── Panneau commentaires ───────────────────────────────────────────────────
 function openCommentPanel() {
   document.getElementById('comment-panel').classList.add('open');
@@ -606,7 +642,7 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
 
 // Touche Échap pour fermer
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') closeCommentPanel();
+  if (e.key === 'Escape') { closeCommentPanel(); closeHistoryModal(); }
 });
 </script>
 

@@ -11,7 +11,7 @@ from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
     get_visible_columns, is_column_readonly,
 )
-from app.models import CellValue, DataTable, RowComment, TableRow, User
+from app.models import ActivityLog, CellValue, DataTable, RowComment, TableRow, User
 from sqlalchemy import func as sa_func
 
 router = APIRouter(prefix="/tables", tags=["data"])
@@ -552,6 +552,32 @@ def delete_row_permanent(
     db.delete(row)
     db.commit()
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/{table_id}/rows/{row_id}/history", response_class=HTMLResponse)
+def row_history(
+    request: Request,
+    table_id: int,
+    row_id: int,
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+    logs = (
+        db.query(ActivityLog)
+        .filter(
+            ActivityLog.resource_id == row_id,
+            ActivityLog.action.in_(["create_row", "update_row", "trash_row", "restore_row", "delete_row"]),
+        )
+        .order_by(ActivityLog.timestamp.desc())
+        .all()
+    )
+    return templates.TemplateResponse(
+        request, "partials/row_history.html",
+        {"entries": logs, "row_id": row_id},
+    )
 
 
 @router.get("/{table_id}/import", response_class=HTMLResponse)

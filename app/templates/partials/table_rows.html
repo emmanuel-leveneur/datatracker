@@ -98,6 +98,15 @@
       {% endfor %}
       {# Colonne actions sticky à droite #}
       <td class="col-sticky-right px-3 py-2.5 text-right whitespace-nowrap bg-white">
+        {# Bouton historique #}
+        <button
+          hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/history"
+          hx-target="#history-modal-body"
+          hx-swap="innerHTML"
+          title="Historique des modifications"
+          class="text-gray-300 hover:text-purple-400 hover:bg-purple-50 p-1.5 rounded transition inline-flex">
+          <i data-lucide="history" class="w-3.5 h-3.5"></i>
+        </button>
         {# Bouton commentaires — pill coloré si commentaires, icône discrète sinon #}
         <button
           id="cc-btn-{{ item.row.id }}"
