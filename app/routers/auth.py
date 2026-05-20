@@ -1,3 +1,6 @@
+import logging
+import secrets
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, Form, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -9,8 +12,12 @@ from app.auth import (
 )
 from app.config import settings
 from app.database import get_db
-from app.email_utils import send_confirmation_email
-from app.models import User
+from app.email_utils import send_confirmation_email, send_password_reset_email
+from app.models import PasswordResetToken, User
+
+logger = logging.getLogger(__name__)
+
+RESET_TOKEN_EXPIRY_MINUTES = 30
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 templates = Jinja2Templates(directory="app/templates")
@@ -148,3 +155,108 @@ def logout():
     resp = RedirectResponse(url="/auth/login", status_code=status.HTTP_303_SEE_OTHER)
     clear_session(resp)
     return resp
+
+
+# ── Mot de passe oublié ────────────────────────────────────────────────────────
+
+@router.get("/forgot-password", response_class=HTMLResponse)
+def forgot_password_page(request: Request):
+    return templates.TemplateResponse(request, "auth/forgot_password.html", {})
+
+
+@router.post("/forgot-password", response_class=HTMLResponse)
+def forgot_password(
+    request: Request,
+    email: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter_by(email=email.strip().lower()).first()
+    if user:
+        # Invalider les anciens tokens non utilisés pour cet utilisateur
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at == None,
+        ).delete()
+
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=RESET_TOKEN_EXPIRY_MINUTES)
+        db.add(PasswordResetToken(
+            token=token,
+            user_id=user.id,
+            expires_at=expires_at,
+        ))
+        db.commit()
+
+        reset_url = f"{settings.APP_URL.rstrip('/')}/auth/reset-password?token={token}"
+        send_password_reset_email(
+            to_address=user.email,
+            username=user.username,
+            reset_url=reset_url,
+        )
+        logger.info("Password reset requested for user_id=%s", user.id)
+
+    # Réponse identique qu'il existe ou non — évite l'énumération d'emails
+    return templates.TemplateResponse(request, "auth/forgot_password_sent.html", {"email": email})
+
+
+@router.get("/reset-password", response_class=HTMLResponse)
+def reset_password_page(
+    request: Request,
+    token: str,
+    db: Session = Depends(get_db),
+):
+    reset = _get_valid_token(token, db)
+    if reset is None:
+        return templates.TemplateResponse(
+            request, "auth/reset_password_error.html", {}, status_code=400
+        )
+    return templates.TemplateResponse(request, "auth/reset_password.html", {"token": token})
+
+
+@router.post("/reset-password", response_class=HTMLResponse)
+def reset_password(
+    request: Request,
+    token: str = Form(...),
+    password: str = Form(...),
+    password_confirm: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    if password != password_confirm:
+        return templates.TemplateResponse(
+            request, "auth/reset_password.html",
+            {"token": token, "error": "Les mots de passe ne correspondent pas."},
+            status_code=400,
+        )
+    if len(password) < 8:
+        return templates.TemplateResponse(
+            request, "auth/reset_password.html",
+            {"token": token, "error": "Le mot de passe doit contenir au moins 8 caractères."},
+            status_code=400,
+        )
+
+    reset = _get_valid_token(token, db)
+    if reset is None:
+        return templates.TemplateResponse(
+            request, "auth/reset_password_error.html", {}, status_code=400
+        )
+
+    reset.user.hashed_password = hash_password(password)
+    reset.used_at = datetime.now(timezone.utc)
+    log_action(db, reset.user, "reset_password", "user",
+               resource_id=reset.user.id, resource_name=reset.user.email.split("@")[0])
+    db.commit()
+
+    return RedirectResponse(url="/auth/login?reset=1", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _get_valid_token(token: str, db: Session) -> PasswordResetToken | None:
+    """Retourne le token s'il est valide (existe, non expiré, non utilisé)."""
+    reset = db.query(PasswordResetToken).filter_by(token=token).first()
+    if not reset:
+        return None
+    if reset.used_at is not None:
+        return None
+    expires = reset.expires_at.replace(tzinfo=timezone.utc) if reset.expires_at.tzinfo is None else reset.expires_at
+    if datetime.now(timezone.utc) > expires:
+        return None
+    return reset

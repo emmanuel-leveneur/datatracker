@@ -18,6 +18,12 @@
       </div>
       {% endif %}
 
+      {% if request.query_params.get('reset') %}
+      <div class="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded text-sm">
+        Mot de passe mis à jour. Vous pouvez vous connecter avec votre nouveau mot de passe.
+      </div>
+      {% endif %}
+
       {% if error %}
       <div class="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded text-sm">{{ error }}</div>
       {% endif %}
@@ -37,6 +43,11 @@
           class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg text-sm transition">
           Se connecter
         </button>
+        <div class="text-right">
+          <a href="/auth/forgot-password" class="text-xs text-gray-400 hover:text-blue-600 hover:underline">
+            Mot de passe oublié ?
+          </a>
+        </div>
       </form>
 
       <p class="mt-4 text-center text-sm text-gray-500">

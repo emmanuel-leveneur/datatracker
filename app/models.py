@@ -310,6 +310,19 @@ class TableSync(Base):
     table: Mapped["DataTable"] = relationship()
 
 
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (Index("ix_password_reset_tokens_token", "token"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    user: Mapped["User"] = relationship()
+
+
 class RowComment(Base):
     __tablename__ = "row_comments"
     __table_args__ = (
