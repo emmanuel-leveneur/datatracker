@@ -1,6 +1,6 @@
 # DataTracker
 
-> Application web de gestion de tables de données dynamiques avec contrôle d'accès granulaire, traçabilité complète, alertes conditionnelles et commentaires collaboratifs.
+> Application web de gestion de tables de données dynamiques avec contrôle d'accès granulaire, traçabilité complète, alertes conditionnelles, commentaires collaboratifs, synchronisation webservice et visualisation cartographique.
 
 ---
 
@@ -18,11 +18,13 @@
 10. [Système d'alertes](#système-dalertes)
 11. [Commentaires par ligne](#commentaires-par-ligne)
 12. [Import automatique CSV/Excel](#import-automatique-csvexcel)
-13. [Rendu frontend](#rendu-frontend)
-14. [Structure des fichiers](#structure-des-fichiers)
-15. [Installation et lancement](#installation-et-lancement)
-16. [Tests](#tests)
-17. [Conventions de développement](#conventions-de-développement)
+13. [Synchronisation webservice](#synchronisation-webservice)
+14. [Visualisation cartographique](#visualisation-cartographique)
+15. [Rendu frontend](#rendu-frontend)
+16. [Structure des fichiers](#structure-des-fichiers)
+17. [Installation et lancement](#installation-et-lancement)
+18. [Tests](#tests)
+19. [Conventions de développement](#conventions-de-développement)
 
 ---
 
@@ -30,7 +32,7 @@
 
 DataTracker permet à des utilisateurs de créer leurs propres tables de données structurées, d'y saisir des enregistrements, de les partager avec des droits fins, et de consulter l'historique complet de chaque modification.
 
-Cas d'usage typiques : suivi d'inventaire, gestion de contacts, tableaux de bord internes, collecte de données collaboratives.
+Cas d'usage typiques : suivi d'inventaire, gestion de contacts, tableaux de bord internes, collecte de données collaboratives, synchronisation depuis des APIs tierces, cartographie de données géolocalisées.
 
 ---
 
@@ -44,6 +46,7 @@ Cas d'usage typiques : suivi d'inventaire, gestion de contacts, tableaux de bord
 | CSS | Tailwind CSS | CDN |
 | Interactions dynamiques | HTMX | 1.9.12 |
 | Tableaux interactifs | DataTables + Buttons plugin | 1.13.8 / 2.4.2 |
+| Cartes interactives | Leaflet + OpenStreetMap | CDN |
 | Icônes | Lucide | CDN (latest) |
 | Authentification | itsdangerous (cookie signé) + bcrypt | — |
 | Export Excel | openpyxl | — |
@@ -60,16 +63,19 @@ Cas d'usage typiques : suivi d'inventaire, gestion de contacts, tableaux de bord
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                          Navigateur                              │
-│   Tailwind CSS · HTMX 1.9 · DataTables · Lucide · localStorage  │
+│  Tailwind CSS · HTMX 1.9 · DataTables · Leaflet · Lucide        │
+│  localStorage                                                    │
 └───────────────────────────┬──────────────────────────────────────┘
                             │ HTTP (GET / POST form / HTMX fetch)
 ┌───────────────────────────▼──────────────────────────────────────┐
 │                         FastAPI                                  │
 │                                                                  │
-│  /auth/*           Authentification (login, register, logout)    │
-│  /tables/*         CRUD tables, colonnes, lignes, corbeille      │
+│  /auth/*           Authentification (login, register, logout,    │
+│                    forgot/reset password, confirm email)         │
+│  /tables/*         CRUD tables, colonnes, lignes, corbeille,     │
+│                    favoris, autocomplete relation, geojson        │
 │  /tables/{id}/     Permissions, export, traçabilité, alertes,    │
-│                    commentaires, import                          │
+│                    commentaires, import, sync webservice          │
 │  /import-auto/*    Import automatique CSV / Excel                │
 │  /notifications    Centre de notifications                       │
 │  /admin/*          Administration utilisateurs + journaux        │
@@ -85,8 +91,10 @@ Cas d'usage typiques : suivi d'inventaire, gestion de contacts, tableaux de bord
 │   datatracker.db — migrations auto au démarrage (_run_migrations)│
 └──────────────────────────────────────────────────────────────────┘
 
-Tâche planifiée (APScheduler)
-  → Nettoyage orphelins à 3h00 : DELETE rows sans CellValue
+Tâches planifiées (APScheduler)
+  → Nettoyage orphelins à 3h00    : DELETE rows sans CellValue
+  → Réévaluation alertes à 8h00   : alertes à conditions temporelles
+  → Synchronisations auto          : vérification toutes les minutes
 ```
 
 ### Flux d'une requête type
@@ -116,6 +124,10 @@ User
  │    │    └── RowComment (user_id, content, created_at, edited_at)
  │    ├── TablePermission (user_id, level: READ|WRITE)
  │    ├── TableOwner (user_id)                          ← co-propriétaires
+ │    ├── TableSync (url, auth_type, auth_value, auth_header,
+ │    │             response_path, field_mapping, dedup_col,
+ │    │             sync_mode, interval_minutes, is_auto,
+ │    │             last_sync_at, last_sync_status, last_sync_message)
  │    └── Alert (name, scope, conditions JSON, actions JSON, is_active)
  │         ├── AlertState (row_id, is_triggered, last_triggered_at)
  │         ├── AlertNotification (user_id, message, is_read, ...)
@@ -123,6 +135,7 @@ User
  │
  ├── ColumnPermission (column_id, hidden, readonly)
  ├── TableFavorite (table_id)
+ ├── PasswordResetToken (token, user_id, expires_at, used_at)
  └── ActivityLog (action, resource_type, resource_name, details, table_id, username)
 ```
 
@@ -139,6 +152,8 @@ User
 | `email` | Adresse email | Lien `mailto:` cliquable |
 | `select` | Liste déroulante | Options séparées par virgule dans `select_options` |
 | `relation` | Référence à une autre table | Autocomplete HTMX, colonne affichée ≠ colonne stockée |
+| `latitude` | Coordonnée latitude | Utilisé par la visualisation cartographique |
+| `longitude` | Coordonnée longitude | Utilisé par la visualisation cartographique |
 
 ### Relation entre tables (`RELATION`)
 
@@ -147,6 +162,15 @@ User
 - `related_value_col_id` : colonne dont la valeur est stockée dans la cellule (si `NULL` → stocke l'ID de ligne)
 
 Pour les grands volumes, l'autocomplete utilise HTMX (`/tables/{id}/rows/autocomplete?q=...`) pour charger les suggestions à la demande.
+
+### Modes de synchronisation (`SyncMode`)
+
+| Valeur | Comportement |
+|---|---|
+| `overwrite` | Supprime toutes les lignes puis réinsère depuis le webservice |
+| `upsert` | Met à jour les lignes existantes, insère les nouvelles, supprime les absentes |
+| `append_no_dup` | Insère uniquement les enregistrements dont la clé de dédup est absente |
+| `append_dup` | Insère toujours toutes les lignes (accumulation sans vérification) |
 
 ### Soft-delete
 
@@ -168,18 +192,23 @@ Les colonnes ajoutées après la création initiale sont gérées par `_run_migr
 
 | Méthode | Route | Description |
 |---|---|---|
-| GET | `/auth/login` | Page de connexion |
+| GET | `/auth/login` | Page de connexion (banner confirmation si `?reset=1`) |
 | POST | `/auth/login` | Authentification → cookie signé |
 | GET | `/auth/register` | Page d'inscription |
 | POST | `/auth/register` | Création de compte (premier compte = admin) |
+| GET | `/auth/confirm-email` | Validation du token d'activation email |
 | GET | `/auth/logout` | Suppression du cookie → redirect login |
+| GET | `/auth/forgot-password` | Page demande de réinitialisation |
+| POST | `/auth/forgot-password` | Génère un token, envoie l'email, réponse neutre |
+| GET | `/auth/reset-password` | Formulaire de nouveau mot de passe (valide le token) |
+| POST | `/auth/reset-password` | Enregistre le nouveau mot de passe, invalide le token |
 
 ### `app/routers/tables.py` — `/tables`
 
 | Méthode | Route | Description |
 |---|---|---|
 | GET | `/tables/` | Liste des tables (favoris, partagées, toutes) |
-| GET | `/tables/create` | Formulaire de création |
+| GET | `/tables/create` | Page de création unifiée (3 onglets JS) |
 | POST | `/tables/create` | Création table + colonnes |
 | GET | `/tables/{id}` | Vue détail avec tableau HTMX |
 | GET | `/tables/{id}/edit` | Formulaire de modification schéma |
@@ -190,20 +219,35 @@ Les colonnes ajoutées après la création initiale sont gérées par `_run_migr
 | POST | `/tables/{id}/delete` | Suppression définitive |
 | POST | `/tables/{id}/favorite` | Toggle favori |
 | GET | `/tables/{id}/rows/autocomplete` | Autocomplete HTMX pour colonnes RELATION |
+| GET | `/tables/{id}/geojson` | Export GeoJSON des lignes (filtré) |
 
 ### `app/routers/data.py` — `/tables/{id}`
 
 | Méthode | Route | Description |
 |---|---|---|
 | GET | `/tables/{id}/rows` | Fragment HTMX : tableau paginé + filtres |
+| GET | `/tables/{id}/rows/new` | Formulaire d'ajout de ligne (HTMX) |
+| POST | `/tables/{id}/rows/new` | Création d'une ligne |
 | GET | `/tables/{id}/rows/{row_id}/edit` | Formulaire d'édition de ligne (HTMX) |
-| POST | `/tables/{id}/rows` | Création d'une ligne |
-| POST | `/tables/{id}/rows/{row_id}/update` | Mise à jour d'une ligne |
+| POST | `/tables/{id}/rows/{row_id}/edit` | Mise à jour d'une ligne |
 | POST | `/tables/{id}/rows/{row_id}/delete` | Mise en corbeille ligne |
 | GET | `/tables/{id}/rows/trash` | Corbeille des lignes |
 | POST | `/tables/{id}/rows/{row_id}/restore` | Restauration ligne |
 | POST | `/tables/{id}/rows/{row_id}/delete-permanent` | Suppression définitive ligne |
+| POST | `/tables/{id}/trash/empty` | Vider la corbeille (suppression définitive de toutes les lignes en corbeille) |
+| GET | `/tables/{id}/rows/{row_id}/history` | Modal historique d'une ligne |
+| GET | `/tables/{id}/import` | Page d'import CSV (dans table existante) |
 | POST | `/tables/{id}/import` | Import CSV (mapping colonne, insensible casse) |
+
+### `app/routers/sync.py` — `/tables/{id}`
+
+| Méthode | Route | Description |
+|---|---|---|
+| GET | `/tables/{id}/sync/panel` | Fragment HTMX : panneau de configuration sync |
+| POST | `/tables/{id}/sync/config` | Enregistre la configuration du webservice |
+| POST | `/tables/{id}/sync/run` | Déclenche une synchronisation manuelle |
+| POST | `/tables/{id}/sync/toggle` | Active/désactive la synchronisation automatique |
+| POST | `/tables/{id}/sync/delete` | Supprime la configuration de sync |
 
 ### `app/routers/permissions.py` — `/tables/{id}`
 
@@ -296,6 +340,8 @@ Les colonnes ajoutées après la création initiale sont gérées par `_run_migr
 - Cookie de session : `dt_session`, signé via `itsdangerous.URLSafeTimedSerializer` avec `SECRET_KEY` (7 jours d'expiration).
 - Mots de passe : hachés avec `bcrypt` (12 rounds).
 - Premier utilisateur inscrit : promu admin automatiquement.
+- Confirmation d'email : token envoyé à l'inscription ; si SMTP absent, compte activé directement.
+- Réinitialisation de mot de passe : token `secrets.token_urlsafe(32)` à usage unique (30 min), stocké en base pour invalidation stricte. Réponse neutre pour les emails inconnus (anti-énumération).
 - Pas de token JWT. Pas d'OAuth. Authentification exclusivement par email + mot de passe.
 
 ---
@@ -307,7 +353,7 @@ Les colonnes ajoutées après la création initiale sont gérées par `_run_migr
 | Rôle | Périmètre | Obtention |
 |---|---|---|
 | **Administrateur** | Toutes les tables, tous les utilisateurs, tous les journaux | Premier inscrit ou promotion admin |
-| **Co-propriétaire** | Contrôle total sur la table (schéma, permissions, alertes, corbeille) | Ajout via page permissions |
+| **Co-propriétaire** | Contrôle total sur la table (schéma, permissions, alertes, corbeille, sync) | Ajout via page permissions |
 | **WRITE** | Lecture + ajout/modification/corbeille des lignes | Attribution par propriétaire/admin |
 | **READ** | Lecture des données, commentaires, traçabilité | Attribution par propriétaire/admin |
 
@@ -339,7 +385,7 @@ Lors de la création/modification d'une colonne RELATION, le sélecteur de table
 
 ### Journal global (`/admin/logs`)
 
-Réservé aux administrateurs. Affiche les **1 000 dernières actions** toutes tables confondues avec : timestamp, acteur, type d'action, ressource, détail diff.
+Réservé aux administrateurs. Affiche les **1 000 dernières actions** toutes tables confondues avec : timestamp (UTC+4), acteur (préfixe email avant `@`), type d'action, ressource, détail diff.
 
 ### Traçabilité par table (`/tables/{id}/tracabilite`)
 
@@ -351,6 +397,7 @@ Accessible à tout utilisateur ayant accès à la table. Filtrée sur `ActivityL
 |---|---|---|
 | `register` | Inscription | `user` |
 | `login` | Connexion | `user` |
+| `reset_password` | Réinitialisation de mot de passe | `user` |
 | `create_table` | Création table | `table` |
 | `edit_table` | Modification schéma | `table` |
 | `trash_table` | Mise en corbeille table | `table` |
@@ -361,7 +408,9 @@ Accessible à tout utilisateur ayant accès à la table. Filtrée sur `ActivityL
 | `trash_row` | Mise en corbeille ligne | `row` |
 | `restore_row` | Restauration ligne | `row` |
 | `delete_row` | Suppression définitive ligne | `row` |
+| `empty_trash` | Vidage corbeille | `table` |
 | `import_csv` | Import CSV | `table` |
+| `sync_table` | Synchronisation webservice | `table` |
 | `create_comment` | Ajout commentaire | `comment` |
 | `edit_comment` | Modification commentaire | `comment` |
 | `delete_comment` | Suppression commentaire | `comment` |
@@ -378,6 +427,7 @@ Accessible à tout utilisateur ayant accès à la table. Filtrée sur `ActivityL
 - **Modification ligne** : diff par colonne — `"Col" : "avant" → "après"`
 - **Permissions** : diff par utilisateur — `Accès "alice" : "none" → "write"`
 - **Lignes (create/trash/restore/delete)** : `Ligne #42 avec Col1 -> Val1, Col2 -> Val2`
+- **Sync** : `N insérée(s), N mise(s) à jour, N supprimée(s)`
 
 ---
 
@@ -404,6 +454,7 @@ Les alertes surveillent les données d'une table et déclenchent des actions vis
 ### Évaluation
 
 - Réévaluée à chaque **création ou modification de ligne** (`evaluate_alerts_for_row()` dans `app/alerts.py`)
+- Réévaluée à **8h00** (APScheduler) pour les conditions basées sur des dates relatives (aujourd'hui, hier…)
 - Réévaluée immédiatement à la **création ou modification d'une alerte** sur toutes les lignes existantes, en mode **silencieux** (`silent=True`) : les états `AlertState` sont initialisés pour la surbrillance et l'anti-spam, mais aucune notification n'est envoyée pour les lignes déjà existantes
 - L'état courant est persisté dans `AlertState` (déclenché ou non, horodatage)
 - L'indicateur 🔔 (bell-ring) est affiché dans la colonne alerte du tableau si la ligne déclenche une alerte avec notification non lue
@@ -449,15 +500,16 @@ Les horodatages des commentaires sont affichés de façon relative : « à l'ins
 Flux en deux étapes :
 
 1. **Upload + analyse** (`POST /import-auto/analyze`) :
-   - Accepte CSV (encodage détecté automatiquement via `chardet`) et Excel (`.xlsx`, `.xls`)
+   - Accepte CSV (encodage détecté automatiquement via `chardet`) et Excel (`.xlsx`, `.xls`, `.xlsm`)
    - Détection automatique du type de chaque colonne par heuristiques sur l'échantillon de données
-   - Limites : 5 000 lignes max, 50 colonnes max, 5 Mo max
+   - Limites : 10 000 lignes max, 50 colonnes max, 10 Mo max
    - Affiche une page de preview avec les 5 premières lignes et les types suggérés, modifiables
+   - Transformations optionnelles : éclater une colonne selon un délimiteur, nettoyer les espaces
 
 2. **Confirmation** (`POST /import-auto/confirm`) :
    - Crée la table avec le nom déduit du nom de fichier (avec suffixe si conflit)
    - Crée les colonnes dans l'ordre détecté
-   - Insère toutes les lignes via `INSERT bulk` optimisé
+   - Insère toutes les lignes via `INSERT bulk` optimisé (lots de 500)
    - Normalise les valeurs (dates ISO 8601, booléens, nombres)
 
 ### Heuristiques de détection de type
@@ -473,6 +525,50 @@ Flux en deux étapes :
 
 ---
 
+## Synchronisation webservice
+
+La synchronisation permet de connecter une table à une API HTTP externe et de maintenir ses données à jour automatiquement.
+
+### Configuration (`TableSync`)
+
+- **URL** : endpoint HTTP/HTTPS du webservice (GET)
+- **Authentification** : Aucune, Bearer token, API Key (header personnalisé), Basic Auth (user:pass)
+- **Chemin de réponse** : navigation dans un JSON imbriqué (`data`, `results.items`, etc.)
+- **Mapping des champs** : association colonnes de la table ↔ clés JSON
+- **Clé de déduplication** : colonne servant d'identifiant unique (modes upsert et append_no_dup)
+- **Mode de synchronisation** : `SyncMode` enum — voir tableau des modes ci-dessus
+- **Intervalle** : fréquence de la sync automatique (en minutes)
+
+### Déclenchement
+
+- **Manuel** : bouton "Lancer une synchronisation" dans le panneau Synchro (avec confirmation adaptée au mode)
+- **Automatique** : APScheduler vérifie toutes les minutes les syncs `is_auto=True` dont `last_sync_at + interval` est échu
+- Le bouton Synchro n'est affiché que sur les tables ayant une configuration `TableSync`
+
+### Implémentation (`app/sync_service.py`)
+
+`run_sync(table_id, triggered_by, db)` effectue :
+1. Appel HTTP avec les headers d'authentification construits
+2. Navigation dans la réponse JSON via le chemin configuré
+3. Application du mode de synchronisation avec closures `_insert_row()` / `_find_existing()`
+4. Mise à jour du statut `last_sync_at`, `last_sync_status`, `last_sync_message`
+5. Journalisation avec statistiques (insérées / mises à jour / supprimées)
+
+---
+
+## Visualisation cartographique
+
+Disponible automatiquement dès qu'une table possède au moins une colonne `latitude` et une colonne `longitude`.
+
+- **Carte Leaflet** intégrée dans la vue détail de la table (OpenStreetMap comme fond de carte)
+- **Marqueurs** : un par ligne ayant des coordonnées valides
+- **Labels permanents** : étiquettes toujours visibles sur chaque marqueur
+- **Info-bulle** : clic sur un marqueur → affiche toutes les valeurs de la ligne
+- **Filtrage** : les filtres actifs sur le tableau DataTables s'appliquent à la carte
+- **Export GeoJSON** : `GET /tables/{id}/geojson` retourne les données filtrées au format GeoJSON standard (Feature Collection avec geometry Point)
+
+---
+
 ## Rendu frontend
 
 ### HTMX
@@ -480,6 +576,7 @@ Flux en deux étapes :
 - Rechargement partiel du tableau (lignes + pagination) sur filtre, recherche, pagination
 - Panneau de commentaires chargé à la demande (lazy)
 - Panneau d'alertes chargé à la demande
+- Panneau de synchronisation chargé à la demande
 - Formulaire d'ajout/édition de ligne injecté dans `#row-form-area` sans rechargement
 - OOB swaps pour mises à jour simultanées (badge commentaire, liste commentaires)
 - Autocomplete relation via polling HTMX sur saisie
@@ -488,7 +585,7 @@ Flux en deux étapes :
 
 - Tri, filtres par colonne (ligne de filtres `<tr>` dédiée dans le `<thead>`)
 - Boutons export : Copier, CSV, Excel, PDF, Imprimer
-- Bouton de visibilité des colonnes (Colvis) avec persistance via `localStorage`
+- Bouton de visibilité des colonnes (Colvis) avec persistance via `localStorage` (clé `colvis_{table_id}`)
 - Indicateur de colonnes masquées dans la barre d'outils
 - Colvis configuré avec callback `columnText` pour lire les titres depuis la première ligne du `<thead>` (contournement thead multi-lignes)
 - Filtres par colonne désactivés pour la colonne Actions (non exportable — classe `dt-no-export`)
@@ -496,6 +593,10 @@ Flux en deux étapes :
 ### Colonne Actions sticky
 
 La colonne Actions est fixée à droite (`position: sticky; right: 0`) avec une ombre gauche via pseudo-élément `::before` pour signaler le défilement horizontal.
+
+### Fuseaux horaires
+
+Toutes les dates sont stockées en UTC dans SQLite. L'affichage utilise le filtre Jinja2 `dt_reunion` (défini dans `app/main.py` et propagé à tous les `templates.env` des routers) qui convertit en **UTC+4** (heure de La Réunion, sans changement d'heure) avant rendu.
 
 ### Lucide Icons
 
@@ -509,26 +610,34 @@ Icônes vectorielles SVG injectées via `lucide.createIcons()` au chargement ini
 datatracker/
 ├── app/
 │   ├── main.py              # Création FastAPI, lifespan, include_router, handlers 403/404
+│   │                        #   filtre Jinja2 dt_reunion (UTC+4), globals org_name/dpo_email
+│   │                        #   propagés à tous les routers
 │   ├── models.py            # Tous les modèles SQLAlchemy (User, DataTable, TableColumn,
 │   │                        #   TableRow, CellValue, TablePermission, ColumnPermission,
-│   │                        #   TableOwner, TableFavorite, Alert, AlertRecipient,
-│   │                        #   AlertState, AlertNotification, ActivityLog, RowComment)
+│   │                        #   TableOwner, TableFavorite, TableSync, SyncMode,
+│   │                        #   Alert, AlertRecipient, AlertState, AlertNotification,
+│   │                        #   ActivityLog, RowComment, PasswordResetToken)
 │   ├── database.py          # Engine SQLite, get_db(), create_tables(), _run_migrations()
 │   ├── auth.py              # bcrypt, sessions itsdangerous (encode/decode cookie)
 │   ├── activity.py          # log_action() — helper transversal
 │   ├── alerts.py            # evaluate_alerts_for_row(), get_alert_row_data()
-│   ├── email_utils.py       # send_alert_email(), send_share_notification_email()
-│   │                        #   — envoi SMTP synchrone (smtplib)
+│   ├── email_utils.py       # send_alert_email(), send_share_notification_email(),
+│   │                        #   send_password_reset_email() — envoi SMTP synchrone (smtplib)
 │   ├── import_utils.py      # parse_csv(), parse_excel(), infer_column_type(),
 │   │                        #   normalize_value(), sanitize_headers()
+│   ├── sync_service.py      # run_sync() — exécution des 4 modes de sync webservice
 │   ├── dependencies.py      # get_current_user, can_access_table, get_visible_columns…
-│   ├── config.py            # Settings (DATABASE_URL, SECRET_KEY via env)
-│   ├── scheduler.py         # APScheduler — nettoyage orphelins à 3h
+│   ├── config.py            # Settings Pydantic (DATABASE_URL, SECRET_KEY, SMTP_*,
+│   │                        #   APP_URL, ORG_NAME, DPO_EMAIL via env)
+│   ├── scheduler.py         # APScheduler — 3 tâches planifiées
 │   └── routers/
-│       ├── auth.py          # /auth/login · /auth/register · /auth/logout
+│       ├── auth.py          # /auth/login · register · logout · confirm-email
+│       │                    #   · forgot-password · reset-password
 │       ├── tables.py        # /tables/ · /tables/create · /tables/{id} · corbeille
-│       │                    #   · favoris · autocomplete relation
-│       ├── data.py          # /tables/{id}/rows/* · import CSV · pagination · filtres
+│       │                    #   · favoris · autocomplete relation · geojson
+│       ├── data.py          # /tables/{id}/rows/* · trash/empty · history
+│       │                    #   · import CSV · pagination · filtres
+│       ├── sync.py          # /tables/{id}/sync/* — config, run, toggle, delete
 │       ├── export.py        # /tables/{id}/export/excel
 │       ├── permissions.py   # /tables/{id}/permissions/bulk · confirm-relation
 │       ├── alerts.py        # /tables/{id}/alerts/* · /notifications · badge API
@@ -541,10 +650,13 @@ datatracker/
 ├── app/templates/
 │   ├── base.html            # Layout, navbar, CDN (Tailwind, HTMX, DataTables, Lucide)
 │   │                        #   DT_LANG_FR, DT_BUTTONS, dtColFilters(), col-sticky-right CSS
-│   ├── auth/                # login.html · register.html
-│   ├── tables/              # list · detail · create · edit · import · tracabilite
+│   │                        #   footer conditionnel ORG_NAME / DPO_EMAIL
+│   ├── auth/                # login.html · register.html · forgot_password.html
+│   │                        #   · forgot_password_sent.html · reset_password.html
+│   │                        #   · reset_password_error.html
+│   ├── tables/              # list · detail · create (3 onglets) · edit · import · tracabilite
 │   ├── partials/            # table_rows.html · row_form.html (fragments HTMX)
-│   │                        #   notif_badge.html
+│   │                        #   · notif_badge.html · sync_panel.html
 │   ├── comments/            # panel.html · _list.html · _comment.html
 │   ├── alerts/              # panel.html · edit_form.html
 │   ├── import_auto/         # upload.html · preview.html
@@ -563,10 +675,14 @@ datatracker/
 │   ├── test_permissions.py
 │   ├── test_admin.py
 │   ├── test_logs.py
+│   ├── test_alerts.py
+│   ├── test_import_auto.py
+│   ├── test_forgot_password.py
 │   └── test_tracabilite.py
 │
 ├── requirements.txt
 ├── pytest.ini
+├── FONCTIONNALITES.md       # Catalogue exhaustif des fonctionnalités par domaine
 └── CLAUDE.md                # Instructions pour Claude Code
 ```
 
@@ -604,12 +720,17 @@ La base de données `datatracker.db` est créée automatiquement au premier dém
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./datatracker.db` | URL de connexion SQLAlchemy |
 | `SECRET_KEY` | Valeur codée en dur dans `app/auth.py` | Clé de signature des cookies — **à changer en production** |
+| `APP_URL` | `http://localhost:8000` | URL publique de l'application (utilisée dans les liens des emails) |
+| `ORG_NAME` | *(vide)* | Nom de l'organisation dans le footer et les mentions RGPD |
+| `DPO_EMAIL` | *(vide)* | Email du DPO pré-rempli dans les liens de contact RGPD |
 | `SMTP_HOST` | *(vide)* | Hôte SMTP — si vide, les notifications email sont désactivées |
 | `SMTP_PORT` | `587` | Port SMTP |
 | `SMTP_USER` | *(vide)* | Identifiant SMTP |
 | `SMTP_PASSWORD` | *(vide)* | Mot de passe SMTP |
 | `SMTP_FROM` | *(vide)* | Adresse expéditeur (si vide, utilise `SMTP_USER`) |
 | `SMTP_USE_TLS` | `true` | Activer STARTTLS |
+
+Quand `SMTP_HOST` est absent, les liens de confirmation et de reset sont affichés dans les logs serveur (utile en développement) et les comptes sont activés directement.
 
 ---
 
@@ -628,7 +749,7 @@ pytest tests/test_data.py::test_create_row_as_owner -v
 
 Les tests utilisent une base SQLite **en mémoire** (`StaticPool`). Chaque test part d'un schéma vierge (`create_all` / `drop_all` via fixture `autouse`).
 
-Couverture actuelle : **225 tests**, tous verts.
+Couverture actuelle : **265 tests**, tous verts.
 
 ---
 
@@ -650,3 +771,5 @@ Couverture actuelle : **225 tests**, tous verts.
 - Les fragments HTMX (partials) sont dans `app/templates/partials/`. Ils reçoivent un contexte construit par une fonction `_xxx_template_ctx()` partagée entre la vue complète et la vue HTMX pour garantir la cohérence des données.
 - Pour les OOB swaps HTMX : injecter `ctx["_oob_xxx"]` **avant** de créer le `TemplateResponse` (Starlette rend le template à la construction, pas au retour).
 - Pas de FK physique sur `table_id` dans `ActivityLog`, `Alert`, `AlertNotification` et `AlertState` — ces entités doivent survivre à la suppression de la table ou de la ligne cible.
+- Le filtre Jinja2 `dt_reunion` (UTC+4) est défini dans `main.py` et propagé à tous les routers via une boucle sur `_router_modules`. Ne jamais l'ajouter directement à l'instance `templates` d'un router.
+- Chaque router crée sa propre instance `Jinja2Templates` — les filtres et globals ajoutés sur `main.templates.env` **ne se propagent pas** automatiquement. Ils doivent être ajoutés dans la boucle de propagation de `main.py`.
