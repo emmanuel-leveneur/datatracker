@@ -749,3 +749,75 @@ def send_confirmation_email(
         logger.info("email_utils: email confirmation envoyé à %s", to_address)
     except Exception as exc:
         logger.error("email_utils: échec envoi email confirmation — %s", exc)
+
+
+_RESET_HTML = """\
+<!DOCTYPE html>
+<html lang="fr">
+<body style="font-family:sans-serif;background:#f3f4f6;padding:32px">
+  <div style="max-width:520px;margin:auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #e5e7eb">
+    <h2 style="color:#1e40af;margin-top:0">Réinitialisation de mot de passe</h2>
+    <p>Bonjour <strong>{username}</strong>,</p>
+    <p>Vous avez demandé la réinitialisation de votre mot de passe DataTracker.</p>
+    <p>Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe. Ce lien est valable <strong>30 minutes</strong>.</p>
+    <p style="text-align:center;margin:32px 0">
+      <a href="{reset_url}"
+         style="background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">
+        Réinitialiser mon mot de passe
+      </a>
+    </p>
+    <p style="font-size:13px;color:#6b7280">Si vous n'êtes pas à l'origine de cette demande, ignorez cet email. Votre mot de passe ne sera pas modifié.</p>
+    <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">
+    <p style="font-size:12px;color:#9ca3af;text-align:center">DataTracker</p>
+  </div>
+</body>
+</html>
+"""
+
+_RESET_TEXT = """\
+Réinitialisation de mot de passe — DataTracker
+
+Bonjour {username},
+
+Vous avez demandé la réinitialisation de votre mot de passe DataTracker.
+
+Cliquez sur le lien ci-dessous (valable 30 minutes) :
+{reset_url}
+
+Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.
+"""
+
+
+def send_password_reset_email(to_address: str, username: str, reset_url: str) -> None:
+    """Envoie le lien de réinitialisation de mot de passe. Ne lève pas d'exception."""
+    if not settings.SMTP_HOST or not to_address:
+        logger.info("email_utils: SMTP non configuré — lien de reset : %s", reset_url)
+        return
+
+    from_addr = settings.SMTP_FROM or settings.SMTP_USER
+    if not from_addr:
+        logger.warning("email_utils: SMTP_FROM et SMTP_USER vides, reset email non envoyé.")
+        return
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "Réinitialisation de mot de passe — DataTracker"
+    msg["From"] = from_addr
+    msg["To"] = to_address
+    msg.attach(MIMEText(_RESET_TEXT.format(username=username, reset_url=reset_url), "plain", "utf-8"))
+    msg.attach(MIMEText(_RESET_HTML.format(username=html.escape(username), reset_url=reset_url), "html", "utf-8"))
+
+    try:
+        if settings.SMTP_USE_TLS:
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+        else:
+            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+        if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        server.sendmail(from_addr, [to_address], msg.as_string())
+        server.quit()
+        logger.info("email_utils: email reset envoyé à %s", to_address)
+    except Exception as exc:
+        logger.error("email_utils: échec envoi email reset — %s", exc)
