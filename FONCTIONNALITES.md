@@ -19,9 +19,12 @@
 11. [Notifications](#11-notifications)
 12. [Import automatique CSV / Excel](#12-import-automatique-csv--excel)
 13. [Export Excel](#13-export-excel)
-14. [Traçabilité](#14-traçabilité)
-15. [Administration](#15-administration)
-16. [Interface utilisateur](#16-interface-utilisateur)
+14. [Synchronisation webservice](#14-synchronisation-webservice)
+15. [Visualisation cartographique](#15-visualisation-cartographique)
+16. [Traçabilité](#16-traçabilité)
+17. [Administration](#17-administration)
+18. [Configuration](#18-configuration)
+19. [Interface utilisateur](#19-interface-utilisateur)
 
 ---
 
@@ -30,27 +33,39 @@
 | Fonctionnalité | Description |
 |---|---|
 | Inscription | Création d'un compte avec email unique, nom d'utilisateur, mot de passe |
+| Confirmation d'email | Lien de confirmation envoyé par email ; compte inactif tant qu'il n'est pas vérifié ; si SMTP absent, le compte est validé directement |
 | Connexion | Email + mot de passe → session cookie signée (7 jours) |
 | Déconnexion | Suppression du cookie de session, redirect vers login |
+| Mot de passe oublié | Demande par email → token UUID à usage unique (30 min) → formulaire de réinitialisation → connexion avec nouveau mot de passe |
+| Sécurité du reset | Réponse identique qu'il existe ou non un compte (évite l'énumération d'emails) ; token invalidé dès usage ; anciens tokens écrasés à chaque nouvelle demande |
 | Admin automatique | Le premier utilisateur inscrit devient automatiquement administrateur |
-| Hachage sécurisé | Mots de passe stockés avec bcrypt (12 rounds) |
-| Protection des routes | Toutes les pages (hors login/register) requièrent une session valide |
+| Hachage sécurisé | Mots de passe stockés avec bcrypt |
+| Protection des routes | Toutes les pages (hors login/register/forgot) requièrent une session valide |
 | Redirect intelligente | Accès non authentifié → redirect vers login (HTTP 303) |
 
 ---
 
 ## 2. Gestion des tables
 
-### Création et modification
+### Création
 
 | Fonctionnalité | Description |
 |---|---|
-| Création de table | Nom, description, définition initiale des colonnes |
-| Ajout de colonnes | Ajout de colonnes à une table existante, avec type et options |
-| Renommage de colonne | Modification du nom d'une colonne sans perte de données |
+| Page unifiée "Nouvelle table" | 3 onglets JS (sans rechargement) : Manuellement, Depuis un fichier, Depuis un webservice |
+| Création manuelle | Nom, description, définition des colonnes, déclaration RGPD/DPO |
+| Création depuis un fichier | Onglet intégré : upload CSV/Excel → navigation vers la page d'analyse existante |
+| Création depuis un webservice | Onglet intégré : URL + authentification → détection automatique des champs → mapping → création table + sync configurée |
+| Mémo d'onglet | L'onglet actif est mémorisé dans le hash URL (`#fichier`, `#webservice`) |
+
+### Modification de schéma
+
+| Fonctionnalité | Description |
+|---|---|
+| Ajout de colonnes | Ajout à une table existante avec type et options |
+| Renommage de colonne | Modification du nom sans perte de données |
 | Suppression de colonne | Suppression physique avec cascade sur `CellValue` et `ColumnPermission` |
 | Réordonnancement | Les colonnes sont ordonnées par le champ `order` |
-| Colonne obligatoire | Marquage d'une colonne comme requise (`required = true`) — validation côté formulaire |
+| Colonne obligatoire | Marquage d'une colonne comme requise (`required = true`) |
 | Options de sélection | Pour le type `select` : liste d'options séparées par des virgules |
 
 ### Liste des tables
@@ -59,19 +74,19 @@
 |---|---|
 | Mes tables | Section listant les tables dont l'utilisateur est propriétaire |
 | Tables partagées | Section listant les tables auxquelles l'utilisateur a été invité |
+| Favoris | Section "Mes favoris" affichée en haut si au moins un favori |
 | Nombre de lignes | Affiché sous le nom de chaque table |
 | Indicateur de partage | Nombre d'utilisateurs avec qui la table est partagée (vue propriétaire) |
 | Niveau d'accès | Badge "Lecture" ou "Lecture / Écriture" pour les tables partagées |
-| Nom du propriétaire | Affiché sous le titre pour les tables dont l'utilisateur n'est pas propriétaire |
-| Nombre de colonnes | Affiché dans la fiche table |
-| Date de création | Visible dans la liste |
+| Nom du propriétaire | Affiché pour les tables dont l'utilisateur n'est pas propriétaire |
+| Recherche | Filtrage côté client (JS) sur nom et description |
 
 ### Vue détail d'une table
 
 | Fonctionnalité | Description |
 |---|---|
 | Tableau interactif | DataTables avec tri, pagination, filtres |
-| Barre d'outils | Boutons : Ajouter, Importer CSV, Export Excel, Alertes, Paramètres |
+| Barre d'outils | Boutons : Ajouter, Importer CSV, Export Excel, Alertes, Paramètres, Synchro (si table webservice) |
 | Formulaire d'ajout inline | Formulaire HTMX injecté sans rechargement de page |
 | Entête avec verrou | Indicateur 🔒 sur les colonnes en lecture seule pour l'utilisateur |
 
@@ -90,6 +105,8 @@
 | `email` | Champ email avec validation | Lien `mailto:` cliquable |
 | `select` | Liste déroulante | Valeur sélectionnée |
 | `relation` | Autocomplete vers une autre table | Valeur de la colonne référencée |
+| `latitude` | Champ numérique décimal | Nombre — utilisé par la carte |
+| `longitude` | Champ numérique décimal | Nombre — utilisé par la carte |
 
 ### Détail du type `relation`
 
@@ -98,7 +115,7 @@
 | Sélection de la table cible | Parmi les tables accessibles en lecture par l'utilisateur |
 | Colonne d'affichage | Colonne montrée dans l'autocomplete (peut différer de la valeur stockée) |
 | Colonne de valeur stockée | Colonne dont la valeur est enregistrée dans la cellule (ou ID de ligne si non précisé) |
-| Autocomplete HTMX | Pour les grands volumes, suggestions chargées dynamiquement sur saisie |
+| Autocomplete HTMX | Suggestions chargées dynamiquement sur saisie |
 | Libellé résolu | À l'affichage, la valeur est résolue via `relation_labels` pour montrer un texte lisible |
 | Référence manquante | Si la ligne liée a été supprimée : affichage `[ref. manquante]` en italique gris |
 
@@ -115,10 +132,11 @@
 | Mise en corbeille | La ligne est masquée (soft delete : `deleted_at` non nul) |
 | Suppression définitive | Depuis la corbeille uniquement |
 | Restauration | Depuis la corbeille de la table |
-| Auteur traçé | `created_by_id` enregistré à la création |
-| Horodatage | `created_at` et `updated_at` automatiques |
+| Historique de ligne | Modal affichant toutes les modifications chronologiques d'une ligne (qui, quand, quoi) |
+| Auteur tracé | `created_by_id` enregistré à la création |
+| Horodatage | `created_at` automatique |
 
-### Import CSV (simple)
+### Import CSV (dans une table existante)
 
 | Fonctionnalité | Description |
 |---|---|
@@ -137,7 +155,7 @@
 | Recherche globale | Champ de recherche sur toutes les colonnes visibles (via sous-requête SQL `ILIKE`) |
 | Filtres par colonne | Ligne de filtres sous les en-têtes de colonnes, déclenchement HTMX avec délai 350ms |
 | Filtres combinables | Recherche globale et filtres par colonnes fonctionnent simultanément |
-| Persistance des filtres | Les valeurs de filtre sont incluses via `hx-include="#filters-zone, #global-search"` |
+| Persistance des filtres | Les valeurs de filtre sont incluses via `hx-include` |
 | Recherche insensible à la casse | Opérateur `ILIKE` SQLAlchemy |
 | Recherche dans la liste | Filtrage côté client (JS) sur nom et description dans la liste des tables |
 
@@ -160,7 +178,7 @@
 | Fonctionnalité | Description |
 |---|---|
 | Mise en corbeille | La table disparaît de la liste principale (`deleted_at` renseigné) |
-| Vue corbeille | `/tables/trash` — liste des tables supprimées |
+| Vue corbeille | `/tables/trash` — liste des tables supprimées avec date |
 | Restauration | Remet `deleted_at = NULL`, la table réapparaît |
 | Suppression définitive | Suppression physique de la table + toutes ses données (cascade) |
 
@@ -169,9 +187,10 @@
 | Fonctionnalité | Description |
 |---|---|
 | Mise en corbeille | La ligne disparaît du tableau principal |
-| Vue corbeille lignes | Accessible depuis la vue table |
+| Vue corbeille lignes | Accordéon en bas de la vue table |
 | Restauration | La ligne réapparaît dans le tableau |
 | Suppression définitive | Suppression physique de la ligne + CellValues + commentaires |
+| Vider la corbeille | Bouton "Vider" avec confirmation — supprime définitivement toutes les lignes à la corbeille en une action |
 
 ---
 
@@ -181,7 +200,7 @@
 
 | Niveau | Droits |
 |---|---|
-| **Co-propriétaire** (`TableOwner`) | Tout : schéma, permissions, alertes globales, corbeille, paramètres |
+| **Co-propriétaire** (`TableOwner`) | Tout : schéma, permissions, alertes globales, corbeille, paramètres, synchro |
 | **WRITE** (`TablePermission`) | Ajout/modification/corbeille des lignes, commentaires, consultation traçabilité |
 | **READ** (`TablePermission`) | Lecture des données, commentaires, consultation traçabilité |
 
@@ -209,7 +228,7 @@
 | Fonctionnalité | Description |
 |---|---|
 | Email automatique | Lors d'un nouveau partage, l'utilisateur concerné reçoit un email de notification |
-| Contenu de l'email | Nom de la table, niveau d'accès accordé (Lecture seule / Lecture et écriture), nom de l'auteur du partage |
+| Contenu de l'email | Nom de la table, niveau d'accès accordé, nom de l'auteur du partage |
 | Lien direct | Bouton "Voir le tableau" pointant directement sur la table partagée |
 | Cascade relations | L'email est également envoyé pour les accès READ accordés automatiquement sur les tables de relation |
 | Conditionnel SMTP | L'envoi est silencieusement ignoré si `SMTP_HOST` n'est pas configuré |
@@ -262,6 +281,7 @@
 | Fonctionnalité | Description |
 |---|---|
 | Évaluation à la modification | Déclenchée à chaque `create_row` et `update_row` — notifications envoyées si passage False → True |
+| Réévaluation temporelle | Cron quotidien (8h) pour les conditions basées sur des dates relatives (aujourd'hui, hier…) |
 | Évaluation initiale silencieuse | À la création, modification ou toggle d'une alerte, les lignes existantes sont évaluées pour les couleurs uniquement — aucune notification rétroactive |
 | Anti-spam amorcé | Les lignes déjà en état `True` à la création de l'alerte ne déclencheront pas de notification lors de la prochaine modification live |
 | Persistance d'état | `AlertState` stocke si l'alerte est actuellement déclenchée sur chaque ligne |
@@ -308,13 +328,21 @@
 
 | Fonctionnalité | Description |
 |---|---|
-| Formats supportés | CSV, Excel `.xlsx`, Excel `.xls` |
+| Formats supportés | CSV (tout séparateur, tout encodage), Excel `.xlsx`, `.xls`, `.xlsm` |
 | Détection d'encodage | `chardet` pour les CSV (UTF-8, Latin-1, etc.) |
-| Limites | 5 000 lignes, 50 colonnes, 5 Mo |
-| Détection automatique des types | Boolean, integer, float, date, email, text |
+| Limites | 10 000 lignes, 50 colonnes, 10 Mo |
+| Détection automatique des types | Boolean, integer, float, date, datetime, email, text |
 | Nettoyage des en-têtes | Suppression des caractères spéciaux, dédoublonnage |
+| Zone de glisser-déposer | Drag & drop sur la zone d'upload |
 | Page de preview | 5 premières lignes + types suggérés modifiables avant import |
 | Modification des types | L'utilisateur peut ajuster chaque type avant confirmation |
+
+### Transformations avant import
+
+| Fonctionnalité | Description |
+|---|---|
+| Éclater une colonne | Séparation d'une colonne texte en deux colonnes selon un délimiteur |
+| Nettoyer les espaces | Suppression des espaces en début/fin de valeur |
 
 ### Confirmation et création
 
@@ -322,7 +350,7 @@
 |---|---|
 | Nom de table | Déduit du nom de fichier, suffixe numérique si conflit |
 | Création des colonnes | Dans l'ordre détecté |
-| Insertion optimisée | Bulk INSERT via `sqlalchemy.insert()` |
+| Insertion optimisée | Bulk INSERT par lots de 500 lignes |
 | Normalisation des valeurs | Dates en ISO 8601, booléens normalisés (true/false), nombres sans espaces |
 | Traçabilité | Action `import_csv` enregistrée |
 
@@ -340,7 +368,61 @@
 
 ---
 
-## 14. Traçabilité
+## 14. Synchronisation webservice
+
+### Configuration
+
+| Fonctionnalité | Description |
+|---|---|
+| URL | URL HTTP/HTTPS du webservice |
+| Authentification | `Aucune`, `Bearer token`, `API Key (header)`, `Basic Auth (user:pass)` |
+| Chemin de réponse | Chemin pointé (`data`, `results.items`) pour naviguer dans un JSON imbriqué |
+| Mapping champs | Association colonnes de la table ↔ clés JSON du webservice |
+| Clé de déduplication | Colonne servant d'identifiant unique pour les modes upsert/ajout sans doublon |
+| Intervalle | Fréquence de la synchronisation automatique (en minutes) |
+
+### Modes de synchronisation
+
+| Mode | Comportement |
+|---|---|
+| **Écrasement total** | Supprime toutes les lignes existantes puis réinsère les données du webservice |
+| **Mise à jour (upsert)** | Met à jour les lignes existantes (via clé de dédup), insère les nouvelles, supprime les absentes |
+| **Ajout sans doublon** | Insère uniquement les enregistrements dont la clé de dédup est absente — lignes existantes non modifiées |
+| **Ajout avec doublon** | Insère toujours toutes les lignes sans vérification — accumulation pure (logs, relevés horodatés…) |
+
+### Déclenchement
+
+| Fonctionnalité | Description |
+|---|---|
+| Synchronisation manuelle | Bouton "Lancer une synchronisation" avec confirmation selon le mode |
+| Synchronisation automatique | Toggle activable, vérification toutes les minutes par le scheduler |
+| Bouton Synchro | Visible uniquement sur les tables créées depuis un webservice |
+
+### Suivi
+
+| Fonctionnalité | Description |
+|---|---|
+| Statut dernière sync | Date, statut (ok/erreur), message de résultat |
+| Statistiques | Nombre de lignes insérées, mises à jour, supprimées |
+| Traçabilité | Action `sync_table` enregistrée dans le journal |
+
+---
+
+## 15. Visualisation cartographique
+
+| Fonctionnalité | Description |
+|---|---|
+| Activation | Disponible si la table possède au moins une colonne `latitude` et une colonne `longitude` |
+| Panneau carte | Carte Leaflet / OpenStreetMap intégrée dans la vue de la table |
+| Marqueurs | Un marqueur par ligne avec coordonnées valides |
+| Labels permanents | Étiquettes affichées en permanence sur chaque marqueur |
+| Info-bulle | Clic sur un marqueur affiche les valeurs de la ligne |
+| Filtrage | Les filtres actifs sur le tableau sont appliqués à la carte |
+| Export GeoJSON | Endpoint `/tables/{id}/geojson` retournant les données filtrées au format GeoJSON |
+
+---
+
+## 16. Traçabilité
 
 ### Journal global (admin)
 
@@ -349,7 +431,7 @@
 | Accès | Administrateurs uniquement |
 | URL | `/admin/logs` |
 | Volume | 1 000 dernières actions |
-| Données | Timestamp, acteur (email), action, ressource, détails diff |
+| Données | Timestamp, acteur (préfixe email), action, ressource, détails diff |
 | Libellés lisibles | Chaque action et type de ressource est traduit en français |
 
 ### Journal par table
@@ -361,9 +443,16 @@
 | Filtrage | Sur `ActivityLog.table_id` uniquement |
 | Persistance | L'historique survit à la suppression de la table (`table_id` sans FK physique) |
 
-### Actions tracées (exhaustif)
+### Historique de ligne
 
-Authentification, création/modification/suppression de table, gestion de schéma, ajout/modification/suppression/corbeille/restauration de ligne, import CSV, ajout/modification/suppression de commentaire, gestion des permissions, gestion des co-propriétaires, administration des utilisateurs.
+| Fonctionnalité | Description |
+|---|---|
+| Accès | Via le bouton historique sur chaque ligne |
+| Affichage | Modal listant toutes les modifications de la ligne avec acteur, date, et diff des valeurs |
+
+### Actions tracées
+
+Authentification (`register`, `login`, `reset_password`), création/modification/suppression/corbeille/restauration de table, gestion de schéma, ajout/modification/suppression/corbeille/restauration de ligne, import CSV, synchronisation webservice (`sync_table`), ajout/modification/suppression de commentaire, gestion des permissions et co-propriétaires, vidage de corbeille (`empty_trash`), administration des utilisateurs.
 
 ### Format des détails
 
@@ -371,10 +460,11 @@ Authentification, création/modification/suppression de table, gestion de schém
 - **Permissions** : diff `Accès "utilisateur" : "none" → "write"`
 - **Tables** : diff champ par champ du schéma
 - **Commentaires** : libellé de la ligne concernée
+- **Synchro** : statistiques insérées/mises à jour/supprimées
 
 ---
 
-## 15. Administration
+## 17. Administration
 
 ### Gestion des utilisateurs
 
@@ -395,7 +485,40 @@ Authentification, création/modification/suppression de table, gestion de schém
 
 ---
 
-## 16. Interface utilisateur
+## 18. Configuration
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | URL de connexion SQLAlchemy (SQLite par défaut) |
+| `SECRET_KEY` | Clé de signature des cookies de session |
+| `DB_ENCRYPTION_KEY` | Clé de chiffrement SQLCipher — laisser vide pour SQLite non chiffré |
+| `APP_URL` | URL publique de l'application (utilisée dans les liens des emails) |
+| `ORG_NAME` | Nom de l'organisation affiché dans le footer et les mentions RGPD (optionnel) |
+| `DPO_EMAIL` | Email du DPO pré-rempli dans le lien "Envoyer un email au DPO" (optionnel) |
+| `SMTP_HOST` | Serveur SMTP — si vide, les emails ne sont pas envoyés |
+| `SMTP_PORT` | Port SMTP (défaut : 587) |
+| `SMTP_USER` | Identifiant SMTP |
+| `SMTP_PASSWORD` | Mot de passe SMTP |
+| `SMTP_FROM` | Adresse expéditeur |
+| `SMTP_USE_TLS` | Activer STARTTLS (défaut : true) |
+
+### Comportement si SMTP non configuré
+
+- Emails de confirmation, reset, partage et alertes silencieusement ignorés
+- Liens de confirmation et de reset affichés dans les logs serveur (mode développement)
+- Comptes créés directement vérifiés (sans étape email)
+
+### Tâches planifiées (scheduler)
+
+| Tâche | Fréquence | Description |
+|---|---|---|
+| Nettoyage des lignes orphelines | Quotidien — 3h | Supprime les `TableRow` sans aucune `CellValue` |
+| Réévaluation des alertes temporelles | Quotidien — 8h | Réévalue les alertes dont les conditions dépendent de dates relatives |
+| Synchronisations automatiques | Toutes les minutes | Exécute les syncs `is_auto=True` dont l'intervalle est échu |
+
+---
+
+## 19. Interface utilisateur
 
 ### Navigation
 
@@ -434,9 +557,16 @@ Authentification, création/modification/suppression de table, gestion de schém
 | Fonctionnalité | Description |
 |---|---|
 | Confirmations | Boîtes de dialogue natif (`hx-confirm`) pour les actions destructives |
-| Raccourcis clavier | Ctrl+↵ pour soumettre les formulaires de commentaire, Échap pour fermer le panneau |
+| Raccourcis clavier | Ctrl+↵ pour soumettre les formulaires de commentaire, Échap pour fermer les panneaux |
 | Auto-scroll | Le panneau de commentaires défile automatiquement vers le bas à l'ouverture et après ajout |
 | Focus automatique | Le textarea commentaire est focusé à l'ouverture du panneau |
 | Avatars colorés | Initiale de l'utilisateur sur fond de couleur déterministe (stable entre sessions) |
 | Design responsive | Tailwind CSS responsive, scroll horizontal sur les grandes tables |
 | Transitions | Animations CSS sur les panneaux latéraux et les hover d'icônes |
+
+### Fuseaux horaires
+
+| Fonctionnalité | Description |
+|---|---|
+| Stockage UTC | Toutes les dates sont stockées en UTC en base de données |
+| Affichage UTC+4 | Toutes les dates affichées dans l'interface sont converties en heure de La Réunion (UTC+4, sans changement d'heure) via le filtre Jinja2 `dt_reunion` |
