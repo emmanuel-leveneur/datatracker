@@ -63,6 +63,26 @@
   </div>
 </div>
 
+{# ── Modal fiche détail ligne ──────────────────────────────────────────────── #}
+<div id="row-detail-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeDetailModal()"></div>
+<div id="row-detail-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="file-text" class="w-4 h-4 text-gray-400"></i>
+        Fiche détail
+      </h2>
+      <button onclick="closeDetailModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="row-detail-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
 {# ── Modal synchronisation webservice ─────────────────────────────────────── #}
 <div id="sync-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeSyncModal()"></div>
 <div id="sync-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
@@ -643,6 +663,22 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
   }
 });
 
+// ── Modal fiche détail ─────────────────────────────────────────────────────
+function openDetailModal() {
+  document.getElementById('row-detail-backdrop').classList.remove('hidden');
+  document.getElementById('row-detail-modal').classList.remove('hidden');
+}
+function closeDetailModal() {
+  document.getElementById('row-detail-backdrop').classList.add('hidden');
+  document.getElementById('row-detail-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'row-detail-modal-body') {
+    openDetailModal();
+    lucide.createIcons();
+  }
+});
+
 // ── Modal historique ───────────────────────────────────────────────────────
 function openHistoryModal() {
   document.getElementById('history-backdrop').classList.remove('hidden');
@@ -696,7 +732,7 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
 
 // Touche Échap pour fermer
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closeCommentPanel(); closeHistoryModal(); closeSyncModal(); }
+  if (e.key === 'Escape') { closeCommentPanel(); closeHistoryModal(); closeSyncModal(); closeDetailModal(); }
 });
 </script>
 

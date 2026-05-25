@@ -609,6 +609,35 @@ def row_history(
     )
 
 
+@router.get("/{table_id}/rows/{row_id}/detail", response_class=HTMLResponse)
+def row_detail(
+    request: Request,
+    table_id: int,
+    row_id: int,
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+    row = db.get(TableRow, row_id)
+    if not row or row.table_id != table_id:
+        raise HTTPException(status_code=404)
+    visible_cols = get_visible_columns(table, user, db)
+    cells = {cv.column_id: cv.value for cv in row.cell_values}
+    relation_labels = _resolve_relation_labels(db, visible_cols)
+    return templates.TemplateResponse(
+        request, "partials/row_detail.html",
+        {
+            "table": table,
+            "row": row,
+            "columns": visible_cols,
+            "cells": cells,
+            "relation_labels": relation_labels,
+        },
+    )
+
+
 @router.get("/{table_id}/import", response_class=HTMLResponse)
 def import_page(
     request: Request,
