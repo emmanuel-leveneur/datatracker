@@ -1,0 +1,91 @@
+<div id="attachments-panel">
+
+  <div class="flex items-center justify-between mb-3">
+    <h3 class="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+      <i data-lucide="paperclip" class="w-3.5 h-3.5"></i>
+      Pièces jointes
+      {% if attachments %}
+      <span class="bg-gray-100 text-gray-600 rounded-full px-1.5 py-0.5 text-xs font-medium">{{ attachments | length }}</span>
+      {% endif %}
+    </h3>
+    <span class="text-xs text-gray-300">max {{ max_files }} fichiers · {{ max_size_mb }} Mo</span>
+  </div>
+
+  {% if attachments %}
+  <ul class="space-y-2 mb-4">
+    {% for att in attachments %}
+    <li class="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2 group">
+      {# Icône selon type #}
+      {% if att.mime_type == 'application/pdf' %}
+        <i data-lucide="file-text" class="w-4 h-4 text-red-400 shrink-0"></i>
+      {% elif att.mime_type.startswith('image/') %}
+        <i data-lucide="image" class="w-4 h-4 text-blue-400 shrink-0"></i>
+      {% elif 'spreadsheet' in att.mime_type or 'excel' in att.mime_type or att.mime_type == 'text/csv' %}
+        <i data-lucide="table-2" class="w-4 h-4 text-green-500 shrink-0"></i>
+      {% elif 'word' in att.mime_type or 'document' in att.mime_type %}
+        <i data-lucide="file-type" class="w-4 h-4 text-blue-500 shrink-0"></i>
+      {% else %}
+        <i data-lucide="file" class="w-4 h-4 text-gray-400 shrink-0"></i>
+      {% endif %}
+
+      {# Nom + taille #}
+      <div class="flex-1 min-w-0">
+        <a href="/tables/{{ table.id }}/rows/{{ row.id }}/attachments/{{ att.id }}/download"
+           class="text-sm text-gray-700 hover:text-blue-600 hover:underline truncate block max-w-[240px]"
+           title="{{ att.original_name }}">
+          {{ att.original_name }}
+        </a>
+        <span class="text-xs text-gray-400">
+          {% set kb = (att.size / 1024) | round(1) %}
+          {% if att.size >= 1048576 %}{{ (att.size / 1048576) | round(1) }} Mo{% else %}{{ kb }} Ko{% endif %}
+          · {{ att.uploaded_at | dt_reunion }}
+        </span>
+      </div>
+
+      {# Bouton supprimer #}
+      {% if can_write %}
+      <button
+        hx-post="/tables/{{ table.id }}/rows/{{ row.id }}/attachments/{{ att.id }}/delete"
+        hx-target="#attachments-panel"
+        hx-swap="outerHTML"
+        hx-confirm="Supprimer ce fichier ?"
+        title="Supprimer"
+        class="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 p-1 rounded transition shrink-0">
+        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+      </button>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-sm text-gray-300 italic mb-4">Aucune pièce jointe.</p>
+  {% endif %}
+
+  {# Formulaire d'upload #}
+  {% if can_write and attachments | length < max_files %}
+  <form
+    hx-post="/tables/{{ table.id }}/rows/{{ row.id }}/attachments"
+    hx-target="#attachments-panel"
+    hx-swap="outerHTML"
+    hx-encoding="multipart/form-data"
+    class="flex items-center gap-2">
+    <label class="flex-1 cursor-pointer">
+      <input type="file" name="file" required
+             accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.docx,.xlsx,.xls,.doc,.csv,.txt"
+             class="block w-full text-xs text-gray-500
+                    file:mr-3 file:py-1.5 file:px-3
+                    file:rounded-lg file:border-0
+                    file:text-xs file:font-medium
+                    file:bg-blue-50 file:text-blue-700
+                    hover:file:bg-blue-100 transition" />
+    </label>
+    <button type="submit"
+      class="shrink-0 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">
+      Ajouter
+    </button>
+  </form>
+  {% elif can_write %}
+  <p class="text-xs text-gray-400 italic">Limite de {{ max_files }} fichiers atteinte.</p>
+  {% endif %}
+
+</div>

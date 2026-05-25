@@ -62,4 +62,15 @@
   <p class="text-sm text-gray-400 text-center py-6">Aucune colonne visible.</p>
   {% endif %}
 
+  {# Section pièces jointes — chargée via HTMX après l'ouverture de la fiche #}
+  <div class="mt-6 pt-5 border-t border-gray-100"
+       hx-get="/tables/{{ table.id }}/rows/{{ row.id }}/attachments/panel"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div class="flex items-center gap-2 text-xs text-gray-300">
+      <i data-lucide="loader" class="w-3.5 h-3.5 animate-spin"></i>
+      Chargement des pièces jointes…
+    </div>
+  </div>
+
 </div>

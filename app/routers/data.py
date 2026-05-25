@@ -12,7 +12,7 @@ from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
     get_visible_columns, is_column_readonly,
 )
-from app.models import ActivityLog, CellValue, DataTable, RowComment, TableRow, User
+from app.models import ActivityLog, CellValue, DataTable, RowAttachment, RowComment, TableRow, User
 from sqlalchemy import func as sa_func
 
 router = APIRouter(prefix="/tables", tags=["data"])
@@ -82,14 +82,20 @@ def _rows_template_ctx(
         for r in rows
     ]
 
-    # Comptage des commentaires par ligne (batch query)
+    # Comptage des commentaires et pièces jointes par ligne (batch queries)
     row_ids = [r.id for r in rows]
     comment_counts: dict[int, int] = {}
+    attachment_counts: dict[int, int] = {}
     if row_ids:
         counts = db.query(RowComment.row_id, sa_func.count(RowComment.id)).filter(
             RowComment.row_id.in_(row_ids)
         ).group_by(RowComment.row_id).all()
         comment_counts = dict(counts)
+
+        att_counts = db.query(RowAttachment.row_id, sa_func.count(RowAttachment.id)).filter(
+            RowAttachment.row_id.in_(row_ids)
+        ).group_by(RowAttachment.row_id).all()
+        attachment_counts = dict(att_counts)
 
     return {
         "table": table,
@@ -107,6 +113,7 @@ def _rows_template_ctx(
         "q": q,
         "col_filters": col_filters,
         "comment_counts": comment_counts,
+        "attachment_counts": attachment_counts,
     }
 
 
@@ -543,12 +550,14 @@ def empty_trash(
         raise HTTPException(status_code=404)
     if not can_access_table(table, user, db, require_write=True):
         raise HTTPException(status_code=403)
+    from app.routers.attachments import _delete_attachment_files
     trashed = db.query(TableRow).filter(
         TableRow.table_id == table_id,
         TableRow.deleted_at.isnot(None),
     ).all()
     count = len(trashed)
     for row in trashed:
+        _delete_attachment_files(row.attachments)
         db.delete(row)
     if count:
         log_action(db, user, "empty_trash", "table",
@@ -575,6 +584,8 @@ def delete_row_permanent(
         raise HTTPException(status_code=404)
     if row.deleted_at is None:
         raise HTTPException(status_code=400, detail="La ligne doit d'abord être mise à la corbeille")
+    from app.routers.attachments import _delete_attachment_files
+    _delete_attachment_files(row.attachments)
     log_action(db, user, "delete_row", "row",
                resource_id=row.id, resource_name=table.name, table_id=table.id,
                details=_row_details(row, table.columns))

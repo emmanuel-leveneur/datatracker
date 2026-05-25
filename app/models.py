@@ -63,6 +63,7 @@ class User(Base):
     column_permissions: Mapped[list["ColumnPermission"]] = relationship(back_populates="user")
     rows: Mapped[list["TableRow"]] = relationship(back_populates="created_by")
     row_comments: Mapped[list["RowComment"]] = relationship(back_populates="author")
+    row_attachments: Mapped[list["RowAttachment"]] = relationship(back_populates="uploader")
 
 
 class DataTable(Base):
@@ -136,6 +137,10 @@ class TableRow(Base):
     comments: Mapped[list["RowComment"]] = relationship(
         back_populates="row", cascade="all, delete-orphan",
         order_by="RowComment.created_at",
+    )
+    attachments: Mapped[list["RowAttachment"]] = relationship(
+        back_populates="row", cascade="all, delete-orphan",
+        order_by="RowAttachment.uploaded_at",
     )
 
 
@@ -338,4 +343,22 @@ class RowComment(Base):
 
     row: Mapped["TableRow"] = relationship(back_populates="comments")
     author: Mapped["User"] = relationship(back_populates="row_comments")
+
+
+class RowAttachment(Base):
+    __tablename__ = "row_attachments"
+    __table_args__ = (Index("ix_row_attachments_row_id", "row_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    row_id: Mapped[int] = mapped_column(ForeignKey("table_rows.id"), nullable=False)
+    table_id: Mapped[int] = mapped_column(ForeignKey("data_tables.id"), nullable=False)
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_name: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    row: Mapped["TableRow"] = relationship(back_populates="attachments")
+    uploader: Mapped["User"] = relationship(back_populates="row_attachments")
 
