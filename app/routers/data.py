@@ -391,6 +391,7 @@ def edit_row_form(
     request: Request,
     table_id: int,
     row_id: int,
+    page: int = Query(1, ge=1),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -415,6 +416,7 @@ def edit_row_form(
             "col_readonly": col_readonly,
             "row": row,
             "cells": cells,
+            "page": page,
             "relation_options": _get_relation_options(db, visible_cols),
         },
     )
@@ -473,9 +475,10 @@ async def update_row(
         q = str(form.get("q", ""))
         col_filters = _parse_col_filters(dict(form))
         page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
+        page = int(form.get("page", 1))
         return templates.TemplateResponse(
             request, "partials/table_rows.html",
-            _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters, page_size=page_size),
+            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 

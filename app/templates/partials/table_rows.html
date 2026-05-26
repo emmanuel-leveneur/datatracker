@@ -135,7 +135,7 @@
         </button>
         {% if can_write %}
         <button
-          hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/edit"
+          hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/edit?page={{ page | default(1) }}"
           hx-target="#row-form-area"
           hx-swap="innerHTML"
           title="Modifier"
