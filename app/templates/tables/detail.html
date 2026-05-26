@@ -83,6 +83,29 @@
   </div>
 </div>
 
+{# ── Lightbox image pièce jointe ─────────────────────────────────────────── #}
+<div id="att-lightbox-backdrop" class="fixed inset-0 bg-black/85 z-[60] hidden" onclick="closeLightbox()"></div>
+<div id="att-lightbox" class="fixed inset-0 z-[60] flex items-center justify-center p-6 pointer-events-none hidden">
+  <div class="relative pointer-events-auto w-full max-w-5xl">
+    <div class="flex items-center justify-between mb-3 px-1">
+      <p id="att-lightbox-name" class="text-white text-sm font-medium truncate max-w-[60%] drop-shadow"></p>
+      <div class="flex items-center gap-2">
+        <a id="att-lightbox-dl" href="#" download
+           class="flex items-center gap-1.5 text-white/80 hover:text-white text-xs bg-white/10 hover:bg-white/25 px-3 py-1.5 rounded-lg transition">
+          <i data-lucide="download" class="w-3.5 h-3.5"></i>
+          Télécharger
+        </a>
+        <button onclick="closeLightbox()"
+          class="text-white/70 hover:text-white p-1.5 hover:bg-white/20 rounded-lg transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+    </div>
+    <img id="att-lightbox-img" src="" alt=""
+         class="max-w-full max-h-[80vh] object-contain rounded-xl mx-auto block shadow-2xl">
+  </div>
+</div>
+
 {# ── Modal synchronisation webservice ─────────────────────────────────────── #}
 <div id="sync-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeSyncModal()"></div>
 <div id="sync-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
@@ -663,6 +686,20 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
   }
 });
 
+// ── Lightbox image ─────────────────────────────────────────────────────────
+function openLightbox(viewUrl, dlUrl, name) {
+  document.getElementById('att-lightbox-img').src = viewUrl;
+  document.getElementById('att-lightbox-name').textContent = name;
+  document.getElementById('att-lightbox-dl').href = dlUrl;
+  document.getElementById('att-lightbox-backdrop').classList.remove('hidden');
+  document.getElementById('att-lightbox').classList.remove('hidden');
+}
+function closeLightbox() {
+  document.getElementById('att-lightbox-backdrop').classList.add('hidden');
+  document.getElementById('att-lightbox').classList.add('hidden');
+  document.getElementById('att-lightbox-img').src = '';
+}
+
 // ── Modal fiche détail ─────────────────────────────────────────────────────
 function openDetailModal() {
   document.getElementById('row-detail-backdrop').classList.remove('hidden');
@@ -675,6 +712,13 @@ function closeDetailModal() {
 document.body.addEventListener('htmx:afterSwap', function(e) {
   if (e.detail.target && e.detail.target.id === 'row-detail-modal-body') {
     openDetailModal();
+    lucide.createIcons();
+  }
+});
+// Réinitialise les icônes Lucide pour tout swap à l'intérieur de la fiche détail (panneau pièces jointes inclus)
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.closest &&
+      e.detail.target.closest('#row-detail-modal-body')) {
     lucide.createIcons();
   }
 });
@@ -730,9 +774,13 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
   }
 });
 
-// Touche Échap pour fermer
+// Touche Échap pour fermer (lightbox en priorité)
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') { closeCommentPanel(); closeHistoryModal(); closeSyncModal(); closeDetailModal(); }
+  if (e.key !== 'Escape') return;
+  if (!document.getElementById('att-lightbox').classList.contains('hidden')) {
+    closeLightbox(); return;
+  }
+  closeCommentPanel(); closeHistoryModal(); closeSyncModal(); closeDetailModal();
 });
 </script>
 

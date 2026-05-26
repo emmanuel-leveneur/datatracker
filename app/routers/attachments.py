@@ -172,6 +172,29 @@ def download_attachment(
     )
 
 
+@router.get("/{table_id}/rows/{row_id}/attachments/{att_id}/view")
+def view_attachment(
+    table_id: int,
+    row_id: int,
+    att_id: int,
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+    att = db.get(RowAttachment, att_id)
+    if not att or att.row_id != row_id or att.table_id != table_id:
+        raise HTTPException(status_code=404)
+    if not att.mime_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Ce fichier n'est pas une image.")
+    path = _upload_path(att.stored_name)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Fichier introuvable sur le serveur.")
+    return FileResponse(path=path, media_type=att.mime_type,
+                        headers={"Content-Disposition": "inline"})
+
+
 @router.post("/{table_id}/rows/{row_id}/attachments/{att_id}/delete", response_class=HTMLResponse)
 def delete_attachment(
     request: Request,

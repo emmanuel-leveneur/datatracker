@@ -257,6 +257,66 @@ def test_download_missing_file_on_disk(admin_client, db, admin_user, upload_dir)
     assert resp.status_code == 404
 
 
+# ── Vue inline image (GET /attachments/{id}/view) ────────────────────────────
+
+def _make_image_attachment(db: Session, row: TableRow, user, upload_dir) -> RowAttachment:
+    stored_name = "testimg_abc123.png"
+    path = os.path.join(str(upload_dir), stored_name)
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG fake image content")
+    att = RowAttachment(
+        row_id=row.id,
+        table_id=row.table_id,
+        uploaded_by=user.id,
+        original_name="photo.png",
+        stored_name=stored_name,
+        mime_type="image/png",
+        size=22,
+    )
+    db.add(att)
+    db.commit()
+    db.refresh(att)
+    return att
+
+
+def test_view_image_returns_inline(admin_client, db, admin_user, upload_dir):
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+    att = _make_image_attachment(db, row, admin_user, upload_dir)
+
+    resp = admin_client.get(
+        f"/tables/{table.id}/rows/{row.id}/attachments/{att.id}/view"
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("image/png")
+    assert "inline" in resp.headers.get("content-disposition", "inline")
+
+
+def test_view_non_image_rejected(admin_client, db, admin_user, upload_dir):
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+    att = _make_attachment(db, row, admin_user, upload_dir)  # PDF
+
+    resp = admin_client.get(
+        f"/tables/{table.id}/rows/{row.id}/attachments/{att.id}/view"
+    )
+
+    assert resp.status_code == 400
+
+
+def test_view_forbidden_without_access(user_client, db, admin_user, upload_dir):
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+    att = _make_image_attachment(db, row, admin_user, upload_dir)
+
+    resp = user_client.get(
+        f"/tables/{table.id}/rows/{row.id}/attachments/{att.id}/view"
+    )
+
+    assert resp.status_code == 403
+
+
 # ── Suppression (POST /attachments/{id}/delete) ───────────────────────────────
 
 def test_delete_removes_db_record_and_file(admin_client, db, admin_user, upload_dir):
