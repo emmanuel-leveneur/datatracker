@@ -47,6 +47,7 @@
     {% set is_alerted = alerted_rows is defined and item.row.id in alerted_rows %}
     {% set row_data = alerted_rows[item.row.id] if is_alerted else None %}
     {% set _cc = (comment_counts | default({})).get(item.row.id, 0) %}
+    {% set _ac = (attachment_counts | default({})).get(item.row.id, 0) %}
     <tr class="hover:bg-gray-50 transition"
         id="row-{{ item.row.id }}"
         {% if is_alerted and row_data.row_style %}style="{{ row_data.row_style }}"{% endif %}>
@@ -98,6 +99,18 @@
       {% endfor %}
       {# Colonne actions sticky à droite #}
       <td class="col-sticky-right px-3 py-2.5 text-right whitespace-nowrap bg-white">
+        {# Bouton fiche détail (+ indicateur pièces jointes) #}
+        <button
+          hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/detail"
+          hx-target="#row-detail-modal-body"
+          hx-swap="innerHTML"
+          title="Voir la fiche{% if _ac %} ({{ _ac }} pièce(s) jointe(s)){% endif %}"
+          class="inline-flex items-center gap-1 rounded-full transition
+                 {% if _ac %}bg-amber-50 text-amber-600 hover:bg-amber-100 px-2 py-0.5
+                 {% else %}text-gray-300 hover:text-teal-500 hover:bg-teal-50 p-1.5{% endif %}">
+          <i data-lucide="{% if _ac %}paperclip{% else %}eye{% endif %}" class="w-3.5 h-3.5"></i>
+          {% if _ac %}<span class="text-xs font-semibold leading-none">{{ _ac }}</span>{% endif %}
+        </button>
         {# Bouton historique #}
         <button
           hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/history"

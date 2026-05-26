@@ -11,6 +11,7 @@ from app.routers import alerts as alerts_router
 from app.routers import import_auto as import_auto_router
 from app.routers import comments as comments_router
 from app.routers import sync as sync_router
+from app.routers import attachments as attachments_router
 
 
 @asynccontextmanager
@@ -53,11 +54,12 @@ app.include_router(alerts_router.router)
 app.include_router(import_auto_router.router)
 app.include_router(comments_router.router)
 app.include_router(sync_router.router)
+app.include_router(attachments_router.router)
 
 # Propagate dt_reunion filter to every router's Jinja2Templates instance
 _router_modules = [
     auth, tables, data, export, permissions, admin, logs, tracabilite,
-    alerts_router, import_auto_router, comments_router, sync_router,
+    alerts_router, import_auto_router, comments_router, sync_router, attachments_router,
 ]
 for _mod in _router_modules:
     if hasattr(_mod, "templates"):
