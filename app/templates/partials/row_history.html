@@ -9,6 +9,8 @@
         {% elif entry.action == 'update_row' %}bg-blue-400
         {% elif entry.action == 'trash_row' %}bg-red-400
         {% elif entry.action == 'restore_row' %}bg-amber-400
+        {% elif entry.action == 'upload_attachment' %}bg-teal-400
+        {% elif entry.action == 'delete_attachment' %}bg-orange-400
         {% else %}bg-gray-300{% endif %}"></span>
       {% if not loop.last %}
       <div class="w-px flex-1 bg-gray-200 mt-1"></div>
@@ -22,12 +24,16 @@
           {% elif entry.action == 'update_row' %}text-blue-700
           {% elif entry.action == 'trash_row' %}text-red-600
           {% elif entry.action == 'restore_row' %}text-amber-600
+          {% elif entry.action == 'upload_attachment' %}text-teal-700
+          {% elif entry.action == 'delete_attachment' %}text-orange-600
           {% else %}text-gray-500{% endif %}">
           {% if entry.action == 'create_row' %}Création
           {% elif entry.action == 'update_row' %}Modification
           {% elif entry.action == 'trash_row' %}Mise à la corbeille
           {% elif entry.action == 'restore_row' %}Restauration
           {% elif entry.action == 'delete_row' %}Suppression définitive
+          {% elif entry.action == 'upload_attachment' %}Pièce jointe ajoutée
+          {% elif entry.action == 'delete_attachment' %}Pièce jointe supprimée
           {% else %}{{ entry.action }}{% endif %}
         </span>
         <span class="text-gray-300 text-xs">·</span>

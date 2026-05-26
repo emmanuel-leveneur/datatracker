@@ -612,7 +612,8 @@ def row_history(
         db.query(ActivityLog)
         .filter(
             ActivityLog.resource_id == row_id,
-            ActivityLog.action.in_(["create_row", "update_row", "trash_row", "restore_row", "delete_row"]),
+            ActivityLog.action.in_(["create_row", "update_row", "trash_row", "restore_row", "delete_row",
+                                    "upload_attachment", "delete_attachment"]),
         )
         .order_by(ActivityLog.timestamp.desc())
         .all()
