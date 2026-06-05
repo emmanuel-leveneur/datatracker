@@ -178,46 +178,66 @@
       class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition">
       + Ajouter une ligne
     </button>
-    <a href="/tables/{{ table.id }}/import"
-      class="bg-green-50 hover:bg-green-100 text-green-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-green-200 transition">
-      Importer CSV
-    </a>
     {% endif %}
-    <a href="/tables/{{ table.id }}/export/excel"
-      class="bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-gray-200 transition">
-      Exporter Excel
-    </a>
-    {% if is_owner or user.is_admin %}
-    <a href="/tables/{{ table.id }}/export/rgpd" target="_blank"
-      class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-indigo-200 transition flex items-center gap-1.5">
-      <i data-lucide="shield-check" class="w-4 h-4"></i> Rapport RGPD
-    </a>
-    <a href="/tables/{{ table.id }}/edit"
-      class="bg-gray-50 hover:bg-gray-100 text-gray-600 text-sm font-medium px-4 py-1.5 rounded-lg border border-gray-200 transition">
-      Modifier
-    </a>
-    <a href="/tables/{{ table.id }}/permissions"
-      class="bg-yellow-50 hover:bg-yellow-100 text-yellow-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-yellow-200 transition">
-      Droits
-    </a>
-    {% endif %}
-    <a href="/tables/{{ table.id }}/tracabilite"
-      class="bg-purple-50 hover:bg-purple-100 text-purple-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-purple-200 transition">
-      Traçabilité
-    </a>
     <button onclick="openAlertsPanel()"
       class="bg-amber-50 hover:bg-amber-100 text-amber-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-amber-200 transition flex items-center gap-1.5">
       <i data-lucide="bell" class="w-4 h-4"></i> Alertes
     </button>
-    {% if table_sync and (is_owner or user.is_admin) %}
-    <button
-      hx-get="/tables/{{ table.id }}/sync/panel"
-      hx-target="#sync-modal-body"
-      hx-swap="innerHTML"
-      class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-indigo-200 transition flex items-center gap-1.5">
-      <i data-lucide="refresh-cw" class="w-4 h-4"></i> Synchro
-    </button>
-    {% endif %}
+
+    {# ── Menu déroulant Outils ──────────────────────────────────────── #}
+    <div class="relative" id="outils-menu-wrapper">
+      <button onclick="toggleOutilsMenu()"
+        class="bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium px-3 py-1.5 rounded-lg border border-gray-200 transition flex items-center gap-1.5">
+        <i data-lucide="settings-2" class="w-4 h-4 text-gray-400"></i>
+        Outils
+        <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-gray-400"></i>
+      </button>
+      <div id="outils-menu"
+        class="hidden absolute right-0 mt-1 w-52 bg-white border border-gray-200 rounded-xl shadow-lg z-30 py-1 text-sm">
+        {% if can_write %}
+        <a href="/tables/{{ table.id }}/import"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="upload" class="w-4 h-4 text-green-500 shrink-0"></i> Importer CSV
+        </a>
+        {% endif %}
+        <a href="/tables/{{ table.id }}/export/excel"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="download" class="w-4 h-4 text-blue-400 shrink-0"></i> Exporter Excel
+        </a>
+        {% if is_owner or user.is_admin %}
+        <a href="/tables/{{ table.id }}/export/rgpd" target="_blank"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="shield-check" class="w-4 h-4 text-indigo-500 shrink-0"></i> Rapport RGPD
+        </a>
+        {% endif %}
+        <div class="border-t border-gray-100 my-1"></div>
+        {% if is_owner or user.is_admin %}
+        <a href="/tables/{{ table.id }}/edit"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="pencil" class="w-4 h-4 text-gray-400 shrink-0"></i> Modifier la table
+        </a>
+        <a href="/tables/{{ table.id }}/permissions"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="key" class="w-4 h-4 text-yellow-500 shrink-0"></i> Droits d'accès
+        </a>
+        {% if table_sync %}
+        <button
+          hx-get="/tables/{{ table.id }}/sync/panel"
+          hx-target="#sync-modal-body"
+          hx-swap="innerHTML"
+          onclick="document.getElementById('outils-menu').classList.add('hidden')"
+          class="w-full flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition text-left">
+          <i data-lucide="refresh-cw" class="w-4 h-4 text-indigo-400 shrink-0"></i> Synchronisation
+        </button>
+        {% endif %}
+        <div class="border-t border-gray-100 my-1"></div>
+        {% endif %}
+        <a href="/tables/{{ table.id }}/tracabilite"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="history" class="w-4 h-4 text-purple-400 shrink-0"></i> Traçabilité
+        </a>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -785,6 +805,17 @@ document.addEventListener('keydown', function(e) {
     closeLightbox(); return;
   }
   closeCommentPanel(); closeHistoryModal(); closeSyncModal(); closeDetailModal();
+});
+
+// Menu Outils
+function toggleOutilsMenu() {
+  document.getElementById('outils-menu').classList.toggle('hidden');
+}
+document.addEventListener('click', function(e) {
+  const wrapper = document.getElementById('outils-menu-wrapper');
+  if (wrapper && !wrapper.contains(e.target)) {
+    document.getElementById('outils-menu').classList.add('hidden');
+  }
 });
 </script>
 
