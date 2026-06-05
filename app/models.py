@@ -76,6 +76,12 @@ class DataTable(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     dpo_declared: Mapped[bool] = mapped_column(Boolean, default=False)
+    rgpd_finalite: Mapped[str] = mapped_column(Text, default="")
+    rgpd_base_legale: Mapped[str] = mapped_column(String(64), default="")
+    rgpd_duree_conservation: Mapped[str] = mapped_column(String(128), default="")
+    rgpd_responsable: Mapped[str] = mapped_column(String(256), default="")
+    rgpd_destinataires: Mapped[str] = mapped_column(Text, default="")
+    rgpd_hors_ue: Mapped[bool] = mapped_column(Boolean, default=False)
 
     owner: Mapped["User"] = relationship(back_populates="tables")
     columns: Mapped[list["TableColumn"]] = relationship(
@@ -101,6 +107,7 @@ class TableColumn(Base):
     col_type: Mapped[ColumnType] = mapped_column(Enum(ColumnType), default=ColumnType.TEXT)
     order: Mapped[int] = mapped_column(Integer, default=0)
     required: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_personal_data: Mapped[bool] = mapped_column(Boolean, default=False)
     select_options: Mapped[str] = mapped_column(Text, default="")  # comma-separated
     # Colonnes relation (type RELATION uniquement) — pas de FK pour survivre aux suppressions
     related_table_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

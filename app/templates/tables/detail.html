@@ -188,6 +188,10 @@
       Exporter Excel
     </a>
     {% if is_owner or user.is_admin %}
+    <a href="/tables/{{ table.id }}/export/rgpd" target="_blank"
+      class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-indigo-200 transition flex items-center gap-1.5">
+      <i data-lucide="shield-check" class="w-4 h-4"></i> Rapport RGPD
+    </a>
     <a href="/tables/{{ table.id }}/edit"
       class="bg-gray-50 hover:bg-gray-100 text-gray-600 text-sm font-medium px-4 py-1.5 rounded-lg border border-gray-200 transition">
       Modifier

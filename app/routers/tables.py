@@ -133,6 +133,7 @@ def create_table(
     col_names: list[str] = Form(default=[]),
     col_types: list[str] = Form(default=[]),
     col_required: list[str] = Form(default=[]),
+    col_personal_data: list[str] = Form(default=[]),
     col_options: list[str] = Form(default=[]),
     col_related_table_ids: list[str] = Form(default=[]),
     col_related_display_col_ids: list[str] = Form(default=[]),
@@ -148,6 +149,7 @@ def create_table(
     db.add(TableOwner(table_id=table.id, user_id=user.id))
 
     required_set = set(col_required)
+    personal_data_set = set(col_personal_data)
     for i, (cname, ctype) in enumerate(zip(col_names, col_types)):
         cname = cname.strip()
         if not cname:
@@ -169,6 +171,7 @@ def create_table(
             col_type=ColumnType(ctype),
             order=i,
             required=(str(i) in required_set),
+            is_personal_data=(str(i) in personal_data_set),
             select_options=options,
             related_table_id=rel_table_id,
             related_display_col_id=rel_display_col_id,
@@ -575,10 +578,17 @@ def edit_table(
     col_names: list[str] = Form(default=[]),
     col_types: list[str] = Form(default=[]),
     col_required: list[str] = Form(default=[]),
+    col_personal_data: list[str] = Form(default=[]),
     col_options: list[str] = Form(default=[]),
     col_related_table_ids: list[str] = Form(default=[]),
     col_related_display_col_ids: list[str] = Form(default=[]),
     col_related_value_col_ids: list[str] = Form(default=[]),
+    rgpd_finalite: str = Form(""),
+    rgpd_base_legale: str = Form(""),
+    rgpd_duree_conservation: str = Form(""),
+    rgpd_responsable: str = Form(""),
+    rgpd_destinataires: str = Form(""),
+    rgpd_hors_ue: str = Form(""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -595,6 +605,12 @@ def edit_table(
 
     table.name = name
     table.description = description
+    table.rgpd_finalite = rgpd_finalite
+    table.rgpd_base_legale = rgpd_base_legale
+    table.rgpd_duree_conservation = rgpd_duree_conservation
+    table.rgpd_responsable = rgpd_responsable
+    table.rgpd_destinataires = rgpd_destinataires
+    table.rgpd_hors_ue = bool(rgpd_hors_ue)
 
     existing_ids = {str(c.id) for c in table.columns}
     submitted_ids = set(col_ids)
@@ -605,6 +621,7 @@ def edit_table(
             db.delete(col)
 
     required_set = set(col_required)
+    personal_data_set = set(col_personal_data)
     for i, (cid, cname, ctype) in enumerate(zip(col_ids, col_names, col_types)):
         cname = cname.strip()
         if not cname:
@@ -627,6 +644,7 @@ def edit_table(
                 col.col_type = ColumnType(ctype)
                 col.order = i
                 col.required = (str(i) in required_set)
+                col.is_personal_data = (str(i) in personal_data_set)
                 col.select_options = options
                 col.related_table_id = rel_table_id
                 col.related_display_col_id = rel_display_col_id
@@ -638,6 +656,7 @@ def edit_table(
                 col_type=ColumnType(ctype),
                 order=i,
                 required=(str(i) in required_set),
+                is_personal_data=(str(i) in personal_data_set),
                 select_options=options,
                 related_table_id=rel_table_id,
                 related_display_col_id=rel_display_col_id,
