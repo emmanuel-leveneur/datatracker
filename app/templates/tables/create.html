@@ -102,6 +102,10 @@
         <input type="checkbox" name="col_required" value="${idx}" class="rounded" />
         Obligatoire
       </label>
+      <label class="flex items-center gap-1 text-sm text-amber-700 cursor-pointer" title="Cochez si ce champ contient des données personnelles (nom, email, adresse…)">
+        <input type="checkbox" name="col_personal_data" value="${idx}" class="rounded accent-amber-500" />
+        Donnée personnelle
+      </label>
       <button type="button" onclick="this.closest('.col-row').remove()"
         class="text-red-400 hover:text-red-600 text-lg leading-none px-1" title="Supprimer">&times;</button>
     `;

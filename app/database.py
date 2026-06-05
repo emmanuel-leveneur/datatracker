@@ -58,6 +58,12 @@ def _run_migrations():
         "data_tables": [
             ("deleted_at", "ALTER TABLE data_tables ADD COLUMN deleted_at DATETIME"),
             ("dpo_declared", "ALTER TABLE data_tables ADD COLUMN dpo_declared BOOLEAN DEFAULT 0"),
+            ("rgpd_finalite", "ALTER TABLE data_tables ADD COLUMN rgpd_finalite TEXT DEFAULT ''"),
+            ("rgpd_base_legale", "ALTER TABLE data_tables ADD COLUMN rgpd_base_legale VARCHAR(64) DEFAULT ''"),
+            ("rgpd_duree_conservation", "ALTER TABLE data_tables ADD COLUMN rgpd_duree_conservation VARCHAR(128) DEFAULT ''"),
+            ("rgpd_responsable", "ALTER TABLE data_tables ADD COLUMN rgpd_responsable VARCHAR(256) DEFAULT ''"),
+            ("rgpd_destinataires", "ALTER TABLE data_tables ADD COLUMN rgpd_destinataires TEXT DEFAULT ''"),
+            ("rgpd_hors_ue", "ALTER TABLE data_tables ADD COLUMN rgpd_hors_ue BOOLEAN DEFAULT 0"),
         ],
         "table_rows": [
             ("deleted_at", "ALTER TABLE table_rows ADD COLUMN deleted_at DATETIME"),
@@ -69,6 +75,7 @@ def _run_migrations():
             ("related_table_id", "ALTER TABLE table_columns ADD COLUMN related_table_id INTEGER"),
             ("related_display_col_id", "ALTER TABLE table_columns ADD COLUMN related_display_col_id INTEGER"),
             ("related_value_col_id", "ALTER TABLE table_columns ADD COLUMN related_value_col_id INTEGER"),
+            ("is_personal_data", "ALTER TABLE table_columns ADD COLUMN is_personal_data BOOLEAN DEFAULT 0"),
         ],
         "users": [
             ("is_email_verified", "ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN DEFAULT 0"),

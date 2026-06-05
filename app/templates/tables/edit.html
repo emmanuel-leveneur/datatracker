@@ -102,10 +102,19 @@
         <input type="checkbox" name="col_required" value="${idx}" class="rounded" />
         Obligatoire
       </label>
+      <label class="flex items-center gap-1 text-sm text-amber-700 cursor-pointer" title="Cochez si ce champ contient des données personnelles (nom, email, adresse…)">
+        <input type="checkbox" name="col_personal_data" value="${idx}" class="rounded accent-amber-500" />
+        Donnée personnelle
+      </label>
       <button type="button" onclick="this.closest('.col-row').remove()"
         class="text-red-400 hover:text-red-600 text-lg leading-none px-1" title="Supprimer">&times;</button>
     `;
     container.appendChild(div);
+  }
+
+  function updateBaseLegaleTip(sel) {
+    const opt = sel.options[sel.selectedIndex];
+    document.getElementById('rgpd_base_legale_tip').textContent = opt ? (opt.dataset.tip || '') : '';
   }
 
   document.addEventListener('DOMContentLoaded', function() {
@@ -142,6 +151,66 @@
       <textarea name="description" rows="2"
         class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none">{{ table.description }}</textarea>
     </div>
+
+    <details class="border border-indigo-100 rounded-xl bg-indigo-50/40">
+      <summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-indigo-700 flex items-center gap-2 select-none">
+        <i data-lucide="shield-check" class="w-4 h-4"></i> Fiche RGPD (Article 30)
+        <span class="ml-auto text-xs font-normal text-indigo-400">optionnel</span>
+      </summary>
+      <div class="px-4 pb-4 space-y-3 mt-1">
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Finalité du traitement</label>
+          <textarea name="rgpd_finalite" rows="2" placeholder="Ex : Gestion des contrats clients, suivi des interventions…"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none bg-white">{{ table.rgpd_finalite or '' }}</textarea>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Base légale</label>
+            {% set bases = [
+              ("consent", "La personne a donné son accord", "Ex : formulaire d'inscription avec case à cocher, accord explicite avant collecte."),
+              ("contract", "C'est nécessaire pour un contrat", "Ex : coordonnées client pour livrer une commande, RIB pour payer un prestataire."),
+              ("legal", "La loi nous y oblige", "Ex : registre du personnel imposé par le Code du travail, déclarations fiscales obligatoires."),
+              ("vital", "Protection d'un intérêt vital", "Ex : dossier médical d'urgence, données nécessaires pour protéger la vie d'une personne."),
+              ("public", "Mission d'intérêt public", "Ex : traitement lié à une mission de service public, autorité publique ou organisme officiel."),
+              ("legit", "Intérêt légitime de l'entreprise", "Ex : prospection commerciale envers des clients existants, sécurité du réseau informatique."),
+            ] %}
+            <select name="rgpd_base_legale" id="rgpd_base_legale_select"
+              onchange="updateBaseLegaleTip(this)"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white">
+              <option value="">— Non renseigné —</option>
+              {% for val, label, tip in bases %}
+              <option value="{{ val }}" data-tip="{{ tip }}" {% if table.rgpd_base_legale == val %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <p id="rgpd_base_legale_tip" class="text-xs text-indigo-500 mt-1 min-h-[1rem]">
+              {%- for val, label, tip in bases %}{% if table.rgpd_base_legale == val %}{{ tip }}{% endif %}{%- endfor %}
+            </p>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1">Durée de conservation</label>
+            <input type="text" name="rgpd_duree_conservation" value="{{ table.rgpd_duree_conservation or '' }}"
+              placeholder="Ex : 5 ans, durée du contrat…"
+              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Responsable du traitement</label>
+          <input type="text" name="rgpd_responsable" value="{{ table.rgpd_responsable or '' }}"
+            placeholder="Nom / service responsable"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Destinataires / sous-traitants</label>
+          <textarea name="rgpd_destinataires" rows="2" placeholder="Ex : Service RH, prestataire externe XYZ…"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none bg-white">{{ table.rgpd_destinataires or '' }}</textarea>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" name="rgpd_hors_ue" value="1" class="rounded"
+            {% if table.rgpd_hors_ue %}checked{% endif %} />
+          Transfert de données hors UE
+        </label>
+      </div>
+    </details>
 
     <div>
       <div class="flex items-center justify-between mb-2">
@@ -193,6 +262,11 @@
             <input type="checkbox" name="col_required" value="{{ loop.index0 }}" class="rounded"
               {% if col.required %}checked{% endif %} />
             Obligatoire
+          </label>
+          <label class="flex items-center gap-1 text-sm text-amber-700 cursor-pointer" title="Cochez si ce champ contient des données personnelles (nom, email, adresse…)">
+            <input type="checkbox" name="col_personal_data" value="{{ loop.index0 }}" class="rounded accent-amber-500"
+              {% if col.is_personal_data %}checked{% endif %} />
+            Donnée personnelle
           </label>
           <button type="button" onclick="this.closest('.col-row').remove()"
             class="text-red-400 hover:text-red-600 text-lg leading-none px-1" title="Supprimer">&times;</button>

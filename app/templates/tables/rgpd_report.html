@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rapport RGPD — {{ table.name }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      body { font-size: 11pt; }
+      .page-break { page-break-before: always; }
+    }
+    body { font-family: 'Inter', system-ui, sans-serif; }
+  </style>
+</head>
+<body class="bg-white text-gray-800 max-w-4xl mx-auto px-8 py-10">
+
+  {# ── En-tête ───────────────────────────────────────────────────────── #}
+  <div class="flex items-start justify-between mb-8 pb-6 border-b-2 border-indigo-600">
+    <div>
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-xs font-semibold uppercase tracking-widest text-indigo-500">Rapport RGPD · Article 30</span>
+      </div>
+      <h1 class="text-3xl font-bold text-gray-900">{{ table.name }}</h1>
+      {% if table.description %}
+      <p class="text-sm text-gray-500 mt-1">{{ table.description }}</p>
+      {% endif %}
+    </div>
+    <div class="text-right text-xs text-gray-400 shrink-0 ml-6">
+      <p>Généré le {{ generated_at | dt_reunion('%d/%m/%Y à %H:%M') }}</p>
+      <p>Par {{ user.username }}</p>
+      <p class="mt-1">DataTracker</p>
+    </div>
+  </div>
+
+  <div class="no-print mb-6 flex gap-3">
+    <button onclick="window.print()"
+      class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+      Imprimer / Enregistrer en PDF
+    </button>
+    <a href="/tables/{{ table.id }}" class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition">
+      ← Retour à la table
+    </a>
+  </div>
+
+  {# ── 1. Fiche de traitement ────────────────────────────────────────── #}
+  <section class="mb-8">
+    <h2 class="text-lg font-bold text-indigo-700 mb-3 flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">1</span>
+      Fiche de traitement
+    </h2>
+    <div class="border border-gray-200 rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <tbody>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50 w-48">Nom du traitement</td>
+            <td class="px-4 py-2.5">{{ table.name }}</td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50">Finalité</td>
+            <td class="px-4 py-2.5">
+              {% if table.rgpd_finalite %}{{ table.rgpd_finalite }}
+              {% else %}<span class="text-gray-400 italic">Non renseigné</span>{% endif %}
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50">Base légale</td>
+            <td class="px-4 py-2.5">
+              {% if base_legale_label %}
+                {{ base_legale_label }}
+                <span class="text-xs text-gray-400 ml-1">({{ base_legale_article }})</span>
+              {% else %}<span class="text-gray-400 italic">Non renseigné</span>{% endif %}
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50">Durée de conservation</td>
+            <td class="px-4 py-2.5">
+              {% if table.rgpd_duree_conservation %}{{ table.rgpd_duree_conservation }}
+              {% else %}<span class="text-gray-400 italic">Non renseigné</span>{% endif %}
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50">Responsable du traitement</td>
+            <td class="px-4 py-2.5">
+              {% if table.rgpd_responsable %}{{ table.rgpd_responsable }}
+              {% else %}<span class="text-gray-400 italic">Non renseigné</span>{% endif %}
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50">Destinataires / sous-traitants</td>
+            <td class="px-4 py-2.5">
+              {% if table.rgpd_destinataires %}{{ table.rgpd_destinataires }}
+              {% else %}<span class="text-gray-400 italic">Non renseigné</span>{% endif %}
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50">Transfert hors UE</td>
+            <td class="px-4 py-2.5">
+              {% if table.rgpd_hors_ue %}
+                <span class="inline-flex items-center gap-1 text-amber-700 font-medium">⚠ Oui</span>
+              {% else %}
+                <span class="text-green-700">Non</span>
+              {% endif %}
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50">Déclarée au DPO</td>
+            <td class="px-4 py-2.5">
+              {% if table.dpo_declared %}<span class="text-green-700">Oui</span>
+              {% else %}<span class="text-gray-400">Non</span>{% endif %}
+            </td>
+          </tr>
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50">Créée le</td>
+            <td class="px-4 py-2.5">{{ table.created_at | dt_reunion('%d/%m/%Y') }}</td>
+          </tr>
+          <tr>
+            <td class="px-4 py-2.5 font-medium text-gray-500 bg-gray-50">Nombre d'enregistrements</td>
+            <td class="px-4 py-2.5 font-semibold">{{ row_count }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {# ── 2. Inventaire des données ─────────────────────────────────────── #}
+  <section class="mb-8">
+    <h2 class="text-lg font-bold text-indigo-700 mb-3 flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">2</span>
+      Inventaire des données
+      {% if pii_count > 0 %}
+      <span class="text-xs font-medium bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full ml-2">
+        {{ pii_count }} donnée{% if pii_count > 1 %}s{% endif %} personnelle{% if pii_count > 1 %}s{% endif %} détectée{% if pii_count > 1 %}s{% endif %}
+      </span>
+      {% endif %}
+    </h2>
+    <div class="border border-gray-200 rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            <th class="px-4 py-2.5 text-left font-semibold text-gray-600">Colonne</th>
+            <th class="px-4 py-2.5 text-left font-semibold text-gray-600">Type</th>
+            <th class="px-4 py-2.5 text-center font-semibold text-gray-600">Obligatoire</th>
+            <th class="px-4 py-2.5 text-center font-semibold text-gray-600">Donnée personnelle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for col in columns_with_pii %}
+          <tr class="border-b border-gray-100 {% if col.is_pii %}bg-amber-50/40{% endif %}">
+            <td class="px-4 py-2.5 font-medium">{{ col.name }}</td>
+            <td class="px-4 py-2.5">
+              <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono">{{ col.type }}</span>
+            </td>
+            <td class="px-4 py-2.5 text-center text-xs">
+              {% if col.required %}<span class="text-red-600 font-semibold">Oui</span>
+              {% else %}<span class="text-gray-400">—</span>{% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-center">
+              {% if col.is_pii %}
+                <span class="inline-block w-2 h-2 rounded-full bg-amber-400"></span>
+                <span class="text-xs text-amber-700 font-medium ml-1">Oui</span>
+                {% if not col.is_pii_explicit %}
+                <span class="text-xs text-gray-400">(auto)</span>
+                {% endif %}
+              {% else %}
+                <span class="text-xs text-gray-400">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="px-4 py-4 text-center text-gray-400 italic text-sm">Aucune colonne définie</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if pii_count > 0 %}
+    <p class="text-xs text-gray-400 mt-2">
+      La détection de données personnelles est basée sur le nom des colonnes et leur type. Elle est indicative et doit être vérifiée manuellement.
+    </p>
+    {% endif %}
+  </section>
+
+  {# ── 3. Matrice des accès ──────────────────────────────────────────── #}
+  <section class="mb-8">
+    <h2 class="text-lg font-bold text-indigo-700 mb-3 flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">3</span>
+      Matrice des accès
+    </h2>
+    <div class="border border-gray-200 rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            <th class="px-4 py-2.5 text-left font-semibold text-gray-600">Utilisateur</th>
+            <th class="px-4 py-2.5 text-left font-semibold text-gray-600">Niveau d'accès</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for owner in owners %}
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5">{{ owner.username }}</td>
+            <td class="px-4 py-2.5">
+              <span class="text-xs bg-blue-100 text-blue-700 font-semibold px-2 py-0.5 rounded">Propriétaire</span>
+            </td>
+          </tr>
+          {% endfor %}
+          {% for u, level in granted %}
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2.5">{{ u.username }}</td>
+            <td class="px-4 py-2.5">
+              {% if level.value == 'write' %}
+                <span class="text-xs bg-green-100 text-green-700 font-medium px-2 py-0.5 rounded">Écriture</span>
+              {% else %}
+                <span class="text-xs bg-gray-100 text-gray-600 font-medium px-2 py-0.5 rounded">Lecture</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          {% if not owners %}
+          <tr><td colspan="2" class="px-4 py-4 text-center text-gray-400 italic text-sm">Aucun accès défini</td></tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {# ── 4. Traçabilité ────────────────────────────────────────────────── #}
+  <section class="mb-8 page-break">
+    <h2 class="text-lg font-bold text-indigo-700 mb-3 flex items-center gap-2">
+      <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">4</span>
+      Traçabilité (20 derniers événements)
+    </h2>
+    <div class="border border-gray-200 rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-50 border-b border-gray-200">
+            <th class="px-4 py-2.5 text-left font-semibold text-gray-600">Date</th>
+            <th class="px-4 py-2.5 text-left font-semibold text-gray-600">Utilisateur</th>
+            <th class="px-4 py-2.5 text-left font-semibold text-gray-600">Action</th>
+            <th class="px-4 py-2.5 text-left font-semibold text-gray-600">Détail</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for log in recent_logs %}
+          <tr class="border-b border-gray-100">
+            <td class="px-4 py-2 text-gray-500 whitespace-nowrap">{{ log.timestamp | dt_reunion('%d/%m/%Y %H:%M') }}</td>
+            <td class="px-4 py-2">{{ log.username }}</td>
+            <td class="px-4 py-2">
+              <span class="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded">{{ log.action }}</span>
+            </td>
+            <td class="px-4 py-2 text-gray-500 text-xs truncate max-w-[200px]">{{ log.details[:80] if log.details else '—' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="px-4 py-4 text-center text-gray-400 italic text-sm">Aucun événement enregistré</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="text-xs text-gray-400 mt-2">Les événements sont horodatés en heure de La Réunion (UTC+4).</p>
+  </section>
+
+  {# ── Pied de page ──────────────────────────────────────────────────── #}
+  <footer class="border-t border-gray-200 pt-4 mt-8 text-xs text-gray-400 flex justify-between">
+    <span>DataTracker · Rapport généré le {{ generated_at | dt_reunion('%d/%m/%Y à %H:%M') }}</span>
+    <span>Table : {{ table.name }} (ID {{ table.id }})</span>
+  </footer>
+
+</body>
+</html>
