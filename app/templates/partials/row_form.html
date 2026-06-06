@@ -20,6 +20,7 @@
         <label class="block text-xs font-medium text-gray-600 mb-1">
           {{ col.name }}
           {% if col.required %}<span class="text-red-500">*</span>{% endif %}
+          {% if col.is_unique %}<span class="text-violet-400 text-xs font-normal" title="Valeur unique requise">U</span>{% endif %}
           {% if col_readonly.get(col.id) %}<span class="text-gray-400">(lecture seule)</span>{% endif %}
         </label>
 
@@ -84,6 +85,9 @@
           <input type="text" name="col_{{ col.id }}" value="{{ cells.get(col.id, '') }}"
             {% if col.required %}required{% endif %}
             class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        {% endif %}
+        {% if errors and errors.get(col.id) %}
+        <p class="text-xs text-red-600 mt-0.5 font-medium">&#9888; {{ errors[col.id] }}</p>
         {% endif %}
       </div>
       {% endfor %}

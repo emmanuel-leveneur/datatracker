@@ -75,6 +75,7 @@ def _run_migrations():
             ("related_table_id", "ALTER TABLE table_columns ADD COLUMN related_table_id INTEGER"),
             ("related_display_col_id", "ALTER TABLE table_columns ADD COLUMN related_display_col_id INTEGER"),
             ("related_value_col_id", "ALTER TABLE table_columns ADD COLUMN related_value_col_id INTEGER"),
+            ("is_unique", "ALTER TABLE table_columns ADD COLUMN is_unique BOOLEAN DEFAULT 0"),
             ("is_personal_data", "ALTER TABLE table_columns ADD COLUMN is_personal_data BOOLEAN DEFAULT 0"),
         ],
         "users": [

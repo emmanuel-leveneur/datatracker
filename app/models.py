@@ -107,6 +107,7 @@ class TableColumn(Base):
     col_type: Mapped[ColumnType] = mapped_column(Enum(ColumnType), default=ColumnType.TEXT)
     order: Mapped[int] = mapped_column(Integer, default=0)
     required: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_unique: Mapped[bool] = mapped_column(Boolean, default=False)
     is_personal_data: Mapped[bool] = mapped_column(Boolean, default=False)
     select_options: Mapped[str] = mapped_column(Text, default="")  # comma-separated
     # Colonnes relation (type RELATION uniquement) — pas de FK pour survivre aux suppressions
