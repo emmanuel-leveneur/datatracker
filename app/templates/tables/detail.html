@@ -106,6 +106,30 @@
   </div>
 </div>
 
+{# ── Prévisualisation PDF pièce jointe ────────────────────────────────────── #}
+<div id="pdf-preview-backdrop" class="fixed inset-0 bg-black/85 z-[60] hidden" onclick="closePdfPreview()"></div>
+<div id="pdf-preview" class="fixed inset-0 z-[60] flex flex-col p-4 pointer-events-none hidden">
+  <div class="relative pointer-events-auto flex flex-col w-full max-w-5xl mx-auto h-full">
+    <div class="flex items-center justify-between mb-2 px-1">
+      <p id="pdf-preview-name" class="text-white text-sm font-medium truncate max-w-[60%] drop-shadow"></p>
+      <div class="flex items-center gap-2">
+        <a id="pdf-preview-dl" href="#" download
+           class="flex items-center gap-1.5 text-white/80 hover:text-white text-xs bg-white/10 hover:bg-white/25 px-3 py-1.5 rounded-lg transition">
+          <i data-lucide="download" class="w-3.5 h-3.5"></i>
+          Télécharger
+        </a>
+        <button onclick="closePdfPreview()"
+          class="text-white/70 hover:text-white p-1.5 hover:bg-white/20 rounded-lg transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+    </div>
+    <iframe id="pdf-preview-frame" src=""
+      class="flex-1 w-full rounded-xl bg-white shadow-2xl border-0"
+      title="Prévisualisation PDF"></iframe>
+  </div>
+</div>
+
 {# ── Modal synchronisation webservice ─────────────────────────────────────── #}
 <div id="sync-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeSyncModal()"></div>
 <div id="sync-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
@@ -723,6 +747,18 @@ function closeLightbox() {
   document.getElementById('att-lightbox').classList.add('hidden');
   document.getElementById('att-lightbox-img').src = '';
 }
+function openPdfPreview(viewUrl, dlUrl, name) {
+  document.getElementById('pdf-preview-frame').src = viewUrl;
+  document.getElementById('pdf-preview-name').textContent = name;
+  document.getElementById('pdf-preview-dl').href = dlUrl;
+  document.getElementById('pdf-preview-backdrop').classList.remove('hidden');
+  document.getElementById('pdf-preview').classList.remove('hidden');
+}
+function closePdfPreview() {
+  document.getElementById('pdf-preview-backdrop').classList.add('hidden');
+  document.getElementById('pdf-preview').classList.add('hidden');
+  document.getElementById('pdf-preview-frame').src = '';
+}
 
 // ── Modal fiche détail ─────────────────────────────────────────────────────
 function openDetailModal() {
@@ -798,11 +834,14 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
   }
 });
 
-// Touche Échap pour fermer (lightbox en priorité)
+// Touche Échap pour fermer (lightbox et PDF en priorité)
 document.addEventListener('keydown', function(e) {
   if (e.key !== 'Escape') return;
   if (!document.getElementById('att-lightbox').classList.contains('hidden')) {
     closeLightbox(); return;
+  }
+  if (!document.getElementById('pdf-preview').classList.contains('hidden')) {
+    closePdfPreview(); return;
   }
   closeCommentPanel(); closeHistoryModal(); closeSyncModal(); closeDetailModal();
 });

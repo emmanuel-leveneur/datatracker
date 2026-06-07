@@ -102,6 +102,10 @@
         <input type="checkbox" name="col_required" value="${idx}" class="rounded" />
         Obligatoire
       </label>
+      <label class="flex items-center gap-1 text-sm text-violet-700 cursor-pointer" title="Deux lignes ne peuvent pas avoir la même valeur dans cette colonne (insensible à la casse, les vides sont ignorés).">
+        <input type="checkbox" name="col_unique" value="${idx}" class="rounded accent-violet-500" />
+        Unique
+      </label>
       <label class="flex items-center gap-1 text-sm text-amber-700 cursor-pointer" title="Cochez si ce champ contient des données personnelles (nom, email, adresse…)">
         <input type="checkbox" name="col_personal_data" value="${idx}" class="rounded accent-amber-500" />
         Donnée personnelle

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import delete as sa_delete, func as sa_func, select
 from sqlalchemy.orm import Session, subqueryload
 from app.activity import log_action
 from app.database import get_db
@@ -133,6 +133,7 @@ def create_table(
     col_names: list[str] = Form(default=[]),
     col_types: list[str] = Form(default=[]),
     col_required: list[str] = Form(default=[]),
+    col_unique: list[str] = Form(default=[]),
     col_personal_data: list[str] = Form(default=[]),
     col_options: list[str] = Form(default=[]),
     col_related_table_ids: list[str] = Form(default=[]),
@@ -149,6 +150,7 @@ def create_table(
     db.add(TableOwner(table_id=table.id, user_id=user.id))
 
     required_set = set(col_required)
+    unique_set = set(col_unique)
     personal_data_set = set(col_personal_data)
     for i, (cname, ctype) in enumerate(zip(col_names, col_types)):
         cname = cname.strip()
@@ -171,6 +173,7 @@ def create_table(
             col_type=ColumnType(ctype),
             order=i,
             required=(str(i) in required_set),
+            is_unique=(str(i) in unique_set),
             is_personal_data=(str(i) in personal_data_set),
             select_options=options,
             related_table_id=rel_table_id,
@@ -578,6 +581,7 @@ def edit_table(
     col_names: list[str] = Form(default=[]),
     col_types: list[str] = Form(default=[]),
     col_required: list[str] = Form(default=[]),
+    col_unique: list[str] = Form(default=[]),
     col_personal_data: list[str] = Form(default=[]),
     col_options: list[str] = Form(default=[]),
     col_related_table_ids: list[str] = Form(default=[]),
@@ -603,6 +607,44 @@ def edit_table(
     old_description = table.description or ""
     old_cols = {col.id: {"name": col.name, "type": col.col_type.value} for col in table.columns}
 
+    # ── Pré-validation : doublons sur les colonnes nouvellement marquées unique ──
+    unique_set = set(col_unique)
+    existing_ids = {str(c.id) for c in table.columns}
+    dup_errors: dict[int, dict] = {}
+    for i, cid in enumerate(col_ids):
+        if cid and cid in existing_ids and str(i) in unique_set:
+            col_obj = db.get(TableColumn, int(cid))
+            if col_obj and not col_obj.is_unique:
+                dupes = (
+                    db.query(CellValue.value)
+                    .join(TableRow, CellValue.row_id == TableRow.id)
+                    .filter(
+                        CellValue.column_id == int(cid),
+                        TableRow.deleted_at.is_(None),
+                        CellValue.value != "",
+                    )
+                    .group_by(sa_func.lower(CellValue.value))
+                    .having(sa_func.count(CellValue.id) > 1)
+                    .all()
+                )
+                if dupes:
+                    col_name = col_names[i].strip() if i < len(col_names) else col_obj.name
+                    dup_errors[int(cid)] = {
+                        "col_name": col_name,
+                        "values": [r[0] for r in dupes],
+                    }
+    if dup_errors:
+        return templates.TemplateResponse(
+            request, "tables/edit.html",
+            {
+                "user": user,
+                "table": table,
+                "column_types": COLUMN_TYPES,
+                "all_tables_json": _all_tables_json(db, user, exclude_id=table.id),
+                "dup_errors": dup_errors,
+            },
+        )
+
     table.name = name
     table.description = description
     table.rgpd_finalite = rgpd_finalite
@@ -612,7 +654,6 @@ def edit_table(
     table.rgpd_destinataires = rgpd_destinataires
     table.rgpd_hors_ue = bool(rgpd_hors_ue)
 
-    existing_ids = {str(c.id) for c in table.columns}
     submitted_ids = set(col_ids)
 
     # Delete removed columns
@@ -622,7 +663,7 @@ def edit_table(
 
     required_set = set(col_required)
     personal_data_set = set(col_personal_data)
-    for i, (cid, cname, ctype) in enumerate(zip(col_ids, col_names, col_types)):
+    for i, (cid, cname, ctype) in enumerate(zip(col_ids, col_names, col_types)):  # noqa: B007
         cname = cname.strip()
         if not cname:
             continue
@@ -644,6 +685,7 @@ def edit_table(
                 col.col_type = ColumnType(ctype)
                 col.order = i
                 col.required = (str(i) in required_set)
+                col.is_unique = (str(i) in unique_set)
                 col.is_personal_data = (str(i) in personal_data_set)
                 col.select_options = options
                 col.related_table_id = rel_table_id
@@ -656,6 +698,7 @@ def edit_table(
                 col_type=ColumnType(ctype),
                 order=i,
                 required=(str(i) in required_set),
+                is_unique=(str(i) in unique_set),
                 is_personal_data=(str(i) in personal_data_set),
                 select_options=options,
                 related_table_id=rel_table_id,

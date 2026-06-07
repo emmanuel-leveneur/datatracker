@@ -22,6 +22,29 @@ ALLOWED_PAGE_SIZES = [25, 50, 100, 250, 500]
 DEFAULT_PAGE_SIZE = 25
 
 
+def _check_unique_violation(
+    db: Session,
+    column_id: int,
+    value: str,
+    exclude_row_id: int | None = None,
+) -> bool:
+    """Returns True if value already exists in a non-deleted row for this column."""
+    if not value:
+        return False
+    query = (
+        db.query(CellValue)
+        .join(TableRow, CellValue.row_id == TableRow.id)
+        .filter(
+            CellValue.column_id == column_id,
+            sa_func.lower(CellValue.value) == value.lower(),
+            TableRow.deleted_at.is_(None),
+        )
+    )
+    if exclude_row_id is not None:
+        query = query.filter(CellValue.row_id != exclude_row_id)
+    return query.first() is not None
+
+
 def _rows_template_ctx(
     db: Session,
     table,
@@ -349,16 +372,51 @@ async def create_row(
         raise HTTPException(status_code=403)
 
     form = await request.form()
+    visible_cols = get_visible_columns(table, user, db)
+    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
+
+    # Collect form values before any DB write
+    form_values = {
+        col.id: str(form.get(f"col_{col.id}", ""))
+        for col in visible_cols
+        if not col_readonly.get(col.id)
+    }
+
+    # Check unique constraints
+    unique_errors: dict[int, str] = {}
+    for col in visible_cols:
+        if col.is_unique and not col_readonly.get(col.id):
+            value = form_values.get(col.id, "")
+            if _check_unique_violation(db, col.id, value):
+                unique_errors[col.id] = f'La valeur « {value} » existe déjà dans cette colonne.'
+
+    if unique_errors:
+        resp = templates.TemplateResponse(
+            request, "partials/row_form.html",
+            {
+                "table": table,
+                "columns": visible_cols,
+                "col_readonly": col_readonly,
+                "row": None,
+                "cells": form_values,
+                "errors": unique_errors,
+                "page": form.get("page", 1),
+                "relation_options": _get_relation_options(db, visible_cols),
+            },
+        )
+        resp.headers["HX-Retarget"] = "#row-form-area"
+        resp.headers["HX-Reswap"] = "innerHTML"
+        return resp
+
     row = TableRow(table_id=table_id, created_by_id=user.id)
     db.add(row)
     db.flush()
 
-    visible_cols = get_visible_columns(table, user, db)
     cell_parts = []
     for col in visible_cols:
-        if is_column_readonly(col, user, db):
+        if col_readonly.get(col.id):
             continue
-        value = str(form.get(f"col_{col.id}", ""))
+        value = form_values.get(col.id, "")
         db.add(CellValue(row_id=row.id, column_id=col.id, value=value))
         if value:
             cell_parts.append(f"{col.name} -> {value}")
@@ -441,25 +499,61 @@ async def update_row(
 
     form = await request.form()
     visible_cols = get_visible_columns(table, user, db)
+    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
     existing_cells = {cv.column_id: cv for cv in row.cell_values}
 
     # Capture old values before modification
     old_values = {cv.column_id: cv.value for cv in row.cell_values}
 
+    # Collect new values
+    form_values = {
+        col.id: str(form.get(f"col_{col.id}", ""))
+        for col in visible_cols
+        if not col_readonly.get(col.id)
+    }
+
+    # Check unique constraints (exclude current row)
+    unique_errors: dict[int, str] = {}
     for col in visible_cols:
-        if is_column_readonly(col, user, db):
+        if col.is_unique and not col_readonly.get(col.id):
+            value = form_values.get(col.id, "")
+            if _check_unique_violation(db, col.id, value, exclude_row_id=row.id):
+                unique_errors[col.id] = f'La valeur « {value} » existe déjà dans cette colonne.'
+
+    if unique_errors:
+        cells = {cv.column_id: cv.value for cv in row.cell_values}
+        cells.update(form_values)
+        resp = templates.TemplateResponse(
+            request, "partials/row_form.html",
+            {
+                "table": table,
+                "columns": visible_cols,
+                "col_readonly": col_readonly,
+                "row": row,
+                "cells": cells,
+                "errors": unique_errors,
+                "page": form.get("page", 1),
+                "relation_options": _get_relation_options(db, visible_cols),
+            },
+        )
+        resp.headers["HX-Retarget"] = "#row-form-area"
+        resp.headers["HX-Reswap"] = "innerHTML"
+        return resp
+
+    for col in visible_cols:
+        if col_readonly.get(col.id):
             continue
-        value = form.get(f"col_{col.id}", "")
+        value = form_values.get(col.id, "")
         if col.id in existing_cells:
-            existing_cells[col.id].value = str(value)
+            existing_cells[col.id].value = value
         else:
-            db.add(CellValue(row_id=row.id, column_id=col.id, value=str(value)))
+            db.add(CellValue(row_id=row.id, column_id=col.id, value=value))
 
     diff = []
     for col in visible_cols:
-        if is_column_readonly(col, user, db):
+        if col_readonly.get(col.id):
             continue
-        new_val = str(form.get(f"col_{col.id}", ""))
+        new_val = form_values.get(col.id, "")
         old_val = old_values.get(col.id, "")
         if old_val != new_val:
             diff.append(f'"{col.name}" : "{old_val}" → "{new_val}"')
@@ -693,19 +787,64 @@ async def import_csv(
     visible_cols = get_visible_columns(table, user, db)
     col_map = {col.name.lower(): col for col in visible_cols}
 
+    unique_cols = {col.id: col for col in visible_cols if col.is_unique}
+    seen_in_import: dict[int, set] = {col_id: set() for col_id in unique_cols}
+
     imported = 0
-    errors = []
-    for csv_row in reader:
-        row = TableRow(table_id=table_id, created_by_id=user.id)
-        db.add(row)
-        db.flush()
+    errors: list[str] = []
+    for row_num, csv_row in enumerate(reader, start=2):
+        # Parse values for this CSV row
+        parsed: dict[int, str] = {}
         for csv_col, value in csv_row.items():
             col = col_map.get(csv_col.strip().lower())
             if col and not is_column_readonly(col, user, db):
-                db.add(CellValue(row_id=row.id, column_id=col.id, value=value or ""))
+                parsed[col.id] = value or ""
+
+        # Check unique constraints
+        row_errors: list[str] = []
+        for col_id, col in unique_cols.items():
+            value = parsed.get(col_id, "")
+            if value:
+                val_lower = value.lower()
+                if val_lower in seen_in_import[col_id]:
+                    row_errors.append(
+                        f"Ligne {row_num} — {col.name} : « {value} » est en doublon dans le fichier."
+                    )
+                elif _check_unique_violation(db, col_id, value):
+                    row_errors.append(
+                        f"Ligne {row_num} — {col.name} : « {value} » existe déjà en base."
+                    )
+
+        if row_errors:
+            errors.extend(row_errors)
+            continue
+
+        # Mark values as seen for intra-import dedup
+        for col_id in unique_cols:
+            value = parsed.get(col_id, "")
+            if value:
+                seen_in_import[col_id].add(value.lower())
+
+        row = TableRow(table_id=table_id, created_by_id=user.id)
+        db.add(row)
+        db.flush()
+        for col_id, value in parsed.items():
+            db.add(CellValue(row_id=row.id, column_id=col_id, value=value))
         db.flush()
         evaluate_alerts_for_row(db, row, table)
         imported += 1
+
+    if errors:
+        db.rollback()
+        return templates.TemplateResponse(
+            request, "tables/import.html",
+            {
+                "table": table,
+                "user": user,
+                "columns": visible_cols,
+                "errors": errors,
+            },
+        )
 
     log_action(db, user, "import_csv", "row",
                resource_name=table.name, details=f"{imported} ligne(s) importée(s)",
@@ -718,6 +857,6 @@ async def import_csv(
             "user": user,
             "columns": visible_cols,
             "success": f"{imported} ligne(s) importée(s)",
-            "errors": errors,
+            "errors": [],
         },
     )

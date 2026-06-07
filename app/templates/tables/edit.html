@@ -102,6 +102,10 @@
         <input type="checkbox" name="col_required" value="${idx}" class="rounded" />
         Obligatoire
       </label>
+      <label class="flex items-center gap-1 text-sm text-violet-700 cursor-pointer" title="Deux lignes ne peuvent pas avoir la même valeur dans cette colonne (insensible à la casse, les vides sont ignorés).">
+        <input type="checkbox" name="col_unique" value="${idx}" class="rounded accent-violet-500" />
+        Unique
+      </label>
       <label class="flex items-center gap-1 text-sm text-amber-700 cursor-pointer" title="Cochez si ce champ contient des données personnelles (nom, email, adresse…)">
         <input type="checkbox" name="col_personal_data" value="${idx}" class="rounded accent-amber-500" />
         Donnée personnelle
@@ -137,6 +141,22 @@
     <a href="/tables/{{ table.id }}" class="text-gray-400 hover:text-gray-600 text-sm">← Retour</a>
     <h1 class="text-2xl font-bold text-gray-800">Modifier « {{ table.name }} »</h1>
   </div>
+
+  {% if dup_errors %}
+  <div class="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-800">
+    <p class="font-semibold mb-2">Impossible d'activer Unique sur les colonnes suivantes — des doublons existent :</p>
+    <ul class="list-disc list-inside space-y-1">
+      {% for col_id, info in dup_errors.items() %}
+      <li>
+        <span class="font-medium">{{ info.col_name }}</span> —
+        valeurs en doublon :
+        {% for v in info['values'] %}<code class="bg-red-100 px-1 rounded">{{ v }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="mt-2 text-red-600 text-xs">Corrigez les doublons dans les données de la table avant d'activer la contrainte Unique.</p>
+  </div>
+  {% endif %}
 
   <form method="post" action="/tables/{{ table.id }}/edit"
     class="bg-white border border-gray-200 rounded-xl shadow-sm p-6 space-y-6">
@@ -262,6 +282,11 @@
             <input type="checkbox" name="col_required" value="{{ loop.index0 }}" class="rounded"
               {% if col.required %}checked{% endif %} />
             Obligatoire
+          </label>
+          <label class="flex items-center gap-1 text-sm text-violet-700 cursor-pointer" title="Deux lignes ne peuvent pas avoir la même valeur dans cette colonne (insensible à la casse, les vides sont ignorés).">
+            <input type="checkbox" name="col_unique" value="{{ loop.index0 }}" class="rounded accent-violet-500"
+              {% if col.is_unique %}checked{% endif %} />
+            Unique
           </label>
           <label class="flex items-center gap-1 text-sm text-amber-700 cursor-pointer" title="Cochez si ce champ contient des données personnelles (nom, email, adresse…)">
             <input type="checkbox" name="col_personal_data" value="{{ loop.index0 }}" class="rounded accent-amber-500"
