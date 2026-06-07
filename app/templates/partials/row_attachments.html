@@ -24,21 +24,32 @@
           data-name="{{ att.original_name | e }}"
           onclick="openLightbox(this.dataset.viewUrl, this.dataset.dlUrl, this.dataset.name)"
           title="Voir en grand"
-          class="shrink-0 w-12 h-12 rounded-lg overflow-hidden border border-gray-200 hover:border-blue-400 transition cursor-zoom-in relative shadow-sm">
+          class="shrink-0 w-12 h-12 rounded-lg overflow-hidden border border-gray-200 hover:border-blue-400 transition cursor-pointer relative shadow-sm">
           <img src="/tables/{{ table.id }}/rows/{{ row.id }}/attachments/{{ att.id }}/view"
                alt="{{ att.original_name | e }}"
                loading="lazy"
                class="w-full h-full object-cover">
           <span class="absolute inset-0 flex items-center justify-center rounded-lg
                        opacity-0 hover:opacity-100 bg-black/20 transition">
-            <i data-lucide="zoom-in" class="w-4 h-4 text-white drop-shadow"></i>
+            <i data-lucide="eye" class="w-4 h-4 text-white drop-shadow"></i>
+          </span>
+        </button>
+      {% elif att.mime_type == 'application/pdf' %}
+        <button
+          data-view-url="/tables/{{ table.id }}/rows/{{ row.id }}/attachments/{{ att.id }}/view"
+          data-dl-url="/tables/{{ table.id }}/rows/{{ row.id }}/attachments/{{ att.id }}/download"
+          data-name="{{ att.original_name | e }}"
+          onclick="openPdfPreview(this.dataset.viewUrl, this.dataset.dlUrl, this.dataset.name)"
+          title="Prévisualiser le PDF"
+          class="shrink-0 w-12 h-12 rounded-lg bg-white border border-gray-100 hover:border-red-300 flex items-center justify-center shadow-sm cursor-pointer transition relative group/pdf">
+          <i data-lucide="file-text" class="w-5 h-5 text-red-400"></i>
+          <span class="absolute inset-0 flex items-center justify-center rounded-lg opacity-0 group-hover/pdf:opacity-100 bg-red-50/60 transition">
+            <i data-lucide="eye" class="w-4 h-4 text-red-500"></i>
           </span>
         </button>
       {% else %}
         <div class="shrink-0 w-12 h-12 rounded-lg bg-white border border-gray-100 flex items-center justify-center shadow-sm">
-          {% if att.mime_type == 'application/pdf' %}
-            <i data-lucide="file-text" class="w-5 h-5 text-red-400"></i>
-          {% elif 'spreadsheet' in att.mime_type or 'excel' in att.mime_type or att.mime_type == 'text/csv' %}
+          {% if 'spreadsheet' in att.mime_type or 'excel' in att.mime_type or att.mime_type == 'text/csv' %}
             <i data-lucide="table-2" class="w-5 h-5 text-green-500"></i>
           {% elif 'word' in att.mime_type or 'document' in att.mime_type %}
             <i data-lucide="file-type" class="w-5 h-5 text-blue-500"></i>

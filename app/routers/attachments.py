@@ -186,8 +186,8 @@ def view_attachment(
     att = db.get(RowAttachment, att_id)
     if not att or att.row_id != row_id or att.table_id != table_id:
         raise HTTPException(status_code=404)
-    if not att.mime_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Ce fichier n'est pas une image.")
+    if not att.mime_type.startswith("image/") and att.mime_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Prévisualisation non disponible pour ce type de fichier.")
     path = _upload_path(att.stored_name)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Fichier introuvable sur le serveur.")

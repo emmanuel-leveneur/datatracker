@@ -293,7 +293,7 @@ def test_view_image_returns_inline(admin_client, db, admin_user, upload_dir):
     assert "inline" in resp.headers.get("content-disposition", "inline")
 
 
-def test_view_non_image_rejected(admin_client, db, admin_user, upload_dir):
+def test_view_pdf_returns_inline(admin_client, db, admin_user, upload_dir):
     table, _ = make_table(db, admin_user)
     row = _make_row(db, table, admin_user)
     att = _make_attachment(db, row, admin_user, upload_dir)  # PDF
@@ -302,6 +302,36 @@ def test_view_non_image_rejected(admin_client, db, admin_user, upload_dir):
         f"/tables/{table.id}/rows/{row.id}/attachments/{att.id}/view"
     )
 
+    assert resp.status_code == 200
+    assert resp.headers.get("content-type", "").startswith("application/pdf")
+    assert "inline" in resp.headers.get("content-disposition", "inline")
+
+
+def test_view_non_previewable_rejected(admin_client, db, admin_user, upload_dir):
+    """Les fichiers non image/pdf ne peuvent pas être prévisualisés."""
+    import os as _os
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+    stored_name = "testcsv_abc123.csv"
+    path = _os.path.join(str(upload_dir), stored_name)
+    with open(path, "wb") as f:
+        f.write(b"a,b,c\n1,2,3\n")
+    att = RowAttachment(
+        row_id=row.id,
+        table_id=table.id,
+        uploaded_by=admin_user.id,
+        original_name="data.csv",
+        stored_name=stored_name,
+        mime_type="text/csv",
+        size=12,
+    )
+    db.add(att)
+    db.commit()
+    db.refresh(att)
+
+    resp = admin_client.get(
+        f"/tables/{table.id}/rows/{row.id}/attachments/{att.id}/view"
+    )
     assert resp.status_code == 400
 
 
