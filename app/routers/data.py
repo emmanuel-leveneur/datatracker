@@ -329,7 +329,7 @@ def get_rows(
         raise HTTPException(status_code=403)
     col_filters = _parse_col_filters(dict(request.query_params))
     return templates.TemplateResponse(
-        request, "partials/table_rows.html",
+        request, "partials/table_rows_response.html",
         _rows_template_ctx(db, table, user, page, q, col_filters, page_size),
     )
 
@@ -438,7 +438,7 @@ async def create_row(
         col_filters = _parse_col_filters(dict(form))
         page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
         return templates.TemplateResponse(
-            request, "partials/table_rows.html",
+            request, "partials/table_rows_response.html",
             _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters, page_size=page_size),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -571,7 +571,7 @@ async def update_row(
         page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
         page = int(form.get("page", 1))
         return templates.TemplateResponse(
-            request, "partials/table_rows.html",
+            request, "partials/table_rows_response.html",
             _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
@@ -607,7 +607,7 @@ async def trash_row(
         col_filters = _parse_col_filters(dict(form))
         page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
         return templates.TemplateResponse(
-            request, "partials/table_rows.html",
+            request, "partials/table_rows_response.html",
             _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
         )
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)

@@ -1,48 +1,4 @@
-<table id="main-table" class="min-w-full divide-y divide-gray-200 text-sm">
-  <thead class="bg-gray-50">
-    <tr>
-      <!-- Colonne alerte : non exportable, non triable -->
-      <th class="dt-no-export w-8 px-2 py-3"></th>
-      {% for col in columns %}
-      <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"
-          data-col-id="{{ col.id }}">
-        {{ col.name }}
-        {% if col.required %}<span class="text-red-400">*</span>{% endif %}
-        {% if col_readonly.get(col.id) %}
-        <span class="ml-1 text-xs bg-gray-200 text-gray-500 px-1 rounded" title="Lecture seule">🔒</span>
-        {% endif %}
-      </th>
-      {% endfor %}
-      {# Colonne actions sticky à droite #}
-      <th class="dt-no-export col-sticky-right px-3 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-gray-50">
-        {% if can_write %}Actions{% endif %}
-      </th>
-    </tr>
-    <!-- Ligne de filtres par colonne -->
-    <tr class="border-t border-gray-200 bg-white">
-      <th class="w-8 px-2 py-1.5"></th><!-- colonne alerte -->
-      {% for col in columns %}
-      <th class="px-2 py-1.5">
-        <input
-          type="search"
-          name="filter_{{ col.id }}"
-          value="{{ (col_filters | default({})).get(col.id | string, '') }}"
-          placeholder="{{ col.name }}…"
-          autocomplete="off"
-          onclick="event.stopPropagation()"
-          hx-get="/tables/{{ table.id }}/rows"
-          hx-target="#table-body"
-          hx-trigger="input changed delay:350ms, search"
-          hx-include="#filters-zone, #global-search"
-          class="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-600 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400 font-normal"
-        />
-      </th>
-      {% endfor %}
-      <th class="col-sticky-right px-2 py-1.5 bg-white"></th>{# colonne actions #}
-    </tr>
-  </thead>
-  <tbody class="divide-y divide-gray-100 bg-white">
-    {% if rows_data %}
+{% if rows_data %}
     {% for item in rows_data %}
     {% set is_alerted = alerted_rows is defined and item.row.id in alerted_rows %}
     {% set row_data = alerted_rows[item.row.id] if is_alerted else None %}
@@ -163,37 +119,3 @@
       </td>
     </tr>
     {% endif %}
-  </tbody>
-</table>
-
-{% set _total_pages = total_pages | default(1) %}
-{% set _page = page | default(1) %}
-{% set _total_count = total_count | default(0) %}
-<div class="flex items-center justify-between px-4 py-2.5 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
-  <span>{{ _total_count }} ligne(s)</span>
-  {% if _total_pages > 1 %}
-  <div class="flex items-center gap-1">
-    {% set ns = namespace(prev=0) %}
-    {% for p in range(1, _total_pages + 1) %}
-      {% if p == 1 or p == _total_pages or (p >= _page - 2 and p <= _page + 2) %}
-        {% if ns.prev > 0 and p - ns.prev > 1 %}
-        <span class="px-1 text-gray-400 select-none">…</span>
-        {% endif %}
-        {% if p == _page %}
-        <span class="px-2.5 py-1 rounded bg-blue-600 text-white font-semibold select-none">{{ p }}</span>
-        {% else %}
-        <button
-          hx-get="/tables/{{ table.id }}/rows"
-          hx-target="#table-body"
-          hx-include="#filters-zone, #global-search"
-          hx-vals='{"page": {{ p }}}'
-          class="px-2.5 py-1 rounded border border-gray-300 text-gray-600 hover:bg-gray-100 transition">
-          {{ p }}
-        </button>
-        {% endif %}
-        {% set ns.prev = p %}
-      {% endif %}
-    {% endfor %}
-  </div>
-  {% endif %}
-</div>

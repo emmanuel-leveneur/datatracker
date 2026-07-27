@@ -385,10 +385,56 @@
       </div>
     </div>
     <div class="overflow-x-auto">
-      <div id="table-body">
-        {% include "partials/table_rows.html" %}
-      </div>
+      <table id="main-table" class="min-w-full divide-y divide-gray-200 text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <!-- Colonne alerte : non exportable, non triable -->
+            <th class="dt-no-export w-8 px-2 py-3"></th>
+            {% for col in columns %}
+            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"
+                data-col-id="{{ col.id }}">
+              {{ col.name }}
+              {% if col.required %}<span class="text-red-400">*</span>{% endif %}
+              {% if col_readonly.get(col.id) %}
+              <span class="ml-1 text-xs bg-gray-200 text-gray-500 px-1 rounded" title="Lecture seule">🔒</span>
+              {% endif %}
+            </th>
+            {% endfor %}
+            {# Colonne actions sticky à droite #}
+            <th class="dt-no-export col-sticky-right px-3 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-gray-50">
+              {% if can_write %}Actions{% endif %}
+            </th>
+          </tr>
+          <!-- Ligne de filtres par colonne -->
+          <tr class="border-t border-gray-200 bg-white">
+            <th class="w-8 px-2 py-1.5"></th><!-- colonne alerte -->
+            {% for col in columns %}
+            <th class="px-2 py-1.5">
+              <input
+                id="filter-{{ col.id }}"
+                type="search"
+                name="filter_{{ col.id }}"
+                value="{{ (col_filters | default({})).get(col.id | string, '') }}"
+                placeholder="{{ col.name }}…"
+                autocomplete="off"
+                onclick="event.stopPropagation()"
+                hx-get="/tables/{{ table.id }}/rows"
+                hx-target="#table-body"
+                hx-trigger="input changed delay:350ms, search"
+                hx-include="#filters-zone, #global-search"
+                class="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-600 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400 font-normal"
+              />
+            </th>
+            {% endfor %}
+            <th class="col-sticky-right px-2 py-1.5 bg-white"></th>{# colonne actions #}
+          </tr>
+        </thead>
+        <tbody id="table-body" class="divide-y divide-gray-100 bg-white">
+          {% include "partials/table_rows.html" %}
+        </tbody>
+      </table>
     </div>
+    {% include "partials/table_pagination.html" %}
   </div>
 </div>
 {% else %}
@@ -666,8 +712,18 @@ function closeAlertsPanel() {
 
   function initMainTable() {
     if (!document.getElementById('main-table')) return;
+
     if ($.fn.DataTable.isDataTable('#main-table')) {
-      $('#main-table').DataTable().destroy();
+      // Le tbody (#table-body) est désormais swappé seul par HTMX (le thead reste statique
+      // pour ne pas faire perdre le focus des champs de filtre) : le nœud <table> n'est donc
+      // plus jamais recréé. Un destroy()+réinit ici resterait branché sur les lignes qu'il a
+      // connues à l'init et les restaurerait à la place des lignes fraîchement filtrées — on
+      // se contente donc de resynchroniser les données depuis le DOM courant.
+      var dt = $('#main-table').DataTable();
+      dt.clear();
+      dt.rows.add($('#main-table tbody tr'));
+      dt.draw(false);
+      return;
     }
 
     // Lire le mapping index → col-id AVANT que DataTables modifie le DOM

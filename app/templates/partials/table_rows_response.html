@@ -1,0 +1,4 @@
+{# thead statique non inclus ici : seul le tbody (#table-body) est swappé, la pagination est mise à jour via hx-swap-oob #}
+{% include "partials/table_rows.html" %}
+{% set oob = true %}
+{% include "partials/table_pagination.html" %}
