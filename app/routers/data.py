@@ -4,7 +4,7 @@ from datetime import timezone, timedelta
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session, subqueryload
+from sqlalchemy.orm import Session, subqueryload, aliased
 from app.activity import log_action
 from app.alerts import evaluate_alerts_for_row, get_alert_row_data
 from app.database import get_db
@@ -12,8 +12,11 @@ from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
     get_visible_columns, is_column_readonly,
 )
-from app.models import ActivityLog, CellValue, DataTable, RowAttachment, RowComment, TableRow, User
-from sqlalchemy import func as sa_func
+from app.models import (
+    ActivityLog, CellValue, ColumnType, DataTable, RowAttachment, RowComment,
+    TableColumn, TableRow, User,
+)
+from sqlalchemy import and_, func as sa_func, Float
 
 router = APIRouter(prefix="/tables", tags=["data"])
 templates = Jinja2Templates(directory="app/templates")
@@ -45,6 +48,41 @@ def _check_unique_violation(
     return query.first() is not None
 
 
+_SORTABLE_TYPES = {
+    ColumnType.TEXT, ColumnType.INTEGER, ColumnType.FLOAT,
+    ColumnType.DATE, ColumnType.DATETIME, ColumnType.BOOLEAN,
+    ColumnType.EMAIL, ColumnType.SELECT,
+    ColumnType.LATITUDE, ColumnType.LONGITUDE,
+}
+_NUMERIC_SORT_TYPES = {ColumnType.INTEGER, ColumnType.FLOAT, ColumnType.LATITUDE, ColumnType.LONGITUDE}
+
+
+def _apply_row_sort(query, sort_col: TableColumn | None, sort_dir: str):
+    """Ajoute la jointure + le tri sur la valeur d'une colonne dynamique.
+
+    DATE/DATETIME sont stockés en ISO (YYYY-MM-DD[THH:MM]) : un tri texte suffit,
+    il coïncide avec l'ordre chronologique tant que le format est homogène.
+    """
+    if sort_col is None or sort_col.col_type not in _SORTABLE_TYPES:
+        return query.order_by(TableRow.created_at.desc())
+
+    sort_cv = aliased(CellValue)
+    value_expr = sort_cv.value
+    if sort_col.col_type in _NUMERIC_SORT_TYPES:
+        # CAST SQLite d'un texte non numérique -> 0.0 (pas d'erreur) : limitation acceptée,
+        # la donnée est déjà incohérente avec le type de colonne déclaré.
+        value_expr = sa_func.nullif(sort_cv.value, "").cast(Float)
+
+    order = value_expr.desc() if sort_dir == "desc" else value_expr.asc()
+    return (
+        query.outerjoin(
+            sort_cv,
+            and_(sort_cv.row_id == TableRow.id, sort_cv.column_id == sort_col.id),
+        )
+        .order_by(order.nullslast(), TableRow.id.asc())
+    )
+
+
 def _rows_template_ctx(
     db: Session,
     table,
@@ -53,17 +91,23 @@ def _rows_template_ctx(
     q: str = "",
     col_filters: dict | None = None,
     page_size: int = DEFAULT_PAGE_SIZE,
+    sort_col: int | None = None,
+    sort_dir: str = "asc",
 ) -> dict:
     """Construit le contexte commun pour le rendu de partials/table_rows.html.
 
     q            : recherche globale sur toutes les colonnes visibles
     col_filters  : dict {str(col_id): valeur} pour filtres par colonne
+    sort_col     : id de la colonne triée (None = tri par défaut, création desc)
+    sort_dir     : "asc" ou "desc"
     """
     col_filters = col_filters or {}
     page_size = page_size if page_size in ALLOWED_PAGE_SIZES else DEFAULT_PAGE_SIZE
     visible = get_visible_columns(table, user, db)
     visible_ids = {c.id for c in visible}
     col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
+    sort_col_obj = next((c for c in visible if c.id == sort_col), None)
+    sort_dir = "desc" if sort_dir == "desc" else "asc"
 
     # Construction du filtre progressif via sous-requêtes
     base = db.query(TableRow).filter(
@@ -96,9 +140,9 @@ def _rows_template_ctx(
     total_pages = max(1, (total_count + page_size - 1) // page_size)
     page = min(max(1, page), total_pages)
 
-    rows = base.options(
-        subqueryload(TableRow.cell_values)
-    ).order_by(TableRow.created_at.desc()).limit(page_size).offset((page - 1) * page_size).all()
+    rows = _apply_row_sort(
+        base.options(subqueryload(TableRow.cell_values)), sort_col_obj, sort_dir
+    ).limit(page_size).offset((page - 1) * page_size).all()
 
     rows_data = [
         {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
@@ -137,6 +181,8 @@ def _rows_template_ctx(
         "col_filters": col_filters,
         "comment_counts": comment_counts,
         "attachment_counts": attachment_counts,
+        "sort_col": sort_col_obj.id if sort_col_obj else None,
+        "sort_dir": sort_dir,
     }
 
 
@@ -318,19 +364,22 @@ def get_rows(
     page: int = Query(1, ge=1),
     q: str = Query(""),
     page_size: int = Query(DEFAULT_PAGE_SIZE),
+    sort_col: str = Query(""),
+    sort_dir: str = Query("asc"),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Retourne le partial table_rows.html (HTMX : refresh, recherche, filtre colonne, pagination)."""
+    """Retourne le partial table_rows.html (HTMX : refresh, recherche, filtre colonne, pagination, tri)."""
     table = db.get(DataTable, table_id)
     if not table:
         raise HTTPException(status_code=404)
     if not can_access_table(table, user, db):
         raise HTTPException(status_code=403)
     col_filters = _parse_col_filters(dict(request.query_params))
+    sort_col_id = int(sort_col) if sort_col.strip().isdigit() else None
     return templates.TemplateResponse(
         request, "partials/table_rows_response.html",
-        _rows_template_ctx(db, table, user, page, q, col_filters, page_size),
+        _rows_template_ctx(db, table, user, page, q, col_filters, page_size, sort_col_id, sort_dir),
     )
 
 

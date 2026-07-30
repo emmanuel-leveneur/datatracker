@@ -354,6 +354,10 @@
 <!-- Table data -->
 {% if columns %}
 <div id="filters-zone">
+  <input type="hidden" id="sort-col-input" name="sort_col" value="{{ sort_col or '' }}"
+         hx-get="/tables/{{ table.id }}/rows" hx-trigger="refresh-sort"
+         hx-target="#table-body" hx-include="#filters-zone, #global-search" hx-vals='{"page": 1}'>
+  <input type="hidden" id="sort-dir-input" name="sort_dir" value="{{ sort_dir or 'asc' }}">
   {% if q or col_filters %}
   <div class="mb-2 flex justify-end">
     <button
@@ -391,9 +395,11 @@
             <!-- Colonne alerte : non exportable, non triable -->
             <th class="dt-no-export w-8 px-2 py-3"></th>
             {% for col in columns %}
-            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"
-                data-col-id="{{ col.id }}">
+            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap{% if col.col_type.value != 'relation' %} cursor-pointer select-none hover:bg-gray-100{% endif %}"
+                data-col-id="{{ col.id }}"
+                {% if col.col_type.value != 'relation' %}onclick="toggleSort({{ col.id }})"{% endif %}>
               {{ col.name }}
+              {% if col.col_type.value != 'relation' %}<span class="sort-indicator ml-0.5 text-gray-400" data-sort-indicator="{{ col.id }}">{% if sort_col == col.id %}{{ '▲' if sort_dir != 'desc' else '▼' }}{% endif %}</span>{% endif %}
               {% if col.required %}<span class="text-red-400">*</span>{% endif %}
               {% if col_readonly.get(col.id) %}
               <span class="ml-1 text-xs bg-gray-200 text-gray-500 px-1 rounded" title="Lecture seule">🔒</span>
@@ -732,8 +738,10 @@ function closeAlertsPanel() {
       colIdByIndex[i] = $(th).data('col-id') || null;
     });
 
-    var colDefs = [{ orderable: false, searchable: false, targets: 0 }];
-    if (canWrite) colDefs.push({ orderable: false, searchable: false, targets: -1 });
+    // Tri géré côté serveur (toggleSort) sur l'ensemble des lignes, pas uniquement la page
+    // affichée : le tri client DataTables est désactivé sur toutes les colonnes pour éviter
+    // un double mécanisme de tri contradictoire.
+    var colDefs = [{ orderable: false, searchable: false, targets: '_all' }];
 
     var cfg = {
       dom: 'Brt',
@@ -773,6 +781,19 @@ function closeAlertsPanel() {
     if (e.detail.target && e.detail.target.id === 'table-body') initMainTable();
   });
 })();
+
+// ── Tri par colonne (serveur, porte sur l'ensemble des lignes) ─────────────
+function toggleSort(colId) {
+  var $sc = document.getElementById('sort-col-input');
+  var $sd = document.getElementById('sort-dir-input');
+  var newDir = (String($sc.value) === String(colId) && $sd.value === 'asc') ? 'desc' : 'asc';
+  $sc.value = colId;
+  $sd.value = newDir;
+  document.querySelectorAll('[data-sort-indicator]').forEach(function(el) {
+    el.textContent = (el.dataset.sortIndicator === String(colId)) ? (newDir === 'asc' ? '▲' : '▼') : '';
+  });
+  htmx.trigger('#sort-col-input', 'refresh-sort');
+}
 
 // ── Modal synchronisation webservice ──────────────────────────────────────
 function openSyncModal() {

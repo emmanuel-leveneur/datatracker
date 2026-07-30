@@ -359,6 +359,8 @@ def table_detail(
     page: int = Query(1, ge=1),
     q: str = Query(""),
     page_size: int = Query(PAGE_SIZE),
+    sort_col: str = Query(""),
+    sort_dir: str = Query("asc"),
     table: DataTable = Depends(get_table_or_404),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -407,9 +409,13 @@ def table_detail(
     total_pages = max(1, (total_count + page_size - 1) // page_size)
     page = min(max(1, page), total_pages)
 
-    rows = base.options(
-        subqueryload(TableRow.cell_values)
-    ).order_by(TableRow.created_at.desc()).limit(page_size).offset((page - 1) * page_size).all()
+    from app.routers.data import _apply_row_sort
+    sort_col_id = int(sort_col) if sort_col.strip().isdigit() else None
+    sort_col_obj = next((c for c in visible_cols if c.id == sort_col_id), None)
+    sort_dir = "desc" if sort_dir == "desc" else "asc"
+    rows = _apply_row_sort(
+        base.options(subqueryload(TableRow.cell_values)), sort_col_obj, sort_dir
+    ).limit(page_size).offset((page - 1) * page_size).all()
 
     rows_data = [
         {"row": row, "cells": {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}}
@@ -470,6 +476,8 @@ def table_detail(
             "allowed_page_sizes": ALLOWED_PAGE_SIZES,
             "q": q,
             "col_filters": col_filters,
+            "sort_col": sort_col_obj.id if sort_col_obj else None,
+            "sort_dir": sort_dir,
             "comment_counts": comment_counts,
             "lat_col": lat_col,
             "lon_col": lon_col,
