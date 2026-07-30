@@ -64,6 +64,33 @@
     if (relConfig) relConfig.classList.toggle('hidden', select.value !== 'relation');
   }
 
+  // Les checkboxes col_required/col_unique/col_personal_data utilisent la position de la
+  // ligne comme value (le backend les recoupe avec l'index réel au submit) : toute
+  // réorganisation doit renuméroter ces value pour rester alignée avec la bonne colonne.
+  function renumberColumnRows() {
+    const rows = document.querySelectorAll('#columns-container .col-row');
+    rows.forEach(function(row, i) {
+      ['col_required', 'col_unique', 'col_personal_data'].forEach(function(name) {
+        const cb = row.querySelector('input[name="' + name + '"]');
+        if (cb) cb.value = i;
+      });
+      const up = row.querySelector('.move-up-btn');
+      const down = row.querySelector('.move-down-btn');
+      if (up) up.disabled = (i === 0);
+      if (down) down.disabled = (i === rows.length - 1);
+    });
+  }
+
+  function moveColumnRow(btn, direction) {
+    const row = btn.closest('.col-row');
+    if (direction === 'up' && row.previousElementSibling) {
+      row.parentNode.insertBefore(row, row.previousElementSibling);
+    } else if (direction === 'down' && row.nextElementSibling) {
+      row.parentNode.insertBefore(row.nextElementSibling, row);
+    }
+    renumberColumnRows();
+  }
+
   function addColumn() {
     const container = document.getElementById('columns-container');
     const idx = newColIndex++;
@@ -110,10 +137,15 @@
         <input type="checkbox" name="col_personal_data" value="${idx}" class="rounded accent-amber-500" />
         Donnée personnelle
       </label>
-      <button type="button" onclick="this.closest('.col-row').remove()"
+      <button type="button" class="move-up-btn text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-not-allowed px-1"
+        onclick="moveColumnRow(this, 'up')" title="Monter">▲</button>
+      <button type="button" class="move-down-btn text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-not-allowed px-1"
+        onclick="moveColumnRow(this, 'down')" title="Descendre">▼</button>
+      <button type="button" onclick="this.closest('.col-row').remove(); renumberColumnRows();"
         class="text-red-400 hover:text-red-600 text-lg leading-none px-1" title="Supprimer">&times;</button>
     `;
     container.appendChild(div);
+    renumberColumnRows();
   }
 
   function updateBaseLegaleTip(sel) {
@@ -132,6 +164,7 @@
       cfg.querySelector('.relation-display-col-select').innerHTML = buildRelationColOptions(tableId, displayColId, '— Colonne affichée —');
       cfg.querySelector('.relation-value-col-select').innerHTML = buildRelationColOptions(tableId, valueColId, '— ID de ligne (défaut) —');
     });
+    renumberColumnRows();
   });
 </script>
 {% endblock %}
@@ -293,7 +326,11 @@
               {% if col.is_personal_data %}checked{% endif %} />
             Donnée personnelle
           </label>
-          <button type="button" onclick="this.closest('.col-row').remove()"
+          <button type="button" class="move-up-btn text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-not-allowed px-1"
+            onclick="moveColumnRow(this, 'up')" title="Monter">▲</button>
+          <button type="button" class="move-down-btn text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-not-allowed px-1"
+            onclick="moveColumnRow(this, 'down')" title="Descendre">▼</button>
+          <button type="button" onclick="this.closest('.col-row').remove(); renumberColumnRows();"
             class="text-red-400 hover:text-red-600 text-lg leading-none px-1" title="Supprimer">&times;</button>
         </div>
         {% endfor %}

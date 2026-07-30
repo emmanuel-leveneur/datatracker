@@ -133,6 +133,57 @@ def test_edit_table(admin_client: TestClient, db, admin_user):
     assert table.columns[0].name == "Colonne A modifiée"
 
 
+def test_create_table_order_follows_submission(admin_client: TestClient, db):
+    resp = admin_client.post("/tables/create", data={
+        "name": "OrdreCreation",
+        "col_names": ["Z", "A"],
+        "col_types": ["text", "text"],
+        "col_required": [],
+        "col_options": ["", ""],
+    })
+    assert resp.status_code == 303
+    table = db.query(DataTable).filter_by(name="OrdreCreation").first()
+    assert [c.name for c in table.columns] == ["Z", "A"]
+    assert [c.order for c in table.columns] == [0, 1]
+
+
+def test_edit_table_reorder_keeps_flags_on_correct_column(admin_client: TestClient, db, admin_user):
+    # Simule un déplacement via les boutons ↑/↓ : les colonnes existent en base dans l'ordre
+    # A, B, C, mais sont soumises dans l'ordre C, A, B (comme si C avait été remontée en tête).
+    table = DataTable(name="Reorder", created_by_id=admin_user.id)
+    col_a = TableColumn(name="A", col_type=ColumnType.TEXT, order=0)
+    col_b = TableColumn(name="B", col_type=ColumnType.TEXT, order=1)
+    col_c = TableColumn(name="C", col_type=ColumnType.TEXT, order=2)
+    table.columns.extend([col_a, col_b, col_c])
+    db.add(table)
+    db.commit()
+
+    resp = admin_client.post(f"/tables/{table.id}/edit", data={
+        "name": "Reorder",
+        "description": "",
+        "col_ids": [str(col_c.id), str(col_a.id), str(col_b.id)],
+        "col_names": ["C", "A", "B"],
+        "col_types": ["text", "text", "text"],
+        # Position 0 dans l'ordre soumis = colonne C : c'est elle qui doit rester Unique,
+        # pas la colonne qui occupait la position 0 en base (A) avant le réordonnancement.
+        "col_unique": ["0"],
+        "col_required": [],
+        "col_options": ["", "", ""],
+    })
+    assert resp.status_code == 303
+    db.expire_all()
+    db.refresh(table)
+
+    cols_by_name = {c.name: c for c in table.columns}
+    assert [c.name for c in table.columns] == ["C", "A", "B"]
+    assert cols_by_name["C"].order == 0
+    assert cols_by_name["A"].order == 1
+    assert cols_by_name["B"].order == 2
+    assert cols_by_name["C"].is_unique is True
+    assert cols_by_name["A"].is_unique is False
+    assert cols_by_name["B"].is_unique is False
+
+
 def test_add_and_read_row(admin_client: TestClient, db, admin_user):
     table = DataTable(name="Data", created_by_id=admin_user.id)
     col = TableColumn(name="Valeur", col_type=ColumnType.TEXT, order=0)
