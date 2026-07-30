@@ -1,4 +1,6 @@
-{# thead statique non inclus ici : seul le tbody (#table-body) est swappé, la pagination est mise à jour via hx-swap-oob #}
+{# thead statique non inclus ici : seul le tbody (#table-body) est swappé, la pagination est mise à jour via hx-swap-oob.
+   Nécessite htmx.config.useTemplateFragments = true (base.html) pour que le scan OOB de htmx
+   trouve cette div malgré le contexte restrictif du fragment de réponse (commence par des <tr>). #}
 {% include "partials/table_rows.html" %}
 {% set oob = true %}
 {% include "partials/table_pagination.html" %}

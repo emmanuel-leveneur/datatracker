@@ -6,6 +6,14 @@
   <title>{% block title %}DataTracker{% endblock %}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script>
+    // Nécessaire pour que les swaps hx-swap-oob fonctionnent quand ils sont mêlés à du
+    // contenu restreint par son contexte (ex : des <tr> destinés à un <tbody>) : sans ce
+    // réglage, htmx découpe la réponse selon le tag de départ (ex : <table><tbody>...</tbody></table>
+    // pour une réponse commençant par <tr>) et un élément hx-swap-oob placé après les <tr>
+    // n'est alors jamais trouvé par le scan OOB. Cf. table_rows_response.html / table_pagination.html.
+    htmx.config.useTemplateFragments = true;
+  </script>
   <!-- DataTables CSS -->
   <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
   <link rel="stylesheet" href="https://cdn.datatables.net/buttons/2.4.2/css/buttons.dataTables.min.css">

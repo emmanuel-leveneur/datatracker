@@ -1,11 +1,6 @@
 {% set _total_pages = total_pages | default(1) %}
 {% set _page = page | default(1) %}
 {% set _total_count = total_count | default(0) %}
-{# La swap OOB principale cible un <tbody> : sans le <template>, le navigateur applique le
-   modèle de contenu de <tbody> (qui n'autorise que des <tr>) à TOUT le fragment de réponse,
-   y compris cette div hors-bande, et la supprime silencieusement avant même que htmx la lise.
-   Le <template> échappe à cette contrainte (voir doc htmx sur les OOB swaps dans des tables). #}
-{% if oob %}<template>{% endif %}
 <div id="table-pagination" {% if oob %}hx-swap-oob="true"{% endif %} class="flex items-center justify-between px-4 py-2.5 border-t border-gray-100 bg-gray-50 text-xs text-gray-500">
   <span>{{ _total_count }} ligne(s)</span>
   {% if _total_pages > 1 %}
@@ -34,4 +29,3 @@
   </div>
   {% endif %}
 </div>
-{% if oob %}</template>{% endif %}
