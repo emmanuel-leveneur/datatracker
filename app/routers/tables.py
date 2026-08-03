@@ -8,8 +8,8 @@ from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
 from app.import_utils import infer_column_type, normalize_value, MAX_ROWS
 from app.models import (
-    ActivityLog, CellValue, ColumnType, DataTable, SyncAuthType, TableColumn,
-    TableFavorite, TableOwner, TablePermission, TableRow, TableSync, User,
+    ActivityLog, Alert, AlertNotification, CellValue, ColumnType, DataTable, SyncAuthType,
+    TableColumn, TableFavorite, TableOwner, TablePermission, TableRow, TableSync, User,
 )
 
 router = APIRouter(prefix="/tables", tags=["tables"])
@@ -812,6 +812,16 @@ def delete_table_permanent(
     # (pas de mot-clé AUTOINCREMENT sur data_tables). Détacher les logs de cette table
     # évite qu'ils se retrouvent affichés sous une future table qui récupérerait le même id.
     db.execute(sa_update(ActivityLog).where(ActivityLog.table_id == table.id).values(table_id=None))
+
+    # Contrairement aux logs, une alerte n'a pas vocation à survivre à sa table : on la
+    # supprime (objet par objet pour que le cascade ORM sur AlertState/AlertRecipient
+    # s'applique). Les notifications déjà émises survivent, alert_id nullifié comme lors
+    # d'une suppression d'alerte individuelle (voir delete_alert dans routers/alerts.py).
+    for alert in db.query(Alert).filter(Alert.table_id == table.id).all():
+        db.query(AlertNotification).filter_by(alert_id=alert.id).update(
+            {AlertNotification.alert_id: None}
+        )
+        db.delete(alert)
 
     db.delete(table)  # supprime colonnes, permissions, owners via cascade ORM (peu nombreux)
     db.commit()

@@ -2,7 +2,10 @@
 import json
 import pytest
 from tests.helpers import make_table
-from app.models import Alert, AlertNotification, AlertRecipient, AlertScope, AlertState, CellValue, ColumnType, TableRow
+from app.models import (
+    Alert, AlertNotification, AlertRecipient, AlertScope, AlertState, CellValue, ColumnType,
+    TableOwner, TableRow,
+)
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -529,8 +532,10 @@ class TestAlertRoutes:
         db.refresh(notif)
         assert notif.alert_id is None  # notification survit, alert_id nullifié
 
-    def test_private_alert_invisible_to_admin(self, admin_client, db, admin_user, regular_user):
-        """Une alerte privée d'un utilisateur ne doit pas apparaître dans le panneau de l'admin.
+    def test_private_alert_visible_to_table_owner(self, admin_client, db, admin_user, regular_user):
+        """Le propriétaire de la table (ici admin_user, propriétaire via make_table) doit voir
+        toutes les alertes de sa table, y compris les alertes privées créées par d'autres
+        utilisateurs — contrôle total du propriétaire sur ce qui est entreposé sur sa table.
         Note: admin_client et user_client partagent le même objet client HTTP — on crée
         l'alerte directement via la DB pour éviter le conflit de cookies."""
         table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
@@ -546,10 +551,32 @@ class TestAlertRoutes:
         )
         db.add(alert)
         db.commit()
-        # L'admin ne doit pas la voir dans son panneau
+        # Le propriétaire de la table doit la voir dans son panneau
         r = admin_client.get(f"/tables/{table.id}/alerts/panel")
         assert r.status_code == 200
-        assert "Alerte privée utilisateur" not in r.text
+        assert "Alerte privée utilisateur" in r.text
+
+    def test_private_alert_invisible_to_non_owner(self, user_client, db, admin_user, regular_user):
+        """Un utilisateur ayant seulement un accès en lecture à la table (pas propriétaire,
+        pas créateur de l'alerte) ne doit toujours pas voir l'alerte privée d'un autre."""
+        from app.models import TablePermission, PermissionLevel
+        table, cols = make_table(db, admin_user, columns=[("Val", ColumnType.INTEGER)])
+        col = cols[0]
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+        alert = Alert(
+            table_id=table.id,
+            created_by_id=admin_user.id,
+            name="Alerte privée du propriétaire",
+            scope=AlertScope.PRIVATE,
+            conditions=json.dumps([{"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}]),
+            is_active=True,
+        )
+        db.add(alert)
+        db.commit()
+        r = user_client.get(f"/tables/{table.id}/alerts/panel")
+        assert r.status_code == 200
+        assert "Alerte privée du propriétaire" not in r.text
 
     def test_private_alert_visible_to_creator(self, user_client, db, admin_user, regular_user):
         """Une alerte privée doit être visible par son créateur."""
@@ -604,6 +631,107 @@ class TestAlertRoutes:
         r = user_client.post(f"/tables/{table.id}/alerts/{alert.id}/delete")
         assert r.status_code == 403
         assert db.get(Alert, alert.id) is not None
+
+    def test_non_owner_cannot_view_edit_form(self, user_client, db, admin_user, regular_user, table_with_cols):
+        from app.models import TablePermission, PermissionLevel
+        table, cols = table_with_cols
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ])
+        r = user_client.get(f"/tables/{table.id}/alerts/{alert.id}/edit-form")
+        assert r.status_code == 403
+
+    def test_non_owner_cannot_edit_alert(self, user_client, db, admin_user, regular_user, table_with_cols):
+        from app.models import TablePermission, PermissionLevel
+        table, cols = table_with_cols
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ])
+        r = user_client.post(f"/tables/{table.id}/alerts/{alert.id}/edit", data={
+            "name": "Nom modifié",
+            "scope": "private",
+            "col_ids": [str(cols[0].id)],
+            "operators": ["gt"],
+            "values": ["0"],
+            "logics": ["AND"],
+        })
+        assert r.status_code == 403
+        db.refresh(alert)
+        assert alert.name != "Nom modifié"
+
+    def test_non_owner_cannot_toggle_alert(self, user_client, db, admin_user, regular_user, table_with_cols):
+        from app.models import TablePermission, PermissionLevel
+        table, cols = table_with_cols
+        db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.READ))
+        db.commit()
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ])
+        r = user_client.post(f"/tables/{table.id}/alerts/{alert.id}/toggle")
+        assert r.status_code == 403
+        db.refresh(alert)
+        assert alert.is_active is True
+
+
+class TestOwnerAlertControl:
+    """Le propriétaire de la table (TableOwner, même non-créateur de l'alerte et non-admin)
+    doit avoir le contrôle total : éditer, activer/désactiver, supprimer, quel que soit le
+    scope de l'alerte (private/global/custom) et son créateur."""
+
+    def test_owner_can_edit_others_private_alert(self, user_client, db, admin_user, regular_user, table_with_cols):
+        table, cols = table_with_cols  # créée par admin_user (créateur de l'alerte ci-dessous)
+        db.add(TableOwner(table_id=table.id, user_id=regular_user.id))  # regular_user = co-propriétaire
+        db.commit()
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ], scope="private", name="Alerte privée admin")
+
+        r = user_client.get(f"/tables/{table.id}/alerts/{alert.id}/edit-form")
+        assert r.status_code == 200
+
+        r = user_client.post(f"/tables/{table.id}/alerts/{alert.id}/edit", data={
+            "name": "Alerte privée modifiée par le propriétaire",
+            "scope": "private",
+            "col_ids": [str(cols[0].id)],
+            "operators": ["gt"],
+            "values": ["0"],
+            "logics": ["AND"],
+        })
+        assert r.status_code == 200
+        db.refresh(alert)
+        assert alert.name == "Alerte privée modifiée par le propriétaire"
+
+    def test_owner_can_toggle_others_global_alert(self, user_client, db, admin_user, regular_user, table_with_cols):
+        table, cols = table_with_cols
+        db.add(TableOwner(table_id=table.id, user_id=regular_user.id))
+        db.commit()
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ], scope="global", name="Alerte globale admin")
+        assert alert.is_active is True
+
+        r = user_client.post(f"/tables/{table.id}/alerts/{alert.id}/toggle")
+        assert r.status_code == 200
+        db.refresh(alert)
+        assert alert.is_active is False
+
+    def test_owner_can_delete_others_custom_alert(self, user_client, db, admin_user, regular_user, second_user, table_with_cols):
+        table, cols = table_with_cols
+        db.add(TableOwner(table_id=table.id, user_id=regular_user.id))
+        db.commit()
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ], scope="custom", name="Alerte custom admin", recipients=[second_user.id])
+        alert_id = alert.id
+
+        r = user_client.post(f"/tables/{table.id}/alerts/{alert_id}/delete")
+        assert r.status_code == 200
+        db.expire_all()
+        assert db.get(Alert, alert_id) is None
 
 
 class TestNotificationRoutes:
@@ -1073,3 +1201,152 @@ def test_get_alerted_row_ids(db, admin_user, table_with_cols):
     alerted = get_alerted_row_ids(db, table.id)
     assert row_alert.id in alerted
     assert row_ok.id not in alerted
+
+
+# ── Traçabilité ─────────────────────────────────────────────────────────────
+
+class TestAlertActivityLog:
+    """Toute mutation d'une alerte doit être tracée dans le journal d'activité de la table."""
+
+    def test_create_alert_logs_activity(self, admin_client, db, admin_user):
+        from app.models import ActivityLog
+        table, cols = make_table(db, admin_user, columns=[("Prix", ColumnType.FLOAT)])
+        col = cols[0]
+        admin_client.post(f"/tables/{table.id}/alerts", data={
+            "name": "Alerte tracée",
+            "scope": "private",
+            "col_ids": [str(col.id)],
+            "operators": ["gt"],
+            "values": ["100"],
+            "logics": ["AND"],
+        })
+        log = db.query(ActivityLog).filter_by(action="create_alert", table_id=table.id).first()
+        assert log is not None
+        assert log.resource_name == "Alerte tracée"
+
+        resp = admin_client.get(f"/tables/{table.id}/tracabilite")
+        assert "Alerte créée" in resp.text
+
+    def test_update_alert_logs_activity(self, admin_client, db, admin_user, table_with_cols):
+        from app.models import ActivityLog
+        table, cols = table_with_cols
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ])
+        admin_client.post(f"/tables/{table.id}/alerts/{alert.id}/edit", data={
+            "name": "Alerte modifiée",
+            "scope": "private",
+            "col_ids": [str(cols[0].id)],
+            "operators": ["gt"],
+            "values": ["0"],
+            "logics": ["AND"],
+        })
+        log = db.query(ActivityLog).filter_by(action="update_alert", table_id=table.id).first()
+        assert log is not None
+
+        resp = admin_client.get(f"/tables/{table.id}/tracabilite")
+        assert "Alerte modifiée" in resp.text
+
+    def test_toggle_alert_logs_both_directions(self, admin_client, db, admin_user, table_with_cols):
+        from app.models import ActivityLog
+        table, cols = table_with_cols
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ])
+        admin_client.post(f"/tables/{table.id}/alerts/{alert.id}/toggle")  # désactive
+        admin_client.post(f"/tables/{table.id}/alerts/{alert.id}/toggle")  # réactive
+
+        deactivate_log = db.query(ActivityLog).filter_by(action="deactivate_alert", table_id=table.id).first()
+        activate_log = db.query(ActivityLog).filter_by(action="activate_alert", table_id=table.id).first()
+        assert deactivate_log is not None
+        assert activate_log is not None
+
+        resp = admin_client.get(f"/tables/{table.id}/tracabilite")
+        assert "Alerte activée" in resp.text
+        assert "Alerte désactivée" in resp.text
+
+    def test_delete_alert_logs_activity_with_name(self, admin_client, db, admin_user, table_with_cols):
+        from app.models import ActivityLog
+        table, cols = table_with_cols
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ], name="Alerte à supprimer")
+
+        admin_client.post(f"/tables/{table.id}/alerts/{alert.id}/delete")
+
+        log = db.query(ActivityLog).filter_by(action="delete_alert", table_id=table.id).first()
+        assert log is not None
+        assert log.resource_name == "Alerte à supprimer"
+
+        resp = admin_client.get(f"/tables/{table.id}/tracabilite")
+        assert "Alerte supprimée" in resp.text
+
+
+# ── Nettoyage à la suppression définitive de la table ────────────────────────
+
+class TestAlertTableDeletionCleanup:
+    def test_delete_table_permanent_removes_alerts(self, admin_client, db, admin_user, table_with_cols):
+        table, cols = table_with_cols
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": cols[0].id, "operator": "gt", "value": "0", "logic": "AND"}
+        ])
+        alert_id = alert.id
+
+        admin_client.post(f"/tables/{table.id}/delete")
+        admin_client.post(f"/tables/{table.id}/delete-permanent")
+
+        db.expire_all()
+        assert db.query(Alert).filter_by(id=alert_id).first() is None
+        assert db.query(AlertState).filter_by(alert_id=alert_id).first() is None
+
+    def test_delete_table_permanent_nullifies_notification_alert_id(self, admin_client, db, admin_user, table_with_cols):
+        from app.alerts import evaluate_alerts_for_row
+        table, cols = table_with_cols
+        col = cols[0]
+        alert = _make_alert(db, table, admin_user, [
+            {"col_id": col.id, "operator": "gt", "value": "0", "logic": "AND"}
+        ])
+        row = _make_row(db, table, admin_user, {col.id: "1"})
+        evaluate_alerts_for_row(db, row, table)
+        db.commit()
+        notif = db.query(AlertNotification).filter_by(user_id=admin_user.id).first()
+        assert notif is not None
+
+        admin_client.post(f"/tables/{table.id}/delete")
+        admin_client.post(f"/tables/{table.id}/delete-permanent")
+
+        db.refresh(notif)
+        assert notif.alert_id is None
+
+    def test_no_leftover_alerts_after_table_id_reuse(self, admin_client, db, admin_user):
+        """SQLite (sans AUTOINCREMENT) peut réutiliser l'id d'une table supprimée définitivement
+        pour la prochaine table créée. Les alertes de l'ancienne table ne doivent pas se
+        retrouver affichées/actives sous la nouvelle table qui récupère le même id."""
+        from app.models import DataTable
+
+        admin_client.post("/tables/create", data={
+            "name": "TableAlertesA",
+            "col_names": ["Col"], "col_types": ["text"],
+            "col_required": [], "col_options": [""],
+        })
+        db.expire_all()
+        table_a = db.query(DataTable).filter_by(name="TableAlertesA").first()
+        _make_alert(db, table_a, admin_user, [
+            {"col_id": table_a.columns[0].id, "operator": "eq", "value": "x", "logic": "AND"}
+        ], name="Alerte de A")
+
+        admin_client.post(f"/tables/{table_a.id}/delete")
+        admin_client.post(f"/tables/{table_a.id}/delete-permanent")
+
+        admin_client.post("/tables/create", data={
+            "name": "TableAlertesB",
+            "col_names": ["Col"], "col_types": ["text"],
+            "col_required": [], "col_options": [""],
+        })
+        db.expire_all()
+        table_b = db.query(DataTable).filter_by(name="TableAlertesB").first()
+        assert table_b.id == table_a.id, "précondition du test : SQLite doit réutiliser l'id libéré"
+
+        r = admin_client.get(f"/tables/{table_b.id}/alerts/panel")
+        assert r.status_code == 200
+        assert "Alerte de A" not in r.text

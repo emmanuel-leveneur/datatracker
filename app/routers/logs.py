@@ -34,6 +34,11 @@ ACTION_LABELS = {
     "delete_user": "Suppression d'utilisateur",
     "register": "Inscription",
     "login": "Connexion",
+    "create_alert": "Alerte créée",
+    "update_alert": "Alerte modifiée",
+    "activate_alert": "Alerte activée",
+    "deactivate_alert": "Alerte désactivée",
+    "delete_alert": "Alerte supprimée",
 }
 
 RESOURCE_LABELS = {
@@ -42,6 +47,7 @@ RESOURCE_LABELS = {
     "comment": "Commentaire",
     "permission": "Permission",
     "user": "Utilisateur",
+    "alert": "Alerte",
 }
 
 

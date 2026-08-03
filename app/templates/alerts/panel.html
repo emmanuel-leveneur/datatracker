@@ -66,8 +66,8 @@
             Par {{ alert.created_by.email.split('@')[0] }} — {{ alert.created_at | dt_reunion('%d/%m/%Y') }}
           </div>
         </div>
-        <!-- Actions (créateur ou admin) -->
-        {% if user.is_admin or alert.created_by_id == user.id %}
+        <!-- Actions (créateur, propriétaire de la table, ou admin) -->
+        {% if user.is_admin or alert.created_by_id == user.id or is_owner %}
         <div class="flex items-center gap-1 shrink-0">
           <button
             hx-get="/tables/{{ table.id }}/alerts/{{ alert.id }}/edit-form"

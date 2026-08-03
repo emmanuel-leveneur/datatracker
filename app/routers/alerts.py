@@ -10,6 +10,7 @@ from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
 from sqlalchemy import and_, exists, or_
 
+from app.activity import log_action
 from app.models import (
     Alert, AlertNotification, AlertRecipient, AlertScope, AlertState,
     DataTable, TableOwner, TablePermission, TableRow, User,
@@ -31,8 +32,15 @@ def _get_alert_or_404(alert_id: int, db: Session) -> Alert:
     return alert
 
 
-def _check_alert_owner(alert: Alert, user: User) -> None:
-    if not user.is_admin and alert.created_by_id != user.id:
+def _check_alert_owner(alert: Alert, user: User, db: Session) -> None:
+    if user.is_admin or alert.created_by_id == user.id:
+        return
+    is_owner = (
+        db.query(TableOwner)
+        .filter_by(table_id=alert.table_id, user_id=user.id)
+        .first()
+    ) is not None
+    if not is_owner:
         raise HTTPException(status_code=403)
 
 
@@ -91,31 +99,42 @@ def _get_table_users(table: DataTable, db: Session) -> list[dict]:
 
 
 def _panel_context(table: DataTable, user: User, db: Session) -> dict:
-    # Alertes visibles :
-    #   - globales (tous)
-    #   - privées du créateur uniquement
-    #   - personnalisées : créateur OU destinataire explicite
-    alerts = (
-        db.query(Alert)
-        .filter(
-            Alert.table_id == table.id,
-            or_(
-                Alert.scope == AlertScope.GLOBAL,
-                Alert.created_by_id == user.id,
-                and_(
-                    Alert.scope == AlertScope.CUSTOM,
-                    exists().where(
-                        and_(
-                            AlertRecipient.alert_id == Alert.id,
-                            AlertRecipient.user_id == user.id,
-                        )
+    is_owner = is_table_owner(table, user, db)
+    if is_owner or user.is_admin:
+        # Propriétaire/admin : contrôle total, voit toutes les alertes de la table
+        # (y compris les alertes privées des autres utilisateurs).
+        alerts = (
+            db.query(Alert)
+            .filter(Alert.table_id == table.id)
+            .order_by(Alert.created_at.desc())
+            .all()
+        )
+    else:
+        # Alertes visibles pour un utilisateur non-propriétaire :
+        #   - globales (tous)
+        #   - privées du créateur uniquement
+        #   - personnalisées : créateur OU destinataire explicite
+        alerts = (
+            db.query(Alert)
+            .filter(
+                Alert.table_id == table.id,
+                or_(
+                    Alert.scope == AlertScope.GLOBAL,
+                    Alert.created_by_id == user.id,
+                    and_(
+                        Alert.scope == AlertScope.CUSTOM,
+                        exists().where(
+                            and_(
+                                AlertRecipient.alert_id == Alert.id,
+                                AlertRecipient.user_id == user.id,
+                            )
+                        ),
                     ),
                 ),
-            ),
+            )
+            .order_by(Alert.created_at.desc())
+            .all()
         )
-        .order_by(Alert.created_at.desc())
-        .all()
-    )
     columns_json = json.dumps([
         {"id": col.id, "name": col.name, "type": col.col_type.value}
         for col in table.columns
@@ -128,7 +147,7 @@ def _panel_context(table: DataTable, user: User, db: Session) -> dict:
         "columns": table.columns,
         "columns_json": columns_json,
         "table_users_json": table_users_json,
-        "is_owner": is_table_owner(table, user, db),
+        "is_owner": is_owner,
     }
 
 
@@ -231,6 +250,8 @@ async def create_alert(
         for uid in recipient_ids:
             db.add(AlertRecipient(alert_id=alert.id, user_id=uid))
 
+    log_action(db, user, "create_alert", "alert",
+               resource_id=alert.id, resource_name=alert.name, table_id=table_id)
     db.commit()
 
     # Réévaluation initiale sur les lignes existantes : couleurs uniquement, sans notifications
@@ -259,7 +280,7 @@ def edit_alert_form(
     db: Session = Depends(get_db),
 ):
     alert = _get_alert_or_404(alert_id, db)
-    _check_alert_owner(alert, user)
+    _check_alert_owner(alert, user, db)
     table = db.get(DataTable, table_id)
     if not table:
         raise HTTPException(status_code=404)
@@ -291,7 +312,7 @@ async def update_alert(
     db: Session = Depends(get_db),
 ):
     alert = _get_alert_or_404(alert_id, db)
-    _check_alert_owner(alert, user)
+    _check_alert_owner(alert, user, db)
     table = db.get(DataTable, table_id)
     if not table:
         raise HTTPException(status_code=404)
@@ -373,6 +394,8 @@ async def update_alert(
         for uid in recipient_ids:
             db.add(AlertRecipient(alert_id=alert.id, user_id=uid))
 
+    log_action(db, user, "update_alert", "alert",
+               resource_id=alert.id, resource_name=alert.name, table_id=table_id)
     db.commit()
 
     # Réévaluation initiale sur les lignes existantes : couleurs uniquement, sans notifications
@@ -400,8 +423,10 @@ def toggle_alert(
     db: Session = Depends(get_db),
 ):
     alert = _get_alert_or_404(alert_id, db)
-    _check_alert_owner(alert, user)
+    _check_alert_owner(alert, user, db)
     alert.is_active = not alert.is_active
+    log_action(db, user, "activate_alert" if alert.is_active else "deactivate_alert", "alert",
+               resource_id=alert.id, resource_name=alert.name, table_id=alert.table_id)
     db.commit()
 
     # Réévaluation : couleurs uniquement, sans notifications (toggle = action admin, pas événement data)
@@ -430,10 +455,12 @@ def delete_alert(
     db: Session = Depends(get_db),
 ):
     alert = _get_alert_or_404(alert_id, db)
-    _check_alert_owner(alert, user)
+    _check_alert_owner(alert, user, db)
     db.query(AlertNotification).filter(AlertNotification.alert_id == alert_id).update(
         {AlertNotification.alert_id: None}
     )
+    log_action(db, user, "delete_alert", "alert",
+               resource_id=alert.id, resource_name=alert.name, table_id=alert.table_id)
     db.delete(alert)
     db.commit()
 
