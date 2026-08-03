@@ -131,6 +131,38 @@ def test_tracabilite_log_table_id_set_on_import_csv(admin_client, db, admin_user
     assert log is not None
 
 
+def test_tracabilite_no_leftover_logs_after_id_reuse(admin_client, db):
+    """SQLite (sans AUTOINCREMENT) peut réutiliser l'id d'une table supprimée définitivement
+    pour la prochaine table créée. Les logs de l'ancienne table ne doivent pas se retrouver
+    affichés sous la nouvelle table qui a récupéré le même id."""
+    from app.models import DataTable
+
+    admin_client.post("/tables/create", data={
+        "name": "TableA",
+        "col_names": ["Col"], "col_types": ["text"],
+        "col_required": [], "col_options": [""],
+    })
+    db.expire_all()
+    table_a_id = db.query(DataTable).filter_by(name="TableA").first().id
+
+    admin_client.post(f"/tables/{table_a_id}/delete")
+    admin_client.post(f"/tables/{table_a_id}/delete-permanent")
+
+    admin_client.post("/tables/create", data={
+        "name": "TableB",
+        "col_names": ["Col"], "col_types": ["text"],
+        "col_required": [], "col_options": [""],
+    })
+    db.expire_all()
+    table_b = db.query(DataTable).filter_by(name="TableB").first()
+    assert table_b.id == table_a_id, "précondition du test : SQLite doit réutiliser l'id libéré"
+
+    resp = admin_client.get(f"/tables/{table_b.id}/tracabilite")
+    assert resp.status_code == 200
+    assert "TableA" not in resp.text
+    assert "Création de table" in resp.text  # celle de TableB doit rester visible
+
+
 def test_tracabilite_button_visible_on_table_detail(admin_client, db, admin_user):
     table, _ = make_table(db, admin_user)
     resp = admin_client.get(f"/tables/{table.id}")

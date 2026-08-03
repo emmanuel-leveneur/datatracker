@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import delete as sa_delete, func as sa_func, select
+from sqlalchemy import delete as sa_delete, func as sa_func, select, update as sa_update
 from sqlalchemy.orm import Session, subqueryload
 from app.activity import log_action
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, is_table_owner
 from app.import_utils import infer_column_type, normalize_value, MAX_ROWS
 from app.models import (
-    CellValue, ColumnType, DataTable, SyncAuthType, TableColumn,
+    ActivityLog, CellValue, ColumnType, DataTable, SyncAuthType, TableColumn,
     TableFavorite, TableOwner, TablePermission, TableRow, TableSync, User,
 )
 
@@ -807,6 +807,11 @@ def delete_table_permanent(
         for i in range(0, len(row_ids), _CHUNK):
             db.execute(sa_delete(CellValue).where(CellValue.row_id.in_(row_ids[i:i + _CHUNK])))
     db.execute(sa_delete(TableRow).where(TableRow.table_id == table.id))
+
+    # SQLite peut réutiliser l'id libéré par ce DELETE pour une prochaine table créée
+    # (pas de mot-clé AUTOINCREMENT sur data_tables). Détacher les logs de cette table
+    # évite qu'ils se retrouvent affichés sous une future table qui récupérerait le même id.
+    db.execute(sa_update(ActivityLog).where(ActivityLog.table_id == table.id).values(table_id=None))
 
     db.delete(table)  # supprime colonnes, permissions, owners via cascade ORM (peu nombreux)
     db.commit()

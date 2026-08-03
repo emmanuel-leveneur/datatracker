@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -22,9 +23,20 @@ def tracabilite_page(
     if not can_access_table(table, user, db):
         raise HTTPException(status_code=403, detail="Accès refusé")
 
+    # table_id n'est pas une FK (il doit survivre à la suppression définitive d'une table) et
+    # SQLite peut réutiliser l'id d'une table supprimée pour une table créée ensuite : le
+    # filtre sur la date exclut les logs d'une éventuelle ancienne table qui aurait eu le
+    # même id avant la table actuelle.
+    # Comparaison via strftime des deux côtés : server_default=func.now() (CURRENT_TIMESTAMP,
+    # sans microsecondes) et un DateTime Python lié par SQLAlchemy (toujours avec .%06d) ont
+    # des représentations texte différentes en SQLite — une comparaison directe échoue.
+    ts_fmt = "%Y-%m-%d %H:%M:%S"
     logs = (
         db.query(ActivityLog)
-        .filter(ActivityLog.table_id == table.id)
+        .filter(
+            ActivityLog.table_id == table.id,
+            func.strftime(ts_fmt, ActivityLog.timestamp) >= func.strftime(ts_fmt, table.created_at),
+        )
         .order_by(ActivityLog.timestamp.desc())
         .limit(500)
         .all()
