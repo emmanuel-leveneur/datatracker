@@ -273,6 +273,18 @@ def _row_details(row, columns) -> str:
     return f"Ligne #{row.id} avec {', '.join(parts)} créée le {created}"
 
 
+def _row_summary_label(row, columns: list, cells: dict) -> str:
+    """Rappel court de la ligne pour le titre de la modale d'édition (2 premières valeurs non vides)."""
+    parts = []
+    for col in columns:
+        val = cells.get(col.id)
+        if val:
+            parts.append(val)
+        if len(parts) == 2:
+            break
+    return f"#{row.id} — {' · '.join(parts)}" if parts else f"#{row.id}"
+
+
 def _parse_col_filters(params: dict) -> dict:
     """Extrait les filtres par colonne d'un dict de paramètres (query ou form).
 
@@ -666,7 +678,7 @@ def edit_row_form(
     cells = {cv.column_id: cv.value for cv in row.cell_values}
 
     return templates.TemplateResponse(
-        request, "partials/row_form.html",
+        request, "partials/edit_row_form.html",
         {
             "table": table,
             "columns": visible_cols,
@@ -675,6 +687,7 @@ def edit_row_form(
             "cells": cells,
             "page": page,
             "relation_options": _get_relation_options(db, visible_cols),
+            "row_label": _row_summary_label(row, visible_cols, cells),
         },
     )
 
@@ -723,7 +736,7 @@ async def update_row(
         cells = {cv.column_id: cv.value for cv in row.cell_values}
         cells.update(form_values)
         resp = templates.TemplateResponse(
-            request, "partials/row_form.html",
+            request, "partials/edit_row_form.html",
             {
                 "table": table,
                 "columns": visible_cols,
@@ -733,9 +746,10 @@ async def update_row(
                 "errors": unique_errors,
                 "page": form.get("page", 1),
                 "relation_options": _get_relation_options(db, visible_cols),
+                "row_label": _row_summary_label(row, visible_cols, cells),
             },
         )
-        resp.headers["HX-Retarget"] = "#row-form-area"
+        resp.headers["HX-Retarget"] = "#edit-row-modal-body"
         resp.headers["HX-Reswap"] = "innerHTML"
         return resp
 
@@ -769,10 +783,12 @@ async def update_row(
         col_filters = _parse_col_filters(dict(form))
         page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
         page = int(form.get("page", 1))
-        return templates.TemplateResponse(
+        resp = templates.TemplateResponse(
             request, "partials/table_rows_response.html",
             _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
         )
+        resp.headers["HX-Trigger"] = "closeEditRowModal"
+        return resp
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 

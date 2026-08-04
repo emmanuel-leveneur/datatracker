@@ -97,7 +97,7 @@
         {% if can_write %}
         <button
           hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/edit?page={{ page | default(1) }}"
-          hx-target="#row-form-area"
+          hx-target="#edit-row-modal-body"
           hx-swap="innerHTML"
           title="Modifier"
           class="text-blue-500 hover:text-blue-700 p-1.5 rounded hover:bg-blue-50 transition inline-flex">
