@@ -7,6 +7,11 @@
     <tr class="hover:bg-gray-50 transition"
         id="row-{{ item.row.id }}"
         {% if is_alerted and row_data.row_style %}style="{{ row_data.row_style }}"{% endif %}>
+      {% if can_write %}
+      <td class="w-8 px-2 py-2.5 text-center">
+        <input type="checkbox" class="row-select-checkbox" data-row-id="{{ item.row.id }}">
+      </td>
+      {% endif %}
       <!-- Indicateur alerte -->
       <td class="w-8 px-2 py-2.5 text-center">
         {% if is_alerted and row_data.has_notification %}
@@ -114,7 +119,7 @@
     {% endfor %}
     {% else %}
     <tr>
-      <td colspan="{{ columns | length + 2 }}" class="px-4 py-10 text-center text-gray-400">
+      <td colspan="{{ columns | length + 2 + (1 if can_write else 0) }}" class="px-4 py-10 text-center text-gray-400">
         Aucune donnée. {% if can_write %}Ajoutez une première ligne.{% endif %}
       </td>
     </tr>

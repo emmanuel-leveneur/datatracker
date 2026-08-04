@@ -150,6 +150,42 @@
   </div>
 </div>
 
+{% if can_write %}
+{# ── Barre de sélection multiple (bulk-edit) ──────────────────────────────── #}
+<div id="bulk-select-bar"
+     class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-gray-900 text-white rounded-full shadow-2xl px-5 py-2.5 flex items-center gap-4 text-sm">
+  <span id="bulk-select-count">0 ligne(s) sélectionnée(s)</span>
+  <button onclick="openBulkEditModal()"
+    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1 rounded-full transition">
+    Modifier en masse
+  </button>
+  <button onclick="clearBulkSelection()"
+    class="text-gray-300 hover:text-white transition">
+    Annuler
+  </button>
+</div>
+
+{# ── Modal modification en masse ──────────────────────────────────────────── #}
+<div id="bulk-edit-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeBulkEditModal()"></div>
+<div id="bulk-edit-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="pencil" class="w-4 h-4 text-gray-400"></i>
+        Modifier en masse
+      </h2>
+      <button onclick="closeBulkEditModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="bulk-edit-modal-body" class="px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {# ── Panneau latéral commentaires ─────────────────────────────────────────── #}
 <div id="comment-backdrop"
      class="fixed inset-0 bg-black/40 z-40"
@@ -392,6 +428,12 @@
       <table id="main-table" class="min-w-full divide-y divide-gray-200 text-sm">
         <thead class="bg-gray-50">
           <tr>
+            {% if can_write %}
+            <!-- Colonne sélection multiple : non exportable, non triable -->
+            <th class="dt-no-export w-8 px-2 py-3">
+              <input type="checkbox" id="select-all-checkbox" title="Tout sélectionner (page courante)">
+            </th>
+            {% endif %}
             <!-- Colonne alerte : non exportable, non triable -->
             <th class="dt-no-export w-8 px-2 py-3"></th>
             {% for col in columns %}
@@ -413,6 +455,7 @@
           </tr>
           <!-- Ligne de filtres par colonne -->
           <tr class="border-t border-gray-200 bg-white">
+            {% if can_write %}<th class="w-8 px-2 py-1.5"></th>{% endif %}<!-- colonne sélection -->
             <th class="w-8 px-2 py-1.5"></th><!-- colonne alerte -->
             {% for col in columns %}
             <th class="px-2 py-1.5">
@@ -810,6 +853,80 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
     lucide.createIcons();
   }
 });
+
+{% if can_write %}
+// ── Sélection multiple + modification en masse ──────────────────────────────
+window.bulkSelectedIds = new Set();
+
+function updateBulkBar() {
+  var bar = document.getElementById('bulk-select-bar');
+  var count = document.getElementById('bulk-select-count');
+  if (!bar || !count) return;
+  var n = window.bulkSelectedIds.size;
+  count.textContent = n + ' ligne' + (n > 1 ? 's' : '') + ' sélectionnée' + (n > 1 ? 's' : '');
+  bar.classList.toggle('hidden', n === 0);
+}
+
+function clearBulkSelection() {
+  window.bulkSelectedIds.clear();
+  document.querySelectorAll('.row-select-checkbox').forEach(function(cb) { cb.checked = false; });
+  var selectAll = document.getElementById('select-all-checkbox');
+  if (selectAll) selectAll.checked = false;
+  updateBulkBar();
+}
+
+document.body.addEventListener('change', function(e) {
+  if (e.target.classList.contains('row-select-checkbox')) {
+    var id = parseInt(e.target.dataset.rowId, 10);
+    if (e.target.checked) window.bulkSelectedIds.add(id);
+    else window.bulkSelectedIds.delete(id);
+    updateBulkBar();
+  } else if (e.target.id === 'select-all-checkbox') {
+    document.querySelectorAll('.row-select-checkbox').forEach(function(cb) {
+      cb.checked = e.target.checked;
+      var id = parseInt(cb.dataset.rowId, 10);
+      if (e.target.checked) window.bulkSelectedIds.add(id);
+      else window.bulkSelectedIds.delete(id);
+    });
+    updateBulkBar();
+  }
+});
+
+// Le tbody est intégralement remplacé à chaque page/tri/filtre/recherche (rendu serveur,
+// cf. _rows_template_ctx) : la sélection (limitée à la page courante en V1) ne peut pas
+// survivre au swap. On la réinitialise pour éviter des IDs "fantômes" qui ne correspondent
+// plus à ce qui est affiché à l'écran.
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'table-body') {
+    clearBulkSelection();
+  }
+});
+
+function openBulkEditModal() {
+  if (window.bulkSelectedIds.size === 0) return;
+  document.getElementById('bulk-edit-backdrop').classList.remove('hidden');
+  document.getElementById('bulk-edit-modal').classList.remove('hidden');
+  htmx.ajax('GET', '/tables/{{ table.id }}/rows/bulk-edit', {
+    target: '#bulk-edit-modal-body',
+    swap: 'innerHTML'
+  });
+}
+function closeBulkEditModal() {
+  document.getElementById('bulk-edit-backdrop').classList.add('hidden');
+  document.getElementById('bulk-edit-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'bulk-edit-modal-body') {
+    var msg = document.getElementById('bulk-edit-count-msg');
+    if (msg) {
+      var n = window.bulkSelectedIds.size;
+      msg.textContent = n + ' ligne' + (n > 1 ? 's' : '') + ' sélectionnée' + (n > 1 ? 's' : '') +
+        ' — la modification s\'appliquera à toutes.';
+    }
+  }
+});
+document.body.addEventListener('closeBulkEditModal', closeBulkEditModal);
+{% endif %}
 
 // ── Lightbox image ─────────────────────────────────────────────────────────
 function openLightbox(viewUrl, dlUrl, name) {

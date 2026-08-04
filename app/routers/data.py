@@ -23,6 +23,17 @@ templates = Jinja2Templates(directory="app/templates")
 
 ALLOWED_PAGE_SIZES = [25, 50, 100, 250, 500]
 DEFAULT_PAGE_SIZE = 25
+BULK_EDIT_MAX_ROWS = 500
+# Types exclus de la modification en masse : nécessitent un widget dédié (autocomplete
+# relation, carte) incompatible avec le formulaire générique "1 colonne -> 1 valeur".
+_BULK_EDIT_EXCLUDED_TYPES = {ColumnType.RELATION, ColumnType.LATITUDE, ColumnType.LONGITUDE}
+
+
+def _bulk_editable_columns(table: DataTable, user: User, db: Session) -> list:
+    return [
+        col for col in get_visible_columns(table, user, db)
+        if col.col_type not in _BULK_EDIT_EXCLUDED_TYPES and not is_column_readonly(col, user, db)
+    ]
 
 
 def _check_unique_violation(
@@ -490,6 +501,145 @@ async def create_row(
             request, "partials/table_rows_response.html",
             _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters, page_size=page_size),
         )
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/{table_id}/rows/bulk-edit", response_class=HTMLResponse)
+def bulk_edit_modal(
+    request: Request,
+    page: int = Query(1, ge=1),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    return templates.TemplateResponse(
+        request, "partials/bulk_edit_modal.html",
+        {
+            "table": table,
+            "columns": _bulk_editable_columns(table, user, db),
+            "page": page,
+        },
+    )
+
+
+@router.get("/{table_id}/rows/bulk-edit/field", response_class=HTMLResponse)
+def bulk_edit_field(
+    request: Request,
+    col_id: int = Query(...),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    editable = {c.id: c for c in _bulk_editable_columns(table, user, db)}
+    col = editable.get(col_id)
+    if not col:
+        return HTMLResponse("")
+    return templates.TemplateResponse(
+        request, "partials/bulk_edit_field.html", {"col": col},
+    )
+
+
+@router.post("/{table_id}/rows/bulk-edit")
+async def bulk_update_rows(
+    request: Request,
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+
+    form = await request.form()
+    editable_cols = {c.id: c for c in _bulk_editable_columns(table, user, db)}
+
+    def _error(message: str):
+        resp = templates.TemplateResponse(
+            request, "partials/bulk_edit_modal.html",
+            {
+                "table": table,
+                "columns": list(editable_cols.values()),
+                "page": form.get("page", 1),
+                "error": message,
+            },
+        )
+        resp.headers["HX-Retarget"] = "#bulk-edit-modal-body"
+        resp.headers["HX-Reswap"] = "innerHTML"
+        return resp
+
+    try:
+        row_ids = {int(i) for i in form.getlist("row_ids")}
+        col_id = int(str(form.get("col_id", "")))
+    except ValueError:
+        return _error("Sélection invalide.")
+    value = str(form.get("value", ""))
+
+    if not row_ids:
+        return _error("Aucune ligne sélectionnée.")
+    if len(row_ids) > BULK_EDIT_MAX_ROWS:
+        return _error(
+            f"Impossible de modifier plus de {BULK_EDIT_MAX_ROWS} lignes en une fois "
+            f"({len(row_ids)} sélectionnées)."
+        )
+
+    col = editable_cols.get(col_id)
+    if not col:
+        return _error("Colonne invalide ou non modifiable.")
+
+    rows = (
+        db.query(TableRow)
+        .filter(
+            TableRow.table_id == table_id,
+            TableRow.deleted_at.is_(None),
+            TableRow.id.in_(row_ids),
+        )
+        .options(subqueryload(TableRow.cell_values))
+        .all()
+    )
+    if not rows:
+        return _error("Aucune ligne valide dans la sélection.")
+
+    if col.is_unique and len(rows) > 1:
+        return _error(
+            f'"{col.name}" doit être unique : impossible d\'appliquer la même valeur à {len(rows)} lignes.'
+        )
+    if col.is_unique and len(rows) == 1 and _check_unique_violation(db, col.id, value, exclude_row_id=rows[0].id):
+        return _error(f'La valeur « {value} » existe déjà dans la colonne "{col.name}".')
+
+    for row in rows:
+        cell = next((cv for cv in row.cell_values if cv.column_id == col.id), None)
+        old_val = cell.value if cell else ""
+        if old_val == value:
+            continue
+        if cell:
+            cell.value = value
+        else:
+            db.add(CellValue(row_id=row.id, column_id=col.id, value=value))
+        log_action(db, user, "update_row", "row",
+                   resource_id=row.id, resource_name=table.name, table_id=table.id,
+                   details=f'"{col.name}" : "{old_val}" → "{value}"')
+        db.flush()
+        evaluate_alerts_for_row(db, row, table)
+
+    db.commit()
+
+    if request.headers.get("HX-Request"):
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
+        page = int(form.get("page", 1))
+        resp = templates.TemplateResponse(
+            request, "partials/table_rows_response.html",
+            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
+        )
+        resp.headers["HX-Trigger"] = "closeBulkEditModal"
+        return resp
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 

@@ -1,0 +1,33 @@
+{% if col.col_type.value == 'boolean' %}
+  <select name="value"
+    class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+    <option value="false">Non</option>
+    <option value="true">Oui</option>
+  </select>
+{% elif col.col_type.value == 'select' and col.select_options %}
+  <select name="value"
+    class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+    <option value="">— Choisir —</option>
+    {% for opt in col.select_options.split(',') %}
+    <option value="{{ opt.strip() }}">{{ opt.strip() }}</option>
+    {% endfor %}
+  </select>
+{% elif col.col_type.value == 'date' %}
+  <input type="date" name="value" required
+    class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+{% elif col.col_type.value == 'datetime' %}
+  <input type="datetime-local" name="value" required
+    class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+{% elif col.col_type.value == 'integer' %}
+  <input type="number" step="1" name="value" required
+    class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+{% elif col.col_type.value == 'float' %}
+  <input type="number" step="any" name="value" required
+    class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+{% elif col.col_type.value == 'email' %}
+  <input type="email" name="value" required
+    class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+{% else %}
+  <input type="text" name="value" required
+    class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+{% endif %}
