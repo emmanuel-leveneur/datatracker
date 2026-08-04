@@ -76,6 +76,52 @@ def test_edit_row_updates_cell(admin_client, db, admin_user):
     assert db.query(CellValue).filter_by(row_id=row.id, column_id=col.id).first().value == "Après"
 
 
+def test_edit_row_success_triggers_modal_close(admin_client, db, admin_user):
+    """Le formulaire d'édition vit dans une modale : un succès doit déclencher sa fermeture côté client."""
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    col = cols[0]
+    row = TableRow(table_id=table.id, created_by_id=admin_user.id)
+    db.add(row)
+    db.flush()
+    db.add(CellValue(row_id=row.id, column_id=col.id, value="Avant"))
+    db.commit()
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{row.id}/edit",
+        data={f"col_{col.id}": "Après"},
+        headers={"HX-Request": "true"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("HX-Trigger") == "closeEditRowModal"
+
+
+def test_edit_row_unique_violation_retargets_modal_body(admin_client, db, admin_user):
+    """Une erreur d'unicité doit ré-afficher le formulaire dans le corps de la modale, pas l'ancienne zone inline."""
+    table, cols = make_table(db, admin_user, columns=[("Code", ColumnType.TEXT)])
+    col = cols[0]
+    col.is_unique = True
+    db.commit()
+    row1 = TableRow(table_id=table.id, created_by_id=admin_user.id)
+    row2 = TableRow(table_id=table.id, created_by_id=admin_user.id)
+    db.add_all([row1, row2])
+    db.flush()
+    db.add(CellValue(row_id=row1.id, column_id=col.id, value="A"))
+    db.add(CellValue(row_id=row2.id, column_id=col.id, value="B"))
+    db.commit()
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{row2.id}/edit",
+        data={f"col_{col.id}": "A"},
+        headers={"HX-Request": "true"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers.get("HX-Retarget") == "#edit-row-modal-body"
+    db.expire_all()
+    assert db.query(CellValue).filter_by(row_id=row2.id, column_id=col.id).first().value == "B"
+
+
 def test_edit_row_readonly_column_not_overwritten(user_client, db, admin_user, regular_user):
     """Une colonne marquée readonly pour l'utilisateur ne doit pas être modifiée."""
     table, cols = make_table(db, admin_user, columns=[("Verrouillé", ColumnType.TEXT)])

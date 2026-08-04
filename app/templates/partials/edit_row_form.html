@@ -1,0 +1,22 @@
+<span id="edit-row-modal-subtitle" hx-swap-oob="true" class="text-gray-400 font-normal">{{ row_label }}</span>
+<form
+  hx-post="/tables/{{ table.id }}/rows/{{ row.id }}/edit"
+  hx-target="#table-body"
+  hx-swap="innerHTML"
+  hx-include="#filters-zone, #global-search"
+  class="space-y-3">
+  <input type="hidden" name="page" value="{{ page | default(1) }}">
+
+  {% include "partials/row_fields.html" %}
+
+  <div class="flex gap-2 pt-2">
+    <button type="submit"
+      class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-1.5 rounded-lg transition">
+      Enregistrer
+    </button>
+    <button type="button" onclick="closeEditRowModal()"
+      class="text-sm text-gray-500 hover:text-gray-700 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition">
+      Annuler
+    </button>
+  </div>
+</form>

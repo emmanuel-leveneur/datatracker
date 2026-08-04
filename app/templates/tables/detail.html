@@ -63,6 +63,29 @@
   </div>
 </div>
 
+{% if can_write %}
+{# ── Modal édition ligne ───────────────────────────────────────────────────── #}
+<div id="edit-row-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeEditRowModal()"></div>
+<div id="edit-row-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="pencil" class="w-4 h-4 text-gray-400"></i>
+        Modifier la ligne
+        <span id="edit-row-modal-subtitle" class="text-gray-400 font-normal"></span>
+      </h2>
+      <button onclick="closeEditRowModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="edit-row-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {# ── Modal fiche détail ligne ──────────────────────────────────────────────── #}
 <div id="row-detail-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeDetailModal()"></div>
 <div id="row-detail-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
@@ -876,6 +899,25 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
   }
 });
 
+{% if can_write %}
+// ── Modal édition ligne ──────────────────────────────────────────────────────
+function openEditRowModal() {
+  document.getElementById('edit-row-backdrop').classList.remove('hidden');
+  document.getElementById('edit-row-modal').classList.remove('hidden');
+}
+function closeEditRowModal() {
+  document.getElementById('edit-row-backdrop').classList.add('hidden');
+  document.getElementById('edit-row-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'edit-row-modal-body') {
+    openEditRowModal();
+    lucide.createIcons();
+  }
+});
+document.body.addEventListener('closeEditRowModal', closeEditRowModal);
+{% endif %}
+
 // ── Panneau commentaires ───────────────────────────────────────────────────
 function openCommentPanel() {
   document.getElementById('comment-panel').classList.add('open');
@@ -921,6 +963,7 @@ document.addEventListener('keydown', function(e) {
     closePdfPreview(); return;
   }
   closeCommentPanel(); closeHistoryModal(); closeSyncModal(); closeDetailModal();
+  if (typeof closeEditRowModal === 'function') closeEditRowModal();
 });
 
 // Menu Outils
