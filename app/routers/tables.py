@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -434,6 +435,7 @@ def table_detail(
 
     lat_col = next((c for c in visible_cols if c.col_type == ColumnType.LATITUDE), None)
     lon_col = next((c for c in visible_cols if c.col_type == ColumnType.LONGITUDE), None)
+    date_cols = [c for c in visible_cols if c.col_type in (ColumnType.DATE, ColumnType.DATETIME)]
 
     is_owner = is_table_owner(table, user, db)
     can_write = can_access_table(table, user, db, require_write=True)
@@ -481,6 +483,7 @@ def table_detail(
             "comment_counts": comment_counts,
             "lat_col": lat_col,
             "lon_col": lon_col,
+            "date_cols": date_cols,
             "table_sync": table_sync,
         },
     )
@@ -555,6 +558,85 @@ def table_geojson(
         })
 
     return {"type": "FeatureCollection", "features": features}
+
+
+_EVENT_DATE_SLASH_RE = re.compile(r"^(\d{4})/(\d{2})/(\d{2})(.*)$")
+
+
+def _normalize_event_date(value: str | None) -> str | None:
+    """Tolère les valeurs de date mal formées rencontrées sur des imports anciens :
+    chaîne littérale "None" (résidu d'import) et format YYYY/MM/DD au lieu de l'ISO
+    YYYY-MM-DD attendu par FullCalendar. Retourne None si la valeur est inexploitable."""
+    if not value or value.strip() == "" or value.strip() == "None":
+        return None
+    m = _EVENT_DATE_SLASH_RE.match(value.strip())
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}{m.group(4)}"
+    return value
+
+
+@router.get("/{table_id}/events")
+def table_events(
+    request: Request,
+    q: str = Query(""),
+    date_col: int = Query(...),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    from app.dependencies import get_visible_columns
+    visible_cols = get_visible_columns(table, user, db)
+    visible_col_ids = {c.id for c in visible_cols}
+    date_column = next(
+        (c for c in visible_cols if c.id == date_col and c.col_type in (ColumnType.DATE, ColumnType.DATETIME)),
+        None,
+    )
+    if not date_column:
+        return []
+
+    other_cols = [c for c in visible_cols if c.id != date_col]
+    col_filters = {k[7:]: v for k, v in request.query_params.items() if k.startswith("filter_") and v}
+
+    base = db.query(TableRow).filter(
+        TableRow.table_id == table.id,
+        TableRow.deleted_at == None,
+    )
+    if q:
+        matching_subq = db.query(CellValue.row_id).filter(
+            CellValue.value.ilike(f"%{q}%"),
+            CellValue.column_id.in_(visible_col_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_col_ids:
+            continue
+        col_subq = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col_id,
+            CellValue.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    rows = base.options(subqueryload(TableRow.cell_values)).all()
+
+    events = []
+    for row in rows:
+        cells = {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
+        start = _normalize_event_date(cells.get(date_col))
+        if not start:
+            continue
+        title = next((cells[c.id] for c in other_cols if cells.get(c.id)), f"#{row.id}")
+        events.append({"id": row.id, "row_id": row.id, "title": title, "start": start})
+
+    return events
 
 
 @router.get("/{table_id}/edit", response_class=HTMLResponse)

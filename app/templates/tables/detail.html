@@ -39,6 +39,14 @@
 .map-label-tooltip::before { display: none; }
 </style>
 {% endif %}
+{% if date_cols %}
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/skeleton.css" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/themes/monarch/theme.css" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/themes/monarch/palettes/blue.css" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/all/global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/themes/monarch/global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/locales/fr/global.js"></script>
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -226,16 +234,24 @@
     {% endif %}
   </div>
   <div class="flex flex-wrap gap-2 items-center">
-    {% if lat_col and lon_col %}
+    {% if (lat_col and lon_col) or date_cols %}
     <div class="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm font-medium">
       <button id="btn-list-view" onclick="setViewMode('list')"
         class="px-3 py-1.5 flex items-center gap-1.5 transition">
         <i data-lucide="list" class="w-4 h-4"></i> Liste
       </button>
+      {% if lat_col and lon_col %}
       <button id="btn-map-view" onclick="setViewMode('map')"
         class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
         <i data-lucide="map" class="w-4 h-4"></i> Carte
       </button>
+      {% endif %}
+      {% if date_cols %}
+      <button id="btn-calendar-view" onclick="setViewMode('calendar')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
+        <i data-lucide="calendar" class="w-4 h-4"></i> Calendrier
+      </button>
+      {% endif %}
     </div>
     {% endif %}
     {% if columns %}
@@ -408,6 +424,41 @@
   <div id="map-panel-content" class="flex-1 overflow-y-auto px-5 py-4 text-sm"></div>
   <div id="map-panel-footer" class="shrink-0 px-5 py-3 border-t border-gray-100 empty:hidden"></div>
 </aside>
+{% endif %}
+
+{% if date_cols %}
+<!-- Calendar view -->
+<div id="calendar-view" class="hidden" data-default-date-col="{{ date_cols[0].id }}">
+  <div id="calendar-filter-bar" class="mb-3 flex flex-wrap gap-x-3 gap-y-1.5 items-center bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
+    <span class="text-xs font-semibold text-gray-500 shrink-0">Filtres</span>
+    {% for col in columns %}
+    <label class="flex items-center gap-1.5 shrink-0">
+      <span class="text-xs text-gray-400 whitespace-nowrap">{{ col.name }}</span>
+      <input type="search" name="filter_{{ col.id }}" placeholder="…" autocomplete="off"
+        class="w-28 border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+    </label>
+    {% endfor %}
+    {% if date_cols | length > 1 %}
+    <div class="ml-auto flex items-center gap-2 border-l border-gray-200 pl-3 shrink-0">
+      <i data-lucide="calendar-days" class="w-3 h-3 text-gray-400 shrink-0"></i>
+      <span class="text-xs text-gray-400 whitespace-nowrap">Colonne date</span>
+      <select id="calendar-date-col-select" onchange="onCalendarDateColChange()"
+        class="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
+        {% for col in date_cols %}
+        <option value="{{ col.id }}">{{ col.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <button type="button" onclick="clearCalendarFilters()"
+      class="flex items-center gap-1 px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded hover:bg-gray-50 transition">
+      <i data-lucide="x" class="w-3 h-3"></i> Effacer
+    </button>
+  </div>
+  <div id="calendar-wrap" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white">
+    <div id="calendar-el"></div>
+  </div>
+</div>
 {% endif %}
 
 <!-- Table data -->
@@ -1095,8 +1146,10 @@ document.addEventListener('click', function(e) {
 });
 </script>
 
+{% if (lat_col and lon_col) or date_cols %}
 {% if lat_col and lon_col %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% endif %}
 <script>
 (function () {
   var VIEW_KEY  = 'viewmode_{{ table.id }}';
@@ -1113,8 +1166,11 @@ document.addEventListener('click', function(e) {
     var qEl = document.getElementById('global-search');
     if (qEl && qEl.value) params.set('q', qEl.value);
     var mapView = document.getElementById('map-view');
+    var calView = document.getElementById('calendar-view');
     var isMap = mapView && !mapView.classList.contains('hidden');
-    var container = document.getElementById(isMap ? 'map-filter-bar' : 'filters-zone');
+    var isCal = calView && !calView.classList.contains('hidden');
+    var containerId = isMap ? 'map-filter-bar' : (isCal ? 'calendar-filter-bar' : 'filters-zone');
+    var container = document.getElementById(containerId);
     if (container) {
       container.querySelectorAll('[name^="filter_"]').forEach(function(el) {
         if (el.value) params.set(el.name, el.value);
@@ -1155,34 +1211,44 @@ document.addEventListener('click', function(e) {
     if (_map) _map.invalidateSize();
   }
   window.addEventListener('resize', resizeMap);
+  {% if date_cols %}window.addEventListener('resize', resizeCalendarEl);{% endif %}
 
-  // ── Bascule liste ↔ carte ─────────────────────────────────────────────────
+  // ── Bascule liste ↔ carte ↔ calendrier ────────────────────────────────────
   function applyViewMode(mode) {
     var listView = document.getElementById('filters-zone');
     var mapView  = document.getElementById('map-view');
+    var calView  = document.getElementById('calendar-view');
     var btnList  = document.getElementById('btn-list-view');
     var btnMap   = document.getElementById('btn-map-view');
+    var btnCal   = document.getElementById('btn-calendar-view');
 
-    if (mode === 'map') {
+    [listView, mapView, calView].forEach(function(el) { if (el) el.classList.add('hidden'); });
+    [btnList, btnMap, btnCal].forEach(function(btn) {
+      if (!btn) return;
+      btn.classList.remove(...activeClass);
+      btn.classList.add(...inactiveClass);
+    });
+
+    if (mode === 'map' && mapView) {
       syncFilters('filters-zone', 'map-filter-bar');
-      listView.classList.add('hidden');
       mapView.classList.remove('hidden');
-      btnList.classList.remove(...activeClass);
-      btnList.classList.add(...inactiveClass);
       btnMap.classList.remove(...inactiveClass);
       btnMap.classList.add(...activeClass);
       resizeMap();
       initMap(collectFilterParams());
-      lucide.createIcons();
+    } else if (mode === 'calendar' && calView) {
+      syncFilters('filters-zone', 'calendar-filter-bar');
+      calView.classList.remove('hidden');
+      btnCal.classList.remove(...inactiveClass);
+      btnCal.classList.add(...activeClass);
+      resizeCalendarEl();
+      initCalendar();
     } else {
-      syncFilters('map-filter-bar', 'filters-zone');
-      mapView.classList.add('hidden');
       listView.classList.remove('hidden');
-      btnMap.classList.remove(...activeClass);
-      btnMap.classList.add(...inactiveClass);
       btnList.classList.remove(...inactiveClass);
       btnList.classList.add(...activeClass);
     }
+    lucide.createIcons();
   }
 
   window.setViewMode = function (mode) {
@@ -1367,7 +1433,7 @@ document.addEventListener('click', function(e) {
     window.closeMapPanel();
     window.setViewMode('list');
     htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + rowId + '/edit', {
-      target: '#row-form-area',
+      target: '#edit-row-modal-body',
       swap: 'innerHTML'
     });
   };
@@ -1376,11 +1442,99 @@ document.addEventListener('click', function(e) {
     if (e.key === 'Escape') window.closeMapPanel();
   });
 
+  {% if date_cols %}
+  // ── Vue calendrier (FullCalendar) ─────────────────────────────────────────
+  var _calendar = null;
+  var _calFilterTimer = null;
+
+  function getCalendarDateCol() {
+    var sel = document.getElementById('calendar-date-col-select');
+    if (sel) return sel.value;
+    var view = document.getElementById('calendar-view');
+    return view ? view.dataset.defaultDateCol : '';
+  }
+
+  function resizeCalendarEl() {
+    var wrapEl = document.getElementById('calendar-wrap');
+    var calViewEl = document.getElementById('calendar-view');
+    if (!wrapEl || calViewEl.classList.contains('hidden')) return;
+    var footerEl = document.querySelector('footer');
+    var footerH  = footerEl ? footerEl.offsetHeight : 0;
+    var top      = wrapEl.getBoundingClientRect().top;
+    var availH   = window.innerHeight - top - footerH - 4;
+    wrapEl.style.height = Math.max(400, availH) + 'px';
+  }
+
+  function scheduleCalendarReload() {
+    clearTimeout(_calFilterTimer);
+    _calFilterTimer = setTimeout(function() {
+      if (_calendar) _calendar.refetchEvents();
+    }, 350);
+  }
+
+  function initCalendar() {
+    if (!_calendar) {
+      var calEl = document.getElementById('calendar-el');
+      _calendar = new FullCalendar.Calendar(calEl, {
+        initialView: 'multiMonthYear',
+        height: '100%',
+        locale: 'fr',
+        headerToolbar: { left: 'prev,next today', center: 'title', right: '' },
+        events: function(info, successCallback, failureCallback) {
+          var params = collectFilterParams();
+          params.set('date_col', getCalendarDateCol());
+          fetch('/tables/{{ table.id }}/events?' + params.toString())
+            .then(function(r) { return r.json(); })
+            .then(successCallback)
+            .catch(failureCallback);
+        },
+        eventClick: function(info) {
+          info.jsEvent.preventDefault();
+          htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + info.event.extendedProps.row_id + '/detail', {
+            target: '#row-detail-modal-body',
+            swap: 'innerHTML'
+          });
+        },
+      });
+      _calendar.render();
+
+      var bar = document.getElementById('calendar-filter-bar');
+      if (bar) {
+        bar.addEventListener('input', function(e) {
+          if (e.target.name && e.target.name.startsWith('filter_')) scheduleCalendarReload();
+        });
+      }
+      var qEl = document.getElementById('global-search');
+      if (qEl) {
+        qEl.addEventListener('input', function() {
+          var cv = document.getElementById('calendar-view');
+          if (cv && !cv.classList.contains('hidden')) scheduleCalendarReload();
+        });
+      }
+    } else {
+      _calendar.refetchEvents();
+    }
+  }
+
+  window.onCalendarDateColChange = function() {
+    if (_calendar) _calendar.refetchEvents();
+  };
+
+  window.clearCalendarFilters = function() {
+    var bar = document.getElementById('calendar-filter-bar');
+    if (bar) bar.querySelectorAll('[name^="filter_"]').forEach(function(el) { el.value = ''; });
+    var qEl = document.getElementById('global-search');
+    if (qEl) qEl.value = '';
+    if (_calendar) _calendar.refetchEvents();
+  };
+  {% endif %}
+
   // ── Init : restaurer le dernier mode ─────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function () {
     var saved;
     try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
-    applyViewMode(saved === 'map' ? 'map' : 'list');
+    var validModes = ['list'{% if lat_col and lon_col %}, 'map'{% endif %}{% if date_cols %}, 'calendar'{% endif %}];
+    applyViewMode(validModes.indexOf(saved) !== -1 ? saved : 'list');
   });
 })();
 </script>
