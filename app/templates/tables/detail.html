@@ -378,35 +378,46 @@
 {% if lat_col and lon_col %}
 <!-- Map view -->
 <div id="map-view" class="hidden">
-  <div id="map-filter-bar" class="mb-3 flex flex-wrap gap-x-3 gap-y-1.5 items-center bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
-    <span class="text-xs font-semibold text-gray-500 shrink-0">Filtres</span>
-    {% for col in columns %}{% if col.col_type.value not in ('latitude', 'longitude') %}
-    <label class="flex items-center gap-1.5 shrink-0">
-      <span class="text-xs text-gray-400 whitespace-nowrap">{{ col.name }}</span>
-      <input type="search" name="filter_{{ col.id }}" placeholder="…" autocomplete="off"
-        class="w-28 border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
-    </label>
-    {% endif %}{% endfor %}
-    <div class="ml-auto flex items-center gap-2 border-l border-gray-200 pl-3 shrink-0">
-      <i data-lucide="tag" class="w-3 h-3 text-gray-400 shrink-0"></i>
-      <span class="text-xs text-gray-400 whitespace-nowrap">Label</span>
-      <select id="map-label-select" onchange="onLabelColChange()"
-        class="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
-        <option value="">Aucun</option>
-        {% for col in columns %}{% if col.col_type.value not in ('latitude', 'longitude') %}
-        <option value="{{ col.name }}">{{ col.name }}</option>
-        {% endif %}{% endfor %}
-      </select>
-      <button type="button" id="map-label-toggle" onclick="toggleMapLabels()"
-        title="Afficher / masquer les labels"
-        class="p-1 rounded text-blue-600 hover:bg-blue-50 transition">
-        <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+  <div id="map-filter-bar" class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+    <div class="flex flex-wrap items-center gap-2 px-3 py-2">
+      <div class="flex items-center gap-1.5 shrink-0">
+        <i data-lucide="tag" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
+        <span class="text-xs text-gray-500 whitespace-nowrap">Label</span>
+        <select id="map-label-select" onchange="onLabelColChange()"
+          class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+          <option value="">Aucun</option>
+          {% for col in columns %}{% if col.col_type.value not in ('latitude', 'longitude') %}
+          <option value="{{ col.name }}">{{ col.name }}</option>
+          {% endif %}{% endfor %}
+        </select>
+        <button type="button" id="map-label-toggle" onclick="toggleMapLabels()"
+          title="Afficher / masquer les labels"
+          class="p-1 rounded text-blue-600 hover:bg-blue-50 transition">
+          <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+      <button type="button" onclick="toggleFilterPanel('map-filter-panel', 'map-filter-toggle-icon')"
+        class="ml-auto flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+        <i data-lucide="filter" class="w-3.5 h-3.5"></i>
+        Filtres
+        <span id="map-filter-badge" class="hidden bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none"></span>
+        <i data-lucide="chevron-down" id="map-filter-toggle-icon" class="w-3.5 h-3.5 transition-transform"></i>
+      </button>
+      <button type="button" onclick="clearMapFilters()"
+        class="flex items-center gap-1 px-2.5 py-1 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+        <i data-lucide="x" class="w-3 h-3"></i> Effacer
       </button>
     </div>
-    <button type="button" onclick="clearMapFilters()"
-      class="flex items-center gap-1 px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded hover:bg-gray-50 transition">
-      <i data-lucide="x" class="w-3 h-3"></i> Effacer
-    </button>
+    <div id="map-filter-chips" class="hidden flex flex-wrap gap-1.5 px-3 pb-2"></div>
+    <div id="map-filter-panel" class="hidden grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 px-3 pb-3 pt-2 border-t border-gray-100">
+      {% for col in columns %}{% if col.col_type.value not in ('latitude', 'longitude') %}
+      <label class="flex flex-col gap-0.5">
+        <span class="text-xs text-gray-400 whitespace-nowrap">{{ col.name }}</span>
+        <input type="search" name="filter_{{ col.id }}" placeholder="…" autocomplete="off"
+          class="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+      </label>
+      {% endif %}{% endfor %}
+    </div>
   </div>
   <div id="leaflet-map" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm"></div>
 </div>
@@ -429,31 +440,49 @@
 {% if date_cols %}
 <!-- Calendar view -->
 <div id="calendar-view" class="hidden" data-default-date-col="{{ date_cols[0].id }}">
-  <div id="calendar-filter-bar" class="mb-3 flex flex-wrap gap-x-3 gap-y-1.5 items-center bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
-    <span class="text-xs font-semibold text-gray-500 shrink-0">Filtres</span>
-    {% for col in columns %}
-    <label class="flex items-center gap-1.5 shrink-0">
-      <span class="text-xs text-gray-400 whitespace-nowrap">{{ col.name }}</span>
-      <input type="search" name="filter_{{ col.id }}" placeholder="…" autocomplete="off"
-        class="w-28 border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
-    </label>
-    {% endfor %}
-    {% if date_cols | length > 1 %}
-    <div class="ml-auto flex items-center gap-2 border-l border-gray-200 pl-3 shrink-0">
-      <i data-lucide="calendar-days" class="w-3 h-3 text-gray-400 shrink-0"></i>
-      <span class="text-xs text-gray-400 whitespace-nowrap">Colonne date</span>
-      <select id="calendar-date-col-select" onchange="onCalendarDateColChange()"
-        class="border border-gray-300 rounded px-2 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400">
-        {% for col in date_cols %}
-        <option value="{{ col.id }}">{{ col.name }}</option>
-        {% endfor %}
-      </select>
+  <div id="calendar-filter-bar" class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+    <div class="flex flex-wrap items-center gap-2 px-3 py-2">
+      {% if date_cols | length > 1 %}
+      <div class="flex items-center gap-1.5 shrink-0">
+        <i data-lucide="calendar-days" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
+        <span class="text-xs text-gray-500 whitespace-nowrap">Colonne date</span>
+        <select id="calendar-date-col-select" onchange="onCalendarDateColChange()"
+          class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+          {% for col in date_cols %}
+          <option value="{{ col.id }}">{{ col.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <button type="button" onclick="toggleFilterPanel('calendar-filter-panel', 'calendar-filter-toggle-icon')"
+        class="ml-auto flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+        <i data-lucide="filter" class="w-3.5 h-3.5"></i>
+        Filtres
+        <span id="calendar-filter-badge" class="hidden bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none"></span>
+        <i data-lucide="chevron-down" id="calendar-filter-toggle-icon" class="w-3.5 h-3.5 transition-transform"></i>
+      </button>
+      <button type="button" onclick="clearCalendarFilters()"
+        class="flex items-center gap-1 px-2.5 py-1 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+        <i data-lucide="x" class="w-3 h-3"></i> Effacer
+      </button>
     </div>
-    {% endif %}
-    <button type="button" onclick="clearCalendarFilters()"
-      class="flex items-center gap-1 px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded hover:bg-gray-50 transition">
-      <i data-lucide="x" class="w-3 h-3"></i> Effacer
-    </button>
+    <div id="calendar-filter-chips" class="hidden flex flex-wrap gap-1.5 px-3 pb-2"></div>
+    <div id="calendar-filter-panel" class="hidden grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 px-3 pb-3 pt-2 border-t border-gray-100">
+      {% for col in columns %}
+      <label class="flex flex-col gap-0.5">
+        <span class="text-xs text-gray-400 whitespace-nowrap">{{ col.name }}</span>
+        <input type="search" name="filter_{{ col.id }}" placeholder="…" autocomplete="off"
+          class="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="flex items-center justify-end gap-1.5 mb-2">
+    <i data-lucide="calendar-search" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
+    <span class="text-xs text-gray-500 whitespace-nowrap">Aller à l'année</span>
+    <select id="calendar-year-select" onchange="onCalendarYearChange()"
+      class="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+    </select>
   </div>
   <div id="calendar-wrap" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white">
     <div id="calendar-el"></div>
@@ -1225,6 +1254,57 @@ document.addEventListener('click', function(e) {
     });
   }
 
+  // ── Panneau de filtres repliable + indicateur de filtres actifs ──────────
+  // Partagé entre la carte et le calendrier : évite qu'un filtre appliqué depuis
+  // la liste passe inaperçu une fois le panneau détaillé refermé.
+  window.toggleFilterPanel = function(panelId, iconId) {
+    var panel = document.getElementById(panelId);
+    var icon  = document.getElementById(iconId);
+    if (!panel) return;
+    var isHidden = panel.classList.toggle('hidden');
+    if (icon) icon.classList.toggle('rotate-180', !isHidden);
+  };
+
+  function updateFilterIndicator(barId, badgeId, chipsId) {
+    var bar = document.getElementById(barId);
+    var badge = document.getElementById(badgeId);
+    var chipsRow = document.getElementById(chipsId);
+    if (!bar) return;
+    var active = [];
+    bar.querySelectorAll('[name^="filter_"]').forEach(function(input) {
+      if (!input.value) return;
+      var label = input.closest('label');
+      var name = label ? label.querySelector('span').textContent : input.name;
+      active.push({ input: input, name: name, value: input.value });
+    });
+    if (badge) {
+      badge.textContent = String(active.length);
+      badge.classList.toggle('hidden', active.length === 0);
+    }
+    if (chipsRow) {
+      chipsRow.innerHTML = '';
+      chipsRow.classList.toggle('hidden', active.length === 0);
+      active.forEach(function(f) {
+        var chip = document.createElement('span');
+        chip.className = 'inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-full border border-blue-200';
+        var text = document.createElement('span');
+        text.textContent = f.name + ' : ' + f.value;
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.setAttribute('aria-label', 'Retirer le filtre ' + f.name);
+        removeBtn.className = 'hover:text-blue-900 font-semibold leading-none';
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', function() {
+          f.input.value = '';
+          f.input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        chip.appendChild(text);
+        chip.appendChild(removeBtn);
+        chipsRow.appendChild(chip);
+      });
+    }
+  }
+
   // ── Rechargement différé des marqueurs (debounce 350 ms) ─────────────────
   function scheduleReload() {
     clearTimeout(_filterTimer);
@@ -1266,6 +1346,7 @@ document.addEventListener('click', function(e) {
 
     if (mode === 'map' && mapView) {
       syncFilters('filters-zone', 'map-filter-bar');
+      updateFilterIndicator('map-filter-bar', 'map-filter-badge', 'map-filter-chips');
       mapView.classList.remove('hidden');
       btnMap.classList.remove(...inactiveClass);
       btnMap.classList.add(...activeClass);
@@ -1273,6 +1354,7 @@ document.addEventListener('click', function(e) {
       initMap(collectFilterParams());
     } else if (mode === 'calendar' && calView) {
       syncFilters('filters-zone', 'calendar-filter-bar');
+      updateFilterIndicator('calendar-filter-bar', 'calendar-filter-badge', 'calendar-filter-chips');
       calView.classList.remove('hidden');
       btnCal.classList.remove(...inactiveClass);
       btnCal.classList.add(...activeClass);
@@ -1297,6 +1379,7 @@ document.addEventListener('click', function(e) {
     if (bar) bar.querySelectorAll('[name^="filter_"]').forEach(function(el) { el.value = ''; });
     var qEl = document.getElementById('global-search');
     if (qEl) qEl.value = '';
+    updateFilterIndicator('map-filter-bar', 'map-filter-badge', 'map-filter-chips');
     if (_map) loadMarkers(new URLSearchParams());
   };
 
@@ -1331,7 +1414,10 @@ document.addEventListener('click', function(e) {
       var bar = document.getElementById('map-filter-bar');
       if (bar) {
         bar.addEventListener('input', function(e) {
-          if (e.target.name && e.target.name.startsWith('filter_')) scheduleReload();
+          if (e.target.name && e.target.name.startsWith('filter_')) {
+            updateFilterIndicator('map-filter-bar', 'map-filter-badge', 'map-filter-chips');
+            scheduleReload();
+          }
         });
       }
       // Recherche globale → rechargement live quand on est en mode carte
@@ -1530,13 +1616,23 @@ document.addEventListener('click', function(e) {
             swap: 'innerHTML'
           });
         },
+        datesSet: function(info) {
+          // Milieu de la plage visible plutôt que info.start : plus fiable pour identifier
+          // "l'année affichée" quel que soit le point d'entrée (prev/next/today/sélecteur).
+          var mid = new Date((info.start.getTime() + info.end.getTime()) / 2);
+          syncCalendarYearSelect(mid.getFullYear());
+        },
       });
+      populateCalendarYearSelect();
       _calendar.render();
 
       var bar = document.getElementById('calendar-filter-bar');
       if (bar) {
         bar.addEventListener('input', function(e) {
-          if (e.target.name && e.target.name.startsWith('filter_')) scheduleCalendarReload();
+          if (e.target.name && e.target.name.startsWith('filter_')) {
+            updateFilterIndicator('calendar-filter-bar', 'calendar-filter-badge', 'calendar-filter-chips');
+            scheduleCalendarReload();
+          }
         });
       }
       var qEl = document.getElementById('global-search');
@@ -1555,11 +1651,53 @@ document.addEventListener('click', function(e) {
     if (_calendar) _calendar.refetchEvents();
   };
 
+  // ── Sélecteur "Aller à l'année" ─────────────────────────────────────────────
+  function populateCalendarYearSelect() {
+    var sel = document.getElementById('calendar-year-select');
+    if (!sel || sel.dataset.populated) return;
+    var current = new Date().getFullYear();
+    for (var y = current - 15; y <= current + 5; y++) {
+      var opt = document.createElement('option');
+      opt.value = String(y);
+      opt.textContent = String(y);
+      if (y === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.dataset.populated = '1';
+  }
+
+  function syncCalendarYearSelect(year) {
+    var sel = document.getElementById('calendar-year-select');
+    if (!sel) return;
+    var y = String(year);
+    if (!sel.querySelector('option[value="' + y + '"]')) {
+      // Navigation (prev/next) au-delà de la plage pré-remplie : on l'étend à la volée,
+      // en l'insérant à sa place chronologique plutôt qu'en fin de liste.
+      var opt = document.createElement('option');
+      opt.value = y;
+      opt.textContent = y;
+      var before = Array.prototype.find.call(sel.options, function(o) {
+        return parseInt(o.value, 10) > year;
+      });
+      if (before) sel.insertBefore(opt, before);
+      else sel.appendChild(opt);
+    }
+    if (sel.value !== y) sel.value = y;
+  }
+
+  window.onCalendarYearChange = function() {
+    var sel = document.getElementById('calendar-year-select');
+    if (_calendar && sel && sel.value) {
+      _calendar.gotoDate(new Date(parseInt(sel.value, 10), 0, 1));
+    }
+  };
+
   window.clearCalendarFilters = function() {
     var bar = document.getElementById('calendar-filter-bar');
     if (bar) bar.querySelectorAll('[name^="filter_"]').forEach(function(el) { el.value = ''; });
     var qEl = document.getElementById('global-search');
     if (qEl) qEl.value = '';
+    updateFilterIndicator('calendar-filter-bar', 'calendar-filter-badge', 'calendar-filter-chips');
     if (_calendar) _calendar.refetchEvents();
   };
   {% endif %}
