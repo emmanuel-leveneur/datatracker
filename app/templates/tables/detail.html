@@ -768,6 +768,10 @@ function closeAlertsPanel() {
 
   // ── Persistance visibilité colonnes (localStorage) ────────────────────────
   var COLVIS_KEY = 'colvis_{{ table.id }}';
+  // Mapping index → col-id, lu une seule fois sur le thead complet (avant toute
+  // colonne masquée) : réutilisé à chaque resynchronisation, car le thead perd
+  // ses <th> pour les colonnes masquées (DataTables les retire du DOM).
+  var colIdByIndex = [];
 
   function colvisLoad() {
     try { return JSON.parse(localStorage.getItem(COLVIS_KEY) || '{}'); }
@@ -839,18 +843,49 @@ function closeAlertsPanel() {
     if ($.fn.DataTable.isDataTable('#main-table')) {
       // Le tbody (#table-body) est désormais swappé seul par HTMX (le thead reste statique
       // pour ne pas faire perdre le focus des champs de filtre) : le nœud <table> n'est donc
-      // plus jamais recréé. Un destroy()+réinit ici resterait branché sur les lignes qu'il a
-      // connues à l'init et les restaurerait à la place des lignes fraîchement filtrées — on
-      // se contente donc de resynchroniser les données depuis le DOM courant.
+      // plus jamais recréé. Un destroy()+réinit ici restaure le DOM tel qu'il était AU
+      // MOMENT DE L'INIT précédente (comportement documenté de DataTables : destroy()
+      // "reverts the table to its original state", en écrasant le tbody fraîchement swappé
+      // par les lignes d'avant filtre) — on se contente donc de resynchroniser les données
+      // depuis le DOM courant, sans destroy().
       var dt = $('#main-table').DataTable();
+      // Le listener column-visibility.dt (attaché une fois au tout premier init, jamais
+      // détaché puisque cette instance n'est jamais détruite) sauvegarderait sinon en
+      // localStorage l'état "tout visible" ci-dessous AVANT que colvisRestore() ait pu
+      // relire l'état réellement souhaité — on le détache donc le temps de cette
+      // manipulation interne, et on le rattache une fois la resynchronisation terminée.
+      dt.off('column-visibility.dt');
+      // Si des colonnes sont actuellement masquées (bVisible=false en interne, hérité
+      // d'un resync précédent), les repasser à visible AVANT le rows.add()+draw() qui
+      // suit : les <tr> fraîchement injectés par HTMX contiennent TOUJOURS toutes les
+      // colonnes (le serveur ignore l'état colvis, purement côté client), et le masquage
+      // automatique que DataTables tente d'appliquer pendant ce premier draw() à des
+      // colonnes déjà bVisible=false sur des lignes "brutes" est peu fiable (constaté :
+      // exception interne _DT_CellIndex + cellules erronées retirées sur la 1re ligne).
+      // Partir d'un état "tout visible" homogène pour ce premier draw évite ce chemin
+      // interne bogué ; le masquage réel est réappliqué juste après, proprement, via
+      // colvisRestore() (même mécanisme fiable que le bouton "Colonnes").
+      dt.columns().visible(true, false);
       dt.clear();
       dt.rows.add($('#main-table tbody tr'));
       dt.draw(false);
+      colvisRestore(dt, colIdByIndex);
+      dt.draw(false);
+      dt.on('column-visibility.dt', function() {
+        colvisSave(dt, colIdByIndex);
+        updateHiddenBadge(dt);
+      });
+      // Le listener global de base.html (lucide.createIcons() sur tout htmx:afterSwap)
+      // s'exécute après celui-ci, mais un repaint tardif du navigateur sur la colonne
+      // sticky (col-sticky-right) peut laisser la 1re ligne visuellement vide malgré un
+      // DOM correct. On force explicitement un nouveau passage + un recalcul de géométrie
+      // DataTables juste après le redraw, plutôt que de dépendre de l'ordre implicite.
+      lucide.createIcons();
+      dt.columns.adjust();
       return;
     }
 
     // Lire le mapping index → col-id AVANT que DataTables modifie le DOM
-    var colIdByIndex = [];
     $('#main-table thead tr:first th').each(function(i, th) {
       colIdByIndex[i] = $(th).data('col-id') || null;
     });
