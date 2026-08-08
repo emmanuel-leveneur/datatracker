@@ -1,7 +1,7 @@
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -67,6 +67,7 @@ def attachments_panel(
     request: Request,
     table_id: int,
     row_id: int,
+    readonly: bool = Query(False),
     table: DataTable = Depends(get_table_or_404),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -74,7 +75,10 @@ def attachments_panel(
     if not can_access_table(table, user, db):
         raise HTTPException(status_code=403)
     row = _get_row_or_404(table_id, row_id, db)
-    can_write = can_access_table(table, user, db, require_write=True)
+    # readonly=1 : utilisé par la fiche détail (consultation), qui n'affiche jamais le
+    # formulaire d'upload ni les boutons de suppression même pour un utilisateur en
+    # écriture — ces actions vivent désormais exclusivement dans la modale d'édition.
+    can_write = not readonly and can_access_table(table, user, db, require_write=True)
     return templates.TemplateResponse(
         request, "partials/row_attachments.html",
         {

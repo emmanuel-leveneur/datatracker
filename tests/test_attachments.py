@@ -108,6 +108,63 @@ def test_panel_hides_upload_for_read_only_user(
     assert "Ajouter" not in resp.text
 
 
+def test_panel_readonly_hides_upload_and_delete_even_for_write_user(
+    admin_client, db, admin_user, upload_dir
+):
+    """La fiche détail (consultation) passe readonly=1 : plus de formulaire d'upload
+    ni de bouton supprimer même pour un utilisateur en écriture — ces actions vivent
+    désormais exclusivement dans la modale de modification."""
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+    _make_attachment(db, row, admin_user, upload_dir)
+
+    resp = admin_client.get(f"/tables/{table.id}/rows/{row.id}/attachments/panel?readonly=1")
+
+    assert resp.status_code == 200
+    assert "rapport.pdf" in resp.text  # toujours visible en lecture
+    assert "Ajouter" not in resp.text
+    assert "Supprimer" not in resp.text
+
+
+def test_panel_without_readonly_still_shows_upload_for_write_user(
+    admin_client, db, admin_user, upload_dir
+):
+    """Sans le paramètre readonly (cas de la modale d'édition), le comportement
+    précédent est inchangé pour un utilisateur en écriture."""
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+
+    resp = admin_client.get(f"/tables/{table.id}/rows/{row.id}/attachments/panel")
+
+    assert resp.status_code == 200
+    assert "Ajouter" in resp.text
+
+
+def test_row_detail_fiche_loads_attachments_readonly(admin_client, db, admin_user, upload_dir):
+    """La fiche détail (GET /rows/{id}/detail) doit référencer le panneau pièces
+    jointes en mode readonly=1."""
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+
+    resp = admin_client.get(f"/tables/{table.id}/rows/{row.id}/detail")
+
+    assert resp.status_code == 200
+    assert f"/tables/{table.id}/rows/{row.id}/attachments/panel?readonly=1" in resp.text
+
+
+def test_edit_row_form_loads_attachments_panel(admin_client, db, admin_user, upload_dir):
+    """La modale de modification doit désormais aussi charger le panneau pièces
+    jointes (sans readonly, upload/suppression disponibles)."""
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+
+    resp = admin_client.get(f"/tables/{table.id}/rows/{row.id}/edit")
+
+    assert resp.status_code == 200
+    assert f"/tables/{table.id}/rows/{row.id}/attachments/panel" in resp.text
+    assert "readonly=1" not in resp.text
+
+
 # ── Upload (POST /attachments) ────────────────────────────────────────────────
 
 def test_upload_valid_pdf_creates_attachment(admin_client, db, admin_user, upload_dir):

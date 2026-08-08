@@ -62,9 +62,11 @@
   <p class="text-sm text-gray-400 text-center py-6">Aucune colonne visible.</p>
   {% endif %}
 
-  {# Section pièces jointes — chargée via HTMX après l'ouverture de la fiche #}
+  {# Section pièces jointes — chargée via HTMX après l'ouverture de la fiche.
+     Lecture seule ici (readonly=1) : ajout/suppression vivent désormais dans la
+     modale de modification, cohérent avec le rôle "consultation" de cette fiche. #}
   <div class="mt-6 pt-5 border-t border-gray-100"
-       hx-get="/tables/{{ table.id }}/rows/{{ row.id }}/attachments/panel"
+       hx-get="/tables/{{ table.id }}/rows/{{ row.id }}/attachments/panel?readonly=1"
        hx-trigger="load"
        hx-swap="innerHTML">
     <div class="flex items-center gap-2 text-xs text-gray-300">
