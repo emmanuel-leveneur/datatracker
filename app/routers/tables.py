@@ -441,17 +441,23 @@ def table_detail(
     from app.dependencies import is_column_readonly
     from app.alerts import get_alert_row_data
     from app.routers.data import _resolve_relation_labels
-    from app.models import RowComment
+    from app.models import RowAttachment, RowComment
     from sqlalchemy import func as _func
     col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
 
     row_ids = [r.id for r in rows]
     comment_counts: dict[int, int] = {}
+    attachment_counts: dict[int, int] = {}
     if row_ids:
         _counts = db.query(RowComment.row_id, _func.count(RowComment.id)).filter(
             RowComment.row_id.in_(row_ids)
         ).group_by(RowComment.row_id).all()
         comment_counts = dict(_counts)
+
+        _att_counts = db.query(RowAttachment.row_id, _func.count(RowAttachment.id)).filter(
+            RowAttachment.row_id.in_(row_ids)
+        ).group_by(RowAttachment.row_id).all()
+        attachment_counts = dict(_att_counts)
 
     table_sync = db.query(TableSync).filter_by(table_id=table.id).first()
 
@@ -479,6 +485,7 @@ def table_detail(
             "sort_col": sort_col_obj.id if sort_col_obj else None,
             "sort_dir": sort_dir,
             "comment_counts": comment_counts,
+            "attachment_counts": attachment_counts,
             "lat_col": lat_col,
             "lon_col": lon_col,
             "table_sync": table_sync,
