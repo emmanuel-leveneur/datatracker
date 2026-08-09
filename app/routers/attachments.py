@@ -25,6 +25,7 @@ ALLOWED_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.ms-excel",
     "application/msword",
+    "application/vnd.ms-outlook",
     "text/csv", "text/plain",
 }
 
@@ -38,9 +39,17 @@ FRIENDLY_EXTENSIONS = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     "application/vnd.ms-excel": ".xls",
     "application/msword": ".doc",
+    "application/vnd.ms-outlook": ".msg",
     "text/csv": ".csv",
     "text/plain": ".txt",
 }
+
+# Le type MIME "officiel" des .msg (application/vnd.ms-outlook) n'est pas reconnu par
+# tous les navigateurs/OS : beaucoup renvoient un type générique (ou aucun) faute de
+# l'avoir dans leur base MIME locale. On ne peut pas accepter ce type générique pour
+# tous les fichiers (ouvrirait la porte à n'importe quel binaire) — uniquement en
+# secours quand l'extension du fichier est explicitement .msg.
+_GENERIC_MIME_TYPES = {"application/octet-stream", ""}
 
 
 def _upload_path(stored_name: str) -> str:
@@ -110,6 +119,8 @@ async def upload_attachment(
         raise HTTPException(status_code=400, detail=f"Maximum {MAX_FILES_PER_ROW} fichiers par ligne.")
 
     mime = file.content_type or ""
+    if mime in _GENERIC_MIME_TYPES and (file.filename or "").lower().endswith(".msg"):
+        mime = "application/vnd.ms-outlook"
     if mime not in ALLOWED_MIME_TYPES:
         raise HTTPException(status_code=400, detail="Type de fichier non autorisé.")
 

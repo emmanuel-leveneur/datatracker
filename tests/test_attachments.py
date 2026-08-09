@@ -185,6 +185,45 @@ def test_upload_valid_pdf_creates_attachment(admin_client, db, admin_user, uploa
     assert os.path.isfile(os.path.join(str(upload_dir), att.stored_name))
 
 
+def test_upload_msg_with_correct_mime_type_accepted(admin_client, db, admin_user, upload_dir):
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{row.id}/attachments",
+        files={"file": ("mail.msg", b"outlook msg content", "application/vnd.ms-outlook")},
+    )
+
+    assert resp.status_code == 200
+    db.expire_all()
+    att = db.query(RowAttachment).filter_by(row_id=row.id).first()
+    assert att is not None
+    assert att.mime_type == "application/vnd.ms-outlook"
+    assert att.stored_name.endswith(".msg")
+
+
+def test_upload_msg_with_generic_mime_type_accepted_via_extension(
+    admin_client, db, admin_user, upload_dir
+):
+    """De nombreux navigateurs/OS ne connaissent pas application/vnd.ms-outlook et
+    renvoient un type générique pour les .msg — on se rabat sur l'extension dans ce
+    cas précis (pas pour n'importe quel type générique, cf. test_upload_invalid_mime_type_rejected
+    qui vérifie qu'un .exe avec le même type générique reste bien rejeté)."""
+    table, _ = make_table(db, admin_user)
+    row = _make_row(db, table, admin_user)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{row.id}/attachments",
+        files={"file": ("mail.msg", b"outlook msg content", "application/octet-stream")},
+    )
+
+    assert resp.status_code == 200
+    db.expire_all()
+    att = db.query(RowAttachment).filter_by(row_id=row.id).first()
+    assert att is not None
+    assert att.mime_type == "application/vnd.ms-outlook"
+
+
 def test_upload_invalid_mime_type_rejected(admin_client, db, admin_user, upload_dir):
     table, _ = make_table(db, admin_user)
     row = _make_row(db, table, admin_user)
