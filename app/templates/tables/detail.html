@@ -958,8 +958,45 @@ function closeAlertsPanel() {
 
   $(document).ready(initMainTable);
 
+  // ── Préservation focus/curseur des champs de recherche pendant le resync ────
+  // Le remplacement du <tbody id="table-body"> (insertion/retrait de <tr>) fait perdre le
+  // focus aux inputs du thead (recherche globale, filtres par colonne) même si ceux-ci ne
+  // sont jamais eux-mêmes touchés par le swap : constaté en navigateur (Chromium recalcule
+  // le layout de la table entière à l'ajout/retrait de lignes, ce qui blur les autres
+  // cellules du même tableau). htmx ne restaure le focus que si l'élément a été RETIRÉ du DOM
+  // (https://github.com/bigskysoftware/htmx `doSwap`) — ce n'est pas le cas ici (le thead
+  // reste statique), donc htmx ne s'en charge pas : on le fait nous-mêmes.
+  // Note : htmx déclenche 'htmx:afterSwap' une fois par élément "settling" (le tbody ET la
+  // div de pagination OOB partagent le même e.detail.target.id côté réponse) — la restauration
+  // doit donc pouvoir s'appliquer à chaque occurrence, initMainTable() étant lui-même rappelé
+  // à chaque fois et pouvant re-provoquer le même blur.
+  var pendingFocusRestore = null;
+  document.body.addEventListener('htmx:beforeRequest', function(e) {
+    var active = document.activeElement;
+    if (e.detail.elt === active && active && active.id &&
+        (active.id === 'global-search' || active.id.indexOf('filter-') === 0)) {
+      pendingFocusRestore = { id: active.id, start: active.selectionStart, end: active.selectionEnd };
+    }
+  });
+  function restorePendingFocus() {
+    if (!pendingFocusRestore) return;
+    var el = document.getElementById(pendingFocusRestore.id);
+    if (el && document.activeElement !== el) {
+      el.focus({ preventScroll: true });
+      try { el.setSelectionRange(pendingFocusRestore.start, pendingFocusRestore.end); } catch (err) {}
+    }
+  }
   document.body.addEventListener('htmx:afterSwap', function(e) {
-    if (e.detail.target && e.detail.target.id === 'table-body') initMainTable();
+    if (e.detail.target && e.detail.target.id === 'table-body') {
+      initMainTable();
+      restorePendingFocus();
+    }
+  });
+  document.body.addEventListener('htmx:afterRequest', function(e) {
+    if (pendingFocusRestore && e.detail.elt && e.detail.elt.id === pendingFocusRestore.id) {
+      restorePendingFocus();
+      pendingFocusRestore = null;
+    }
   });
 })();
 
