@@ -16,8 +16,11 @@
 </div>
 {% endif %}
 
-<!-- Liste des alertes existantes -->
-<div class="flex-1 overflow-y-auto p-4 space-y-2">
+<!-- Liste des alertes existantes + formulaire nouvelle alerte : un seul conteneur défilant,
+     pour que le bouton "Créer l'alerte" reste atteignable même quand le formulaire grandit
+     (plusieurs blocs de conditions) au-delà de la hauteur visible du panneau. -->
+<div class="flex-1 overflow-y-auto">
+<div class="p-4 space-y-2">
   {% if alerts %}
     {% for alert in alerts %}
     <div class="border rounded-lg p-3 {% if alert.is_active %}bg-white border-gray-200{% else %}bg-gray-50 border-gray-100 opacity-60{% endif %}">
@@ -241,6 +244,7 @@
     </form>
   </div>
   {% endif %}
+</div>
 </div>
 
 <script>
