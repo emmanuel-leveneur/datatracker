@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, subqueryload, aliased
 from app.activity import log_action
 from app.alerts import evaluate_alerts_for_row, get_alert_row_data
 from app.database import get_db
+from app.import_utils import parse_date_or_datetime
 from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
     get_visible_columns, is_column_readonly,
@@ -1010,13 +1011,26 @@ async def import_csv(
     for row_num, csv_row in enumerate(reader, start=2):
         # Parse values for this CSV row
         parsed: dict[int, str] = {}
+        row_errors: list[str] = []
         for csv_col, value in csv_row.items():
             col = col_map.get(csv_col.strip().lower())
-            if col and not is_column_readonly(col, user, db):
+            if not col or is_column_readonly(col, user, db):
+                continue
+            raw = (value or "").strip()
+            if col.col_type in (ColumnType.DATE, ColumnType.DATETIME) and raw:
+                converted = parse_date_or_datetime(raw, col.col_type)
+                if converted is None:
+                    expected = "AAAA-MM-JJ" if col.col_type == ColumnType.DATE else "AAAA-MM-JJ HH:MM"
+                    row_errors.append(
+                        f"Ligne {row_num} — {col.name} : « {raw} » n'est pas une date reconnue "
+                        f"(format attendu : {expected}, ou JJ/MM/AAAA)."
+                    )
+                    continue
+                parsed[col.id] = converted
+            else:
                 parsed[col.id] = value or ""
 
         # Check unique constraints
-        row_errors: list[str] = []
         for col_id, col in unique_cols.items():
             value = parsed.get(col_id, "")
             if value:

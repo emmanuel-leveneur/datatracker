@@ -290,6 +290,32 @@ def sanitize_headers(raw_headers: list[str]) -> list[str]:
 
 # ── Normalisation des valeurs ──────────────────────────────────────────────────
 
+def parse_date_or_datetime(val: str, col_type: ColumnType) -> str | None:
+    """Convertit une date/heure brute vers le format de stockage interne ISO
+    (AAAA-MM-JJ ou AAAA-MM-JJTHH:MM), en testant les formats supportés dans l'ordre.
+    Retourne None si aucun format reconnu ne correspond (valeur non parseable)."""
+    val = val.strip()
+    if col_type == ColumnType.DATETIME:
+        for pattern, fmt in _DATETIME_PATTERNS:
+            if pattern.match(val):
+                try:
+                    return dt.strptime(val, fmt).strftime('%Y-%m-%dT%H:%M')
+                except ValueError:
+                    pass
+        return None
+
+    if col_type == ColumnType.DATE:
+        for pattern, fmt in _DATE_PATTERNS:
+            if pattern.match(val):
+                try:
+                    return dt.strptime(val, fmt).strftime('%Y-%m-%d')
+                except ValueError:
+                    pass
+        return None
+
+    return val
+
+
 def normalize_value(val: str, col_type: ColumnType) -> str:
     """Convertit une valeur brute vers le format de stockage interne."""
     val = val.strip()
@@ -299,23 +325,9 @@ def normalize_value(val: str, col_type: ColumnType) -> str:
     if col_type == ColumnType.BOOLEAN:
         return 'true' if val.lower() in _BOOL_TRUE else 'false'
 
-    if col_type == ColumnType.DATETIME:
-        for pattern, fmt in _DATETIME_PATTERNS:
-            if pattern.match(val):
-                try:
-                    return dt.strptime(val, fmt).strftime('%Y-%m-%dT%H:%M')
-                except ValueError:
-                    pass
-        return val  # stocké tel quel si non parseable
-
-    if col_type == ColumnType.DATE:
-        for pattern, fmt in _DATE_PATTERNS:
-            if pattern.match(val):
-                try:
-                    return dt.strptime(val, fmt).strftime('%Y-%m-%d')
-                except ValueError:
-                    pass
-        return val  # stocké tel quel si non parseable
+    if col_type in (ColumnType.DATE, ColumnType.DATETIME):
+        converted = parse_date_or_datetime(val, col_type)
+        return converted if converted is not None else val  # stocké tel quel si non parseable
 
     if col_type in (ColumnType.FLOAT, ColumnType.LATITUDE, ColumnType.LONGITUDE):
         return val.replace(',', '.', 1)

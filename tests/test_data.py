@@ -272,3 +272,86 @@ def test_import_csv_forbidden_without_write_permission(user_client, db, admin_us
     )
 
     assert resp.status_code == 403
+
+
+# ── Import CSV : détection/conversion des dates ─────────────────────────────────
+
+def test_import_csv_converts_fr_date_to_iso(admin_client, db, admin_user):
+    table, cols = make_table(db, admin_user, columns=[("Naissance", ColumnType.DATE)])
+    col = cols[0]
+    csv_data = "Naissance\n18/08/2026\n"
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/import",
+        files={"file": ("data.csv", io.BytesIO(csv_data.encode()), "text/csv")},
+    )
+
+    assert resp.status_code == 200
+    db.expire_all()
+    row = db.query(TableRow).filter_by(table_id=table.id).first()
+    cell = db.query(CellValue).filter_by(row_id=row.id, column_id=col.id).first()
+    assert cell.value == "2026-08-18"
+
+
+def test_import_csv_keeps_iso_date_unchanged(admin_client, db, admin_user):
+    table, cols = make_table(db, admin_user, columns=[("Naissance", ColumnType.DATE)])
+    col = cols[0]
+    csv_data = "Naissance\n2026-08-18\n"
+
+    admin_client.post(
+        f"/tables/{table.id}/import",
+        files={"file": ("data.csv", io.BytesIO(csv_data.encode()), "text/csv")},
+    )
+
+    db.expire_all()
+    row = db.query(TableRow).filter_by(table_id=table.id).first()
+    cell = db.query(CellValue).filter_by(row_id=row.id, column_id=col.id).first()
+    assert cell.value == "2026-08-18"
+
+
+def test_import_csv_converts_fr_datetime_to_iso(admin_client, db, admin_user):
+    table, cols = make_table(db, admin_user, columns=[("Horodatage", ColumnType.DATETIME)])
+    col = cols[0]
+    csv_data = "Horodatage\n18/08/2026 14:30\n"
+
+    admin_client.post(
+        f"/tables/{table.id}/import",
+        files={"file": ("data.csv", io.BytesIO(csv_data.encode()), "text/csv")},
+    )
+
+    db.expire_all()
+    row = db.query(TableRow).filter_by(table_id=table.id).first()
+    cell = db.query(CellValue).filter_by(row_id=row.id, column_id=col.id).first()
+    assert cell.value == "2026-08-18T14:30"
+
+
+def test_import_csv_unrecognized_date_format_reports_error_and_rolls_back(admin_client, db, admin_user):
+    table, cols = make_table(db, admin_user, columns=[("Naissance", ColumnType.DATE)])
+    csv_data = "Naissance\n18 août 2026\n"
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/import",
+        files={"file": ("data.csv", io.BytesIO(csv_data.encode()), "text/csv")},
+    )
+
+    assert resp.status_code == 200
+    assert "n&#39;est pas une date reconnue" in resp.text
+    db.expire_all()
+    assert db.query(TableRow).filter_by(table_id=table.id).count() == 0
+
+
+def test_import_csv_empty_date_value_is_allowed(admin_client, db, admin_user):
+    table, cols = make_table(
+        db, admin_user,
+        columns=[("Nom", ColumnType.TEXT), ("Naissance", ColumnType.DATE)],
+    )
+    csv_data = "Nom,Naissance\nAlice,\n"
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/import",
+        files={"file": ("data.csv", io.BytesIO(csv_data.encode()), "text/csv")},
+    )
+
+    assert resp.status_code == 200
+    db.expire_all()
+    assert db.query(TableRow).filter_by(table_id=table.id).count() == 1
