@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 from datetime import timezone, timedelta
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -653,6 +654,74 @@ async def bulk_update_rows(
         )
         resp.headers["HX-Trigger"] = "closeBulkEditModal"
         return resp
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/rows/bulk-delete")
+async def bulk_delete_rows(
+    request: Request,
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from datetime import datetime
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+
+    form = await request.form()
+
+    def _render(error: str | None = None):
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
+        page = int(form.get("page", 1))
+        resp = templates.TemplateResponse(
+            request, "partials/table_rows_response.html",
+            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
+        )
+        if error:
+            resp.headers["HX-Trigger"] = json.dumps({"bulkDeleteError": error})
+        return resp
+
+    try:
+        row_ids = {int(i) for i in form.getlist("row_ids")}
+    except ValueError:
+        row_ids = set()
+
+    if not row_ids:
+        return _render("Aucune ligne sélectionnée.")
+    if len(row_ids) > BULK_EDIT_MAX_ROWS:
+        return _render(
+            f"Impossible de supprimer plus de {BULK_EDIT_MAX_ROWS} lignes en une fois "
+            f"({len(row_ids)} sélectionnées)."
+        )
+
+    rows = (
+        db.query(TableRow)
+        .filter(
+            TableRow.table_id == table_id,
+            TableRow.deleted_at.is_(None),
+            TableRow.id.in_(row_ids),
+        )
+        .options(subqueryload(TableRow.cell_values))
+        .all()
+    )
+    if not rows:
+        return _render("Aucune ligne valide dans la sélection.")
+
+    now = datetime.utcnow()
+    for row in rows:
+        row.deleted_at = now
+        log_action(db, user, "trash_row", "row",
+                   resource_id=row.id, resource_name=table.name, table_id=table.id,
+                   details=_row_details(row, table.columns))
+    db.commit()
+
+    if request.headers.get("HX-Request"):
+        return _render()
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
