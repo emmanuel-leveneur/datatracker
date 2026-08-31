@@ -182,13 +182,24 @@
 </div>
 
 {% if can_write %}
-{# ── Barre de sélection multiple (bulk-edit) ──────────────────────────────── #}
+{# ── Barre de sélection multiple (bulk-edit / bulk-delete) ─────────────────── #}
 <div id="bulk-select-bar"
      class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-gray-900 text-white rounded-full shadow-2xl px-5 py-2.5 flex items-center gap-4 text-sm">
   <span id="bulk-select-count">0 ligne(s) sélectionnée(s)</span>
   <button onclick="openBulkEditModal()"
     class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1 rounded-full transition">
     Modifier en masse
+  </button>
+  <button type="button"
+    hx-post="/tables/{{ table.id }}/rows/bulk-delete"
+    hx-target="#table-body"
+    hx-swap="innerHTML"
+    hx-include="#filters-zone, #global-search"
+    hx-vals='{"page": 1}'
+    hx-on:htmx:config-request="event.detail.parameters.row_ids = window.bulkSelectedIds ? [...window.bulkSelectedIds] : []"
+    hx-confirm="Mettre les lignes sélectionnées à la corbeille ?"
+    class="bg-red-600 hover:bg-red-700 text-white font-semibold px-3 py-1 rounded-full transition">
+    Supprimer
   </button>
   <button onclick="clearBulkSelection()"
     class="text-gray-300 hover:text-white transition">
@@ -1101,6 +1112,12 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
   }
 });
 document.body.addEventListener('closeBulkEditModal', closeBulkEditModal);
+
+// Erreur de suppression en masse (sélection vide / trop de lignes) — renvoyée via
+// HX-Trigger par bulk_delete_rows, pas de modale dédiée pour cette action.
+document.body.addEventListener('bulkDeleteError', function(e) {
+  alert(e.detail.value);
+});
 {% endif %}
 
 // ── Lightbox image ─────────────────────────────────────────────────────────
