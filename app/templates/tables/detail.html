@@ -103,12 +103,58 @@
         <i data-lucide="file-text" class="w-4 h-4 text-gray-400"></i>
         Fiche détail
       </h2>
-      <button onclick="closeDetailModal()"
+      <div class="flex items-center gap-1">
+        <button onclick="openShareRowModal()" title="Partager par email"
+          class="text-gray-400 hover:text-emerald-600 p-1.5 rounded-lg hover:bg-emerald-50 transition">
+          <i data-lucide="plus" class="w-4 h-4"></i>
+        </button>
+        <button onclick="closeDetailModal()"
+          class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+    <div id="row-detail-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
+{# ── Modal partage d'une ligne par email ───────────────────────────────────── #}
+<div id="share-row-backdrop" class="fixed inset-0 bg-black/40 z-[55] hidden" onclick="closeShareRowModal()"></div>
+<div id="share-row-modal" class="fixed inset-0 z-[55] flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="send" class="w-4 h-4 text-gray-400"></i>
+        Partager par email
+      </h2>
+      <button onclick="closeShareRowModal()"
         class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
         <i data-lucide="x" class="w-4 h-4"></i>
       </button>
     </div>
-    <div id="row-detail-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+    <div id="share-row-modal-body" class="px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
+{# ── Modal partage en masse par email ──────────────────────────────────────── #}
+<div id="share-bulk-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeBulkShareModal()"></div>
+<div id="share-bulk-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="send" class="w-4 h-4 text-gray-400"></i>
+        Partager par email
+      </h2>
+      <button onclick="closeBulkShareModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="share-bulk-modal-body" class="px-6 py-5">
       <!-- chargé par HTMX -->
     </div>
   </div>
@@ -189,6 +235,10 @@
   <button onclick="openBulkEditModal()"
     class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1 rounded-full transition disabled:opacity-60 disabled:cursor-not-allowed">
     Modifier en masse
+  </button>
+  <button onclick="openBulkShareModal()"
+    class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1 rounded-full transition disabled:opacity-60 disabled:cursor-not-allowed">
+    Partager
   </button>
   <button type="button"
     hx-post="/tables/{{ table.id }}/rows/bulk-delete"
@@ -1129,6 +1179,31 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
 });
 document.body.addEventListener('closeBulkEditModal', closeBulkEditModal);
 
+function openBulkShareModal() {
+  if (window.bulkSelectedIds.size === 0) return;
+  document.getElementById('share-bulk-backdrop').classList.remove('hidden');
+  document.getElementById('share-bulk-modal').classList.remove('hidden');
+  htmx.ajax('GET', '/tables/{{ table.id }}/rows/bulk-share', {
+    target: '#share-bulk-modal-body',
+    swap: 'innerHTML'
+  });
+}
+function closeBulkShareModal() {
+  document.getElementById('share-bulk-backdrop').classList.add('hidden');
+  document.getElementById('share-bulk-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'share-bulk-modal-body') {
+    var msg = document.getElementById('share-bulk-count-msg');
+    if (msg) {
+      var n = window.bulkSelectedIds.size;
+      msg.textContent = n + ' ligne' + (n > 1 ? 's' : '') + ' sélectionnée' + (n > 1 ? 's' : '') +
+        ' — les colonnes cochées ci-dessous seront incluses dans l\'email.';
+    }
+    lucide.createIcons();
+  }
+});
+
 // Overlay de traitement pendant l'application en masse (même pattern que l'overlay Alertes).
 // Uniquement pour la soumission du formulaire (le POST qui applique la modification) —
 // pas pour le <select> "Colonne à modifier", qui fait son propre hx-get vers /bulk-edit/field
@@ -1199,6 +1274,11 @@ function closeDetailModal() {
 document.body.addEventListener('htmx:afterSwap', function(e) {
   if (e.detail.target && e.detail.target.id === 'row-detail-modal-body') {
     openDetailModal();
+    // Repère la ligne affichée (depuis l'URL de la requête) pour le bouton "+" de
+    // partage dans l'en-tête de la fiche, qui n'a pas le row.id dans son propre markup.
+    var m = e.detail.xhr && e.detail.xhr.responseURL &&
+      e.detail.xhr.responseURL.match(/\/rows\/(\d+)\/detail/);
+    window.currentDetailRowId = m ? m[1] : null;
     lucide.createIcons();
   }
 });
@@ -1206,6 +1286,29 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
 document.body.addEventListener('htmx:afterSwap', function(e) {
   if (e.detail.target && e.detail.target.closest &&
       e.detail.target.closest('#row-detail-modal-body')) {
+    lucide.createIcons();
+  }
+});
+
+// ── Modal partage d'une ligne par email ─────────────────────────────────────
+// Déclenché soit par le bouton "+" de la fiche détail (ligne déjà ouverte, utilise
+// window.currentDetailRowId), soit directement par l'icône "send" de la colonne
+// Actions (hx-get classique sur #share-row-modal-body, voir table_rows.html).
+function openShareRowModal() {
+  if (!window.currentDetailRowId) return;
+  htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + window.currentDetailRowId + '/share', {
+    target: '#share-row-modal-body',
+    swap: 'innerHTML'
+  });
+}
+function closeShareRowModal() {
+  document.getElementById('share-row-backdrop').classList.add('hidden');
+  document.getElementById('share-row-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'share-row-modal-body') {
+    document.getElementById('share-row-backdrop').classList.remove('hidden');
+    document.getElementById('share-row-modal').classList.remove('hidden');
     lucide.createIcons();
   }
 });

@@ -39,6 +39,8 @@ ACTION_LABELS = {
     "activate_alert": "Alerte activée",
     "deactivate_alert": "Alerte désactivée",
     "delete_alert": "Alerte supprimée",
+    "share_row_email": "Ligne partagée par email",
+    "share_rows_email": "Lignes partagées par email (masse)",
 }
 
 RESOURCE_LABELS = {
