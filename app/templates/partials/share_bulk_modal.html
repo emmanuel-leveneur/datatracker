@@ -32,6 +32,7 @@
       placeholder="Laissez vide pour afficher « DataTracker »"
       class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
     <p class="text-xs text-gray-400 mt-1">Remplace « DataTracker » en haut de l'email — utile pour ne pas exposer l'outil face à un destinataire externe.</p>
+    <div id="share-bulk-title-history" class="flex flex-wrap gap-1 mt-1.5"></div>
   </div>
 
   <div>
@@ -41,6 +42,7 @@
       placeholder="ex. alice@exemple.com, bob@exemple.com"
       class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
     <p class="text-xs text-gray-400 mt-1">Séparez plusieurs adresses par une virgule.</p>
+    <div id="share-bulk-recipients-history" class="flex flex-wrap gap-1 mt-1.5"></div>
   </div>
 
   <div>
@@ -48,6 +50,7 @@
     <textarea name="message" rows="3"
       placeholder="Un mot pour accompagner cet envoi…"
       class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none">{{ message_value | default('') }}</textarea>
+    <div id="share-bulk-message-history" class="flex flex-wrap gap-1 mt-1.5"></div>
   </div>
 
   <div class="flex gap-2 pt-2">

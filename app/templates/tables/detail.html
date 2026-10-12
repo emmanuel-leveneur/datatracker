@@ -1205,6 +1205,7 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
       msg.textContent = n + ' ligne' + (n > 1 ? 's' : '') + ' sélectionnée' + (n > 1 ? 's' : '') +
         ' — les colonnes cochées ci-dessous seront incluses dans l\'email.';
     }
+    _applyShareHistoryUI({{ table.id }}, 'share-bulk');
     lucide.createIcons();
   }
 });
@@ -1295,6 +1296,76 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
   }
 });
 
+// ── Historique local (3 dernières valeurs par champ, par table) des formulaires de
+// partage par email — purement côté navigateur (localStorage), jamais transmis au
+// serveur. Titre/Message : 3 dernières valeurs complètes, une puce remplace le champ.
+// Destinataires (multi-valeurs) : 3 dernières adresses distinctes, une puce s'ajoute
+// au champ sans effacer les adresses déjà saisies.
+function _shareHistoryKey(tableId) {
+  return 'dt_share_history_' + tableId;
+}
+function _loadShareHistory(tableId) {
+  try {
+    var raw = localStorage.getItem(_shareHistoryKey(tableId));
+    var h = raw ? JSON.parse(raw) : {};
+    return { titles: h.titles || [], messages: h.messages || [], recipients: h.recipients || [] };
+  } catch (e) {
+    return { titles: [], messages: [], recipients: [] };
+  }
+}
+function _pushHistoryValue(arr, value) {
+  value = (value || '').trim();
+  if (!value) return arr;
+  var filtered = arr.filter(function(v) { return v !== value; });
+  filtered.unshift(value);
+  return filtered.slice(0, 3);
+}
+function _recordShareHistory(tableId, title, recipientsRaw, message) {
+  try {
+    var h = _loadShareHistory(tableId);
+    h.titles = _pushHistoryValue(h.titles, title);
+    h.messages = _pushHistoryValue(h.messages, message);
+    (recipientsRaw || '').split(/[,;\s]+/).map(function(s) { return s.trim(); }).filter(Boolean)
+      .forEach(function(addr) { h.recipients = _pushHistoryValue(h.recipients, addr); });
+    localStorage.setItem(_shareHistoryKey(tableId), JSON.stringify(h));
+  } catch (e) { /* localStorage indisponible (navigation privée, etc.) : on ignore */ }
+}
+function _escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function _renderHistoryChips(containerId, values, onClick) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  if (!values || !values.length) { el.innerHTML = ''; return; }
+  el.innerHTML = values.map(function(v) {
+    return '<button type="button" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 ' +
+      'px-2 py-0.5 rounded-full transition truncate max-w-[160px]" title="' + _escapeHtml(v) + '">' +
+      _escapeHtml(v) + '</button>';
+  }).join('');
+  Array.prototype.forEach.call(el.querySelectorAll('button'), function(btn, i) {
+    btn.addEventListener('click', function() { onClick(values[i]); });
+  });
+}
+function _applyShareHistoryUI(tableId, prefix) {
+  var h = _loadShareHistory(tableId);
+  var bodySelector = '#' + prefix + '-modal-body ';
+  _renderHistoryChips(prefix + '-title-history', h.titles, function(v) {
+    var input = document.querySelector(bodySelector + 'input[name="email_title"]');
+    if (input) input.value = v;
+  });
+  _renderHistoryChips(prefix + '-message-history', h.messages, function(v) {
+    var ta = document.querySelector(bodySelector + 'textarea[name="message"]');
+    if (ta) ta.value = v;
+  });
+  _renderHistoryChips(prefix + '-recipients-history', h.recipients, function(v) {
+    var input = document.querySelector(bodySelector + 'input[name="recipients"]');
+    if (!input) return;
+    var current = input.value.split(/[,;\s]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+    if (current.indexOf(v) === -1) current.push(v);
+    input.value = current.join(', ');
+  });
+}
+
 // ── Modal partage d'une ligne par email ─────────────────────────────────────
 // Déclenché soit par le bouton "+" de la fiche détail (ligne déjà ouverte, utilise
 // window.currentDetailRowId), soit directement par l'icône "send" de la colonne
@@ -1314,6 +1385,7 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
   if (e.detail.target && e.detail.target.id === 'share-row-modal-body') {
     document.getElementById('share-row-backdrop').classList.remove('hidden');
     document.getElementById('share-row-modal').classList.remove('hidden');
+    _applyShareHistoryUI({{ table.id }}, 'share-row');
     lucide.createIcons();
   }
 });
@@ -1330,6 +1402,7 @@ async function _submitShareForm(e, bodyTargetId, closeFnName, extraFormData) {
   buttons.forEach(function(b) { b.disabled = true; });
   var submitBtn = form.querySelector('button[type="submit"]');
   if (submitBtn) submitBtn.classList.add('htmx-request');
+  var prefix = bodyTargetId.replace('-modal-body', '');
 
   try {
     var fd = new FormData(form);
@@ -1348,6 +1421,7 @@ async function _submitShareForm(e, bodyTargetId, closeFnName, extraFormData) {
       a.href = url; a.download = filename;
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
+      _recordShareHistory({{ table.id }}, fd.get('email_title'), fd.get('recipients'), fd.get('message'));
 
       body.innerHTML =
         '<div class="flex flex-col items-center text-center gap-3 py-4">' +
@@ -1361,6 +1435,7 @@ async function _submitShareForm(e, bodyTargetId, closeFnName, extraFormData) {
         '</div>';
     } else {
       body.innerHTML = await resp.text();
+      _applyShareHistoryUI({{ table.id }}, prefix);
     }
     lucide.createIcons();
   } catch (err) {
