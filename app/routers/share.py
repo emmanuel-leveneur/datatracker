@@ -3,13 +3,18 @@ Partage par email d'une ligne (fiche complète) ou d'une sélection de lignes (c
 choisies), avec un texte libre, vers des destinataires saisis librement par
 l'utilisateur (pas forcément des comptes DataTracker — c'est tout le but du partage).
 
+DataTracker ne pousse jamais l'email lui-même : il construit un fichier .eml (déjà
+rempli — destinataires, objet, fiche/tableau en HTML) et le propose en téléchargement.
+L'utilisateur l'ouvre avec son client mail par défaut, l'édite à sa convenance et
+l'envoie depuis sa propre adresse. Ne dépend donc pas de SMTP_HOST.
+
 Accès en lecture suffisant (comme l'export Excel) : partager ne modifie aucune donnée.
 Respecte toujours les colonnes masquées (ColumnPermission.hidden) via
 get_visible_columns() — jamais contournable depuis le formulaire.
 """
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -17,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.activity import log_action
 from app.database import get_db
 from app.dependencies import can_access_table, get_current_user, get_table_or_404, get_visible_columns
-from app.email_utils import send_bulk_rows_share_email, send_row_share_email
+from app.email_utils import build_bulk_rows_share_eml, build_row_share_eml
 from app.models import DataTable, TableRow, User
 
 router = APIRouter(prefix="/tables", tags=["share"])
@@ -48,6 +53,21 @@ def _parse_recipients(raw: str) -> list[str]:
     if invalid:
         raise ValueError("Adresse(s) email invalide(s) : " + ", ".join(invalid))
     return seen
+
+
+def _eml_filename(*parts: str) -> str:
+    """Nom de fichier .eml sûr à partir de fragments (nom de table, etc.)."""
+    safe = "_".join(p.strip().replace(" ", "_") for p in parts if p.strip())
+    safe = re.sub(r"[^A-Za-z0-9_\-]", "", safe) or "partage"
+    return f"{safe}.eml"
+
+
+def _eml_response(raw: bytes, filename: str) -> Response:
+    return Response(
+        content=raw,
+        media_type="message/rfc822",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ── Partage d'une ligne ─────────────────────────────────────────────────────────
@@ -107,8 +127,9 @@ async def share_row_send(
         return _error(str(exc))
 
     cells = {cv.column_id: cv.value for cv in row.cell_values}
-    send_row_share_email(
+    raw = build_row_share_eml(
         to_addresses=recipients,
+        from_address=user.email,
         shared_by=user.username,
         table_name=table.name,
         table_id=table.id,
@@ -120,14 +141,14 @@ async def share_row_send(
     log_action(
         db, user, "share_row_email", "row",
         resource_id=row.id, resource_name=table.name, table_id=table.id,
-        details=f"Ligne #{row.id} partagée à {len(recipients)} destinataire(s) : {', '.join(recipients)}",
+        details=(
+            f"Ligne #{row.id} : brouillon .eml généré pour {len(recipients)} "
+            f"destinataire(s) : {', '.join(recipients)}"
+        ),
     )
     db.commit()
 
-    return templates.TemplateResponse(
-        request, "partials/share_success.html",
-        {"recipients": recipients, "row_count": 1, "modal": "row"},
-    )
+    return _eml_response(raw, _eml_filename("partage", table.name, f"ligne{row.id}"))
 
 
 # ── Partage en masse ─────────────────────────────────────────────────────────────
@@ -220,8 +241,9 @@ async def bulk_share_send(
         for row in rows
     ]
 
-    send_bulk_rows_share_email(
+    raw = build_bulk_rows_share_eml(
         to_addresses=recipients,
+        from_address=user.email,
         shared_by=user.username,
         table_name=table.name,
         table_id=table.id,
@@ -234,13 +256,10 @@ async def bulk_share_send(
         db, user, "share_rows_email", "table",
         resource_id=table.id, resource_name=table.name, table_id=table.id,
         details=(
-            f"{len(rows)} ligne(s), {len(columns)} colonne(s) partagées à "
-            f"{len(recipients)} destinataire(s) : {', '.join(recipients)}"
+            f"{len(rows)} ligne(s), {len(columns)} colonne(s) : brouillon .eml généré "
+            f"pour {len(recipients)} destinataire(s) : {', '.join(recipients)}"
         ),
     )
     db.commit()
 
-    return templates.TemplateResponse(
-        request, "partials/share_success.html",
-        {"recipients": recipients, "row_count": len(rows), "modal": "bulk"},
-    )
+    return _eml_response(raw, _eml_filename("partage", table.name))

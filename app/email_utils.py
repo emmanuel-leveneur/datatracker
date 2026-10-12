@@ -832,8 +832,9 @@ Email envoyé via DataTracker par {shared_by}.
 """
 
 
-def send_row_share_email(
+def build_row_share_eml(
     to_addresses: list[str],
+    from_address: str,
     shared_by: str,
     table_name: str,
     table_id: int,
@@ -841,20 +842,14 @@ def send_row_share_email(
     message: str,
     columns,
     cells: dict,
-) -> None:
+) -> bytes:
     """
-    Envoie par email la fiche d'une ligne, avec un texte libre, à des destinataires
-    choisis par l'utilisateur (potentiellement hors de DataTracker).
-    Ne lève pas d'exception — les erreurs sont loggées.
+    Construit (sans l'envoyer) le message MIME (.eml) de partage d'une ligne : fiche
+    complète + texte libre, destinataires/objet pré-remplis. L'email n'est jamais
+    envoyé par DataTracker — le fichier est téléchargé puis ouvert/édité/envoyé par
+    l'utilisateur depuis son propre client mail (ne dépend donc pas de SMTP_HOST).
+    Retourne les octets bruts du message (RFC 822), prêts à être servis en téléchargement.
     """
-    if not settings.SMTP_HOST or not to_addresses:
-        return
-
-    from_addr = settings.SMTP_FROM or settings.SMTP_USER
-    if not from_addr:
-        logger.warning("email_utils: SMTP_FROM et SMTP_USER sont vides, email non envoyé.")
-        return
-
     table_url = f"{settings.APP_URL.rstrip('/')}/tables/{table_id}"
     subject = f"{table_name} — partagé par {shared_by}"
 
@@ -889,32 +884,17 @@ def send_row_share_email(
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = from_addr
+    msg["From"] = from_address
     msg["To"] = ", ".join(to_addresses)
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    try:
-        if settings.SMTP_USE_TLS:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-        else:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
-
-        if settings.SMTP_USER and settings.SMTP_PASSWORD:
-            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-
-        server.sendmail(from_addr, to_addresses, msg.as_string())
-        server.quit()
-        logger.info("email_utils: partage ligne envoyé à %s — %s", to_addresses, subject)
-    except Exception as exc:
-        logger.error("email_utils: échec envoi partage ligne — %s", exc)
+    return msg.as_bytes()
 
 
-def send_bulk_rows_share_email(
+def build_bulk_rows_share_eml(
     to_addresses: list[str],
+    from_address: str,
     shared_by: str,
     table_name: str,
     table_id: int,
@@ -922,21 +902,14 @@ def send_bulk_rows_share_email(
     message: str,
     columns,
     rows: list[dict],
-) -> None:
+) -> bytes:
     """
-    Envoie par email un tableau HTML regroupant plusieurs lignes (colonnes choisies par
-    l'utilisateur), avec un texte libre, à des destinataires de son choix.
+    Construit (sans l'envoyer) le message MIME (.eml) de partage de plusieurs lignes :
+    tableau HTML des colonnes choisies + texte libre, destinataires/objet pré-remplis.
     - rows : liste de {col_id: valeur_brute}, une entrée par ligne partagée.
-    Ne lève pas d'exception — les erreurs sont loggées.
+    Même logique que build_row_share_eml() — jamais envoyé par DataTracker.
+    Retourne les octets bruts du message (RFC 822).
     """
-    if not settings.SMTP_HOST or not to_addresses:
-        return
-
-    from_addr = settings.SMTP_FROM or settings.SMTP_USER
-    if not from_addr:
-        logger.warning("email_utils: SMTP_FROM et SMTP_USER sont vides, email non envoyé.")
-        return
-
     table_url = f"{settings.APP_URL.rstrip('/')}/tables/{table_id}"
     row_label = "ligne" if row_count == 1 else "lignes"
     subject = f"{table_name} — {row_count} {row_label} partagée(s) par {shared_by}"
@@ -975,28 +948,12 @@ def send_bulk_rows_share_email(
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = from_addr
+    msg["From"] = from_address
     msg["To"] = ", ".join(to_addresses)
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    try:
-        if settings.SMTP_USE_TLS:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-        else:
-            server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
-
-        if settings.SMTP_USER and settings.SMTP_PASSWORD:
-            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-
-        server.sendmail(from_addr, to_addresses, msg.as_string())
-        server.quit()
-        logger.info("email_utils: partage masse envoyé à %s — %s", to_addresses, subject)
-    except Exception as exc:
-        logger.error("email_utils: échec envoi partage masse — %s", exc)
+    return msg.as_bytes()
 
 
 def send_share_notification_email(

@@ -1,4 +1,6 @@
 """Tests : partage d'une ligne / de plusieurs lignes par email (texte libre + destinataires)."""
+import re
+
 import pytest
 
 from app.models import ActivityLog, ColumnPermission, ColumnType, PermissionLevel, TablePermission, TableRow, CellValue
@@ -30,16 +32,17 @@ def test_share_row_modal_renders(admin_client, db, admin_user):
     assert "Destinataire" in resp.text
 
 
-def test_share_row_send_calls_email_and_logs(admin_client, db, admin_user, monkeypatch):
+def test_share_row_send_returns_eml_download_and_logs(admin_client, db, admin_user, monkeypatch):
     table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
     rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
 
     captured = {}
 
-    def fake_send(**kwargs):
+    def fake_build(**kwargs):
         captured.update(kwargs)
+        return b"RAW-EML-BYTES"
 
-    monkeypatch.setattr("app.routers.share.send_row_share_email", fake_send)
+    monkeypatch.setattr("app.routers.share.build_row_share_eml", fake_build)
 
     resp = admin_client.post(
         f"/tables/{table.id}/rows/{rows[0].id}/share",
@@ -47,7 +50,11 @@ def test_share_row_send_calls_email_and_logs(admin_client, db, admin_user, monke
     )
 
     assert resp.status_code == 200
+    assert resp.headers["content-type"] == "message/rfc822"
+    assert ".eml" in resp.headers["content-disposition"]
+    assert resp.content == b"RAW-EML-BYTES"
     assert captured["to_addresses"] == ["a@exemple.com", "b@exemple.com"]
+    assert captured["from_address"] == admin_user.email
     assert captured["message"] == "Voici la fiche."
     assert captured["cells"] == {cols[0].id: "Dupont"}
 
@@ -130,12 +137,13 @@ def test_share_row_never_exposes_hidden_column(admin_client, db, admin_user, reg
 
     captured = {}
 
-    def fake_send(**kw):
+    def fake_build(**kw):
         # Capturer les ids tout de suite : les objets ORM deviennent détachés dès que
         # la session de la requête se ferme, bien avant que le test ne les inspecte.
         captured["column_ids"] = {c.id for c in kw["columns"]}
+        return b"RAW-EML-BYTES"
 
-    monkeypatch.setattr("app.routers.share.send_row_share_email", fake_send)
+    monkeypatch.setattr("app.routers.share.build_row_share_eml", fake_build)
 
     resp = user_client.post(
         f"/tables/{table.id}/rows/{row.id}/share",
@@ -156,7 +164,7 @@ def test_bulk_share_modal_renders(admin_client, db, admin_user):
     assert "Colonnes" in resp.text
 
 
-def test_bulk_share_sends_only_selected_rows_and_columns(admin_client, db, admin_user, monkeypatch):
+def test_bulk_share_returns_eml_download_for_selected_rows_and_columns(admin_client, db, admin_user, monkeypatch):
     table, cols = make_table(
         db, admin_user,
         columns=[("Nom", ColumnType.TEXT), ("Statut", ColumnType.TEXT)],
@@ -169,12 +177,13 @@ def test_bulk_share_sends_only_selected_rows_and_columns(admin_client, db, admin
 
     captured = {}
 
-    def fake_send(**kw):
+    def fake_build(**kw):
         captured["row_count"] = kw["row_count"]
         captured["column_ids"] = {c.id for c in kw["columns"]}
         captured["rows"] = kw["rows"]
+        return b"RAW-EML-BYTES"
 
-    monkeypatch.setattr("app.routers.share.send_bulk_rows_share_email", fake_send)
+    monkeypatch.setattr("app.routers.share.build_bulk_rows_share_eml", fake_build)
 
     selected = rows[:2]
     resp = admin_client.post(
@@ -188,6 +197,8 @@ def test_bulk_share_sends_only_selected_rows_and_columns(admin_client, db, admin
     )
 
     assert resp.status_code == 200
+    assert resp.headers["content-type"] == "message/rfc822"
+    assert resp.content == b"RAW-EML-BYTES"
     assert captured["row_count"] == 2
     assert captured["column_ids"] == {nom_col.id}
     assert captured["rows"] == [{nom_col.id: "Dupont"}, {nom_col.id: "Martin"}]
@@ -250,10 +261,11 @@ def test_bulk_share_never_exposes_hidden_column_even_if_forged(
 
     captured = {}
 
-    def fake_send(**kw):
+    def fake_build(**kw):
         captured["column_ids"] = {c.id for c in kw["columns"]}
+        return b"RAW-EML-BYTES"
 
-    monkeypatch.setattr("app.routers.share.send_bulk_rows_share_email", fake_send)
+    monkeypatch.setattr("app.routers.share.build_bulk_rows_share_eml", fake_build)
 
     # Le client forge col_ids avec la colonne masquée en plus de la colonne visible.
     resp = user_client.post(
@@ -275,3 +287,42 @@ def test_bulk_share_requires_at_least_read_access(user_client, db, admin_user):
     table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
     resp = user_client.get(f"/tables/{table.id}/rows/bulk-share")
     assert resp.status_code == 403
+
+
+# ── Génération réelle du .eml (sans mock) ─────────────────────────────────────────
+
+def test_share_row_eml_is_a_real_mime_message(admin_client, db, admin_user):
+    import email as email_pkg
+
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"recipients": "a@exemple.com", "message": "Voici la fiche."},
+    )
+
+    assert resp.status_code == 200
+    msg = email_pkg.message_from_bytes(resp.content)
+    assert msg["From"] == admin_user.email
+    assert msg["To"] == "a@exemple.com"
+    parts = [p.get_payload(decode=True).decode("utf-8") for p in msg.walk() if p.get_content_maintype() == "text"]
+    assert any("Dupont" in p for p in parts)
+
+
+def test_eml_filename_is_sanitized(admin_client, db, admin_user):
+    table, cols = make_table(db, admin_user, name="Clients à l'étranger !!", columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"recipients": "a@exemple.com", "message": ""},
+    )
+
+    assert resp.status_code == 200
+    cd = resp.headers["content-disposition"]
+    m = re.search(r'filename="([^"]+)"', cd)
+    assert m is not None
+    filename = m.group(1)
+    assert filename.endswith(".eml")
+    assert re.match(r'^[A-Za-z0-9_\-]+\.eml$', filename)

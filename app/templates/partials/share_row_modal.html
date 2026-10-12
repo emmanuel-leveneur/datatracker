@@ -1,13 +1,13 @@
 <form
-  hx-post="/tables/{{ table.id }}/rows/{{ row.id }}/share"
-  hx-target="#share-row-modal-body"
-  hx-swap="innerHTML"
-  hx-disabled-elt="#share-row-send-btn, #share-row-cancel-btn"
+  action="/tables/{{ table.id }}/rows/{{ row.id }}/share"
+  method="post"
+  onsubmit="return submitShareRowForm(event)"
   class="space-y-4">
 
   <p class="text-sm text-gray-600">
-    Envoyer la fiche de la ligne <span class="font-semibold text-gray-800">#{{ row.id }}</span>
-    ({{ columns | length }} colonne{{ 's' if columns | length > 1 else '' }} visible{{ 's' if columns | length > 1 else '' }}) par email.
+    Préparer un email pour la ligne <span class="font-semibold text-gray-800">#{{ row.id }}</span>
+    ({{ columns | length }} colonne{{ 's' if columns | length > 1 else '' }} visible{{ 's' if columns | length > 1 else '' }}).
+    Le fichier sera à ouvrir avec votre client mail pour relecture avant envoi.
   </p>
 
   {% if error %}
@@ -33,12 +33,12 @@
   <div class="flex gap-2 pt-2">
     <button type="submit" id="share-row-send-btn"
       class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-1.5 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
-      <span class="htmx-indicator-hide">Envoyer</span>
+      <span class="htmx-indicator-hide">Préparer l'email</span>
       <span class="htmx-indicator">
         <svg class="animate-spin w-3.5 h-3.5 mr-1 inline-block align-[-3px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-        </svg>Envoi…
+        </svg>Génération…
       </span>
     </button>
     <button type="button" id="share-row-cancel-btn" onclick="closeShareRowModal()"
