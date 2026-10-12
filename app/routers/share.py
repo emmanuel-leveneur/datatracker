@@ -110,6 +110,7 @@ async def share_row_send(
     form = await request.form()
     recipients_raw = str(form.get("recipients", ""))
     message = str(form.get("message", "")).strip()
+    email_title = str(form.get("email_title", "")).strip()[:80]
     columns = get_visible_columns(table, user, db)
 
     def _error(err: str):
@@ -117,7 +118,8 @@ async def share_row_send(
             request, "partials/share_row_modal.html",
             {
                 "table": table, "row": row, "columns": columns,
-                "error": err, "recipients_value": recipients_raw, "message_value": message,
+                "error": err, "recipients_value": recipients_raw,
+                "message_value": message, "title_value": email_title,
             },
         )
 
@@ -137,6 +139,7 @@ async def share_row_send(
         message=message,
         columns=columns,
         cells=cells,
+        brand_title=email_title or "DataTracker",
     )
     log_action(
         db, user, "share_row_email", "row",
@@ -181,6 +184,7 @@ async def bulk_share_send(
     form = await request.form()
     recipients_raw = str(form.get("recipients", ""))
     message = str(form.get("message", "")).strip()
+    email_title = str(form.get("email_title", "")).strip()[:80]
     visible_columns = get_visible_columns(table, user, db)
     visible_col_ids = {c.id for c in visible_columns}
 
@@ -201,7 +205,8 @@ async def bulk_share_send(
             request, "partials/share_bulk_modal.html",
             {
                 "table": table, "columns": visible_columns,
-                "error": err, "recipients_value": recipients_raw, "message_value": message,
+                "error": err, "recipients_value": recipients_raw,
+                "message_value": message, "title_value": email_title,
                 "checked_col_ids": selected_col_ids,
             },
         )
@@ -251,6 +256,7 @@ async def bulk_share_send(
         message=message,
         columns=columns,
         rows=rows_cells,
+        brand_title=email_title or "DataTracker",
     )
     log_action(
         db, user, "share_rows_email", "table",

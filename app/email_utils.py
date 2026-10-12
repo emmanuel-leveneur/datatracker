@@ -695,7 +695,7 @@ _SHARE_ROW_HEADER = """\
               <tr>
                 <td>
                   <span style="color:#ffffff;font-size:20px;font-weight:700;
-                               letter-spacing:0.3px;">DataTracker</span>
+                               letter-spacing:0.3px;">{brand_title}</span>
                 </td>
                 <td align="right">
                   <span style="display:inline-block;background-color:#065f46;
@@ -788,7 +788,7 @@ _SHARE_FOOTER = """\
             <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;
                        line-height:1.6;">
               Email envoyé via&nbsp;
-              <strong style="color:#6b7280;">DataTracker</strong>
+              <strong style="color:#6b7280;">{brand_title}</strong>
               &nbsp;·&nbsp;par {shared_by}
             </p>
           </td>
@@ -803,7 +803,7 @@ _SHARE_FOOTER = """\
 """
 
 _SHARE_ROW_TEXT_TEMPLATE = """\
-[DataTracker] {table_name} — partagé par {shared_by}
+[{brand_title}] {table_name} — partagé par {shared_by}
 Ligne #{row_id}
 
 {message}
@@ -814,11 +814,11 @@ Ligne #{row_id}
 
 Voir le tableau : {table_url}
 
-Email envoyé via DataTracker par {shared_by}.
+Email envoyé via {brand_title} par {shared_by}.
 """
 
 _SHARE_BULK_TEXT_TEMPLATE = """\
-[DataTracker] {table_name} — {row_count} ligne(s) partagée(s) par {shared_by}
+[{brand_title}] {table_name} — {row_count} ligne(s) partagée(s) par {shared_by}
 
 {message}
 
@@ -828,7 +828,7 @@ _SHARE_BULK_TEXT_TEMPLATE = """\
 
 Voir le tableau : {table_url}
 
-Email envoyé via DataTracker par {shared_by}.
+Email envoyé via {brand_title} par {shared_by}.
 """
 
 
@@ -842,12 +842,16 @@ def build_row_share_eml(
     message: str,
     columns,
     cells: dict,
+    brand_title: str = "DataTracker",
 ) -> bytes:
     """
     Construit (sans l'envoyer) le message MIME (.eml) de partage d'une ligne : fiche
     complète + texte libre, destinataires/objet pré-remplis. L'email n'est jamais
     envoyé par DataTracker — le fichier est téléchargé puis ouvert/édité/envoyé par
     l'utilisateur depuis son propre client mail (ne dépend donc pas de SMTP_HOST).
+    - brand_title : remplace "DataTracker" dans l'en-tête et le pied de page (HTML et
+      texte) — permet de dépersonnaliser l'email quand il sert de support à une
+      demande adressée à un tiers (défaut : "DataTracker").
     Retourne les octets bruts du message (RFC 822), prêts à être servis en téléchargement.
     """
     table_url = f"{settings.APP_URL.rstrip('/')}/tables/{table_id}"
@@ -868,17 +872,21 @@ def build_row_share_eml(
     html_body = (
         _SHARE_ROW_HEADER.format(
             subject=html.escape(subject), max_width=600,
+            brand_title=html.escape(brand_title),
             table_name=html.escape(table_name),
             shared_by=html.escape(shared_by),
             scope_label=f"Ligne&nbsp;#{row_id}",
         )
         + _SHARE_MESSAGE_BLOCK.format(message=html.escape(message))
         + fiche_section
-        + _SHARE_FOOTER.format(table_url=table_url, shared_by=html.escape(shared_by))
+        + _SHARE_FOOTER.format(
+            table_url=table_url, shared_by=html.escape(shared_by),
+            brand_title=html.escape(brand_title),
+        )
     )
 
     text_body = _SHARE_ROW_TEXT_TEMPLATE.format(
-        table_name=table_name, shared_by=shared_by, row_id=row_id,
+        brand_title=brand_title, table_name=table_name, shared_by=shared_by, row_id=row_id,
         message=message, fiche_text=fiche_text, table_url=table_url,
     )
 
@@ -902,11 +910,13 @@ def build_bulk_rows_share_eml(
     message: str,
     columns,
     rows: list[dict],
+    brand_title: str = "DataTracker",
 ) -> bytes:
     """
     Construit (sans l'envoyer) le message MIME (.eml) de partage de plusieurs lignes :
     tableau HTML des colonnes choisies + texte libre, destinataires/objet pré-remplis.
     - rows : liste de {col_id: valeur_brute}, une entrée par ligne partagée.
+    - brand_title : voir build_row_share_eml() — même rôle de dépersonnalisation.
     Même logique que build_row_share_eml() — jamais envoyé par DataTracker.
     Retourne les octets bruts du message (RFC 822).
     """
@@ -932,17 +942,21 @@ def build_bulk_rows_share_eml(
     html_body = (
         _SHARE_ROW_HEADER.format(
             subject=html.escape(subject), max_width=720,
+            brand_title=html.escape(brand_title),
             table_name=html.escape(table_name),
             shared_by=html.escape(shared_by),
             scope_label=f"{row_count}&nbsp;{row_label}",
         )
         + _SHARE_MESSAGE_BLOCK.format(message=html.escape(message))
         + table_section
-        + _SHARE_FOOTER.format(table_url=table_url, shared_by=html.escape(shared_by))
+        + _SHARE_FOOTER.format(
+            table_url=table_url, shared_by=html.escape(shared_by),
+            brand_title=html.escape(brand_title),
+        )
     )
 
     text_body = _SHARE_BULK_TEXT_TEMPLATE.format(
-        table_name=table_name, row_count=row_count, shared_by=shared_by,
+        brand_title=brand_title, table_name=table_name, row_count=row_count, shared_by=shared_by,
         message=message, rows_text=rows_text, table_url=table_url,
     )
 

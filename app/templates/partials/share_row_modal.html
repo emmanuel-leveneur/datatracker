@@ -15,6 +15,15 @@
   {% endif %}
 
   <div>
+    <label class="block text-xs font-medium text-gray-600 mb-1">Titre affiché dans l'email (facultatif)</label>
+    <input type="text" name="email_title" maxlength="80"
+      value="{{ title_value | default('') }}"
+      placeholder="Laissez vide pour afficher « DataTracker »"
+      class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+    <p class="text-xs text-gray-400 mt-1">Remplace « DataTracker » en haut de l'email — utile pour ne pas exposer l'outil face à un destinataire externe.</p>
+  </div>
+
+  <div>
     <label class="block text-xs font-medium text-gray-600 mb-1">Destinataire(s)</label>
     <input type="text" name="recipients" required
       value="{{ recipients_value | default('') }}"

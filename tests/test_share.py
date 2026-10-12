@@ -57,6 +57,7 @@ def test_share_row_send_returns_eml_download_and_logs(admin_client, db, admin_us
     assert captured["from_address"] == admin_user.email
     assert captured["message"] == "Voici la fiche."
     assert captured["cells"] == {cols[0].id: "Dupont"}
+    assert captured["brand_title"] == "DataTracker"  # pas de titre fourni -> défaut
 
     db.expire_all()
     log = db.query(ActivityLog).filter_by(action="share_row_email", table_id=table.id).first()
@@ -308,6 +309,45 @@ def test_share_row_eml_is_a_real_mime_message(admin_client, db, admin_user):
     assert msg["To"] == "a@exemple.com"
     parts = [p.get_payload(decode=True).decode("utf-8") for p in msg.walk() if p.get_content_maintype() == "text"]
     assert any("Dupont" in p for p in parts)
+
+
+def test_share_row_custom_title_replaces_datatracker_brand(admin_client, db, admin_user):
+    import email as email_pkg
+
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"recipients": "a@exemple.com", "message": "", "email_title": "Service RH"},
+    )
+
+    assert resp.status_code == 200
+    msg = email_pkg.message_from_bytes(resp.content)
+    parts = [p.get_payload(decode=True).decode("utf-8") for p in msg.walk() if p.get_content_maintype() == "text"]
+    assert all("DataTracker" not in p for p in parts)
+    assert any("Service RH" in p for p in parts)
+
+
+def test_bulk_share_custom_title_replaces_datatracker_brand(admin_client, db, admin_user):
+    import email as email_pkg
+
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/bulk-share",
+        data={
+            "row_ids": [rows[0].id], "col_ids": [cols[0].id],
+            "recipients": "a@exemple.com", "message": "", "email_title": "Suivi fournisseurs",
+        },
+    )
+
+    assert resp.status_code == 200
+    msg = email_pkg.message_from_bytes(resp.content)
+    parts = [p.get_payload(decode=True).decode("utf-8") for p in msg.walk() if p.get_content_maintype() == "text"]
+    assert all("DataTracker" not in p for p in parts)
+    assert any("Suivi fournisseurs" in p for p in parts)
 
 
 def test_eml_filename_is_sanitized(admin_client, db, admin_user):
