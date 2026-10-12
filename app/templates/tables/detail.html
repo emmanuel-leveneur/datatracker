@@ -187,7 +187,7 @@
      class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-gray-900 text-white rounded-full shadow-2xl px-5 py-2.5 flex items-center gap-4 text-sm">
   <span id="bulk-select-count">0 ligne(s) sélectionnée(s)</span>
   <button onclick="openBulkEditModal()"
-    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1 rounded-full transition">
+    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1 rounded-full transition disabled:opacity-60 disabled:cursor-not-allowed">
     Modifier en masse
   </button>
   <button type="button"
@@ -198,11 +198,18 @@
     hx-vals='{"page": 1}'
     hx-on:htmx:config-request="event.detail.parameters.row_ids = window.bulkSelectedIds ? [...window.bulkSelectedIds] : []"
     hx-confirm="Mettre les lignes sélectionnées à la corbeille ?"
-    class="bg-red-600 hover:bg-red-700 text-white font-semibold px-3 py-1 rounded-full transition">
-    Supprimer
+    hx-disabled-elt="#bulk-select-bar button"
+    class="bg-red-600 hover:bg-red-700 text-white font-semibold px-3 py-1 rounded-full transition disabled:opacity-60 disabled:cursor-not-allowed">
+    <span class="htmx-indicator-hide">Supprimer</span>
+    <span class="htmx-indicator">
+      <svg class="animate-spin w-3.5 h-3.5 mr-1 inline-block align-[-3px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>Suppression…
+    </span>
   </button>
   <button onclick="clearBulkSelection()"
-    class="text-gray-300 hover:text-white transition">
+    class="text-gray-300 hover:text-white transition disabled:opacity-60 disabled:cursor-not-allowed">
     Annuler
   </button>
 </div>
@@ -210,7 +217,7 @@
 {# ── Modal modification en masse ──────────────────────────────────────────── #}
 <div id="bulk-edit-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeBulkEditModal()"></div>
 <div id="bulk-edit-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md pointer-events-auto">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md pointer-events-auto relative">
     <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
       <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
         <i data-lucide="pencil" class="w-4 h-4 text-gray-400"></i>
@@ -223,6 +230,15 @@
     </div>
     <div id="bulk-edit-modal-body" class="px-6 py-5">
       <!-- chargé par HTMX -->
+    </div>
+    {# Overlay de traitement (affiché pendant l'application en masse) — même pattern que #alert-saving-overlay #}
+    <div id="bulk-edit-saving-overlay" class="hidden absolute inset-0 bg-white bg-opacity-95 rounded-2xl z-10 flex flex-col items-center justify-center gap-3">
+      <svg class="animate-spin w-8 h-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      <p class="text-sm font-semibold text-gray-700">Application en cours…</p>
+      <p id="bulk-edit-saving-count" class="text-xs text-gray-400 text-center px-6"></p>
     </div>
   </div>
 </div>
@@ -1112,6 +1128,31 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
   }
 });
 document.body.addEventListener('closeBulkEditModal', closeBulkEditModal);
+
+// Overlay de traitement pendant l'application en masse (même pattern que l'overlay Alertes).
+// Uniquement pour la soumission du formulaire (le POST qui applique la modification) —
+// pas pour le <select> "Colonne à modifier", qui fait son propre hx-get vers /bulk-edit/field
+// pour charger le champ de valeur et serait sinon masqué à tort par l'overlay.
+document.body.addEventListener('htmx:beforeRequest', function(e) {
+  var elt = e.detail.elt;
+  if (elt && elt.tagName === 'FORM' && elt.closest && elt.closest('#bulk-edit-modal-body')) {
+    var o = document.getElementById('bulk-edit-saving-overlay');
+    var msg = document.getElementById('bulk-edit-saving-count');
+    if (msg) {
+      var n = window.bulkSelectedIds ? window.bulkSelectedIds.size : 0;
+      msg.textContent = 'Mise à jour de ' + n + ' ligne' + (n > 1 ? 's' : '') +
+        ' et évaluation des alertes.';
+    }
+    if (o) o.classList.remove('hidden');
+  }
+});
+document.body.addEventListener('htmx:afterRequest', function(e) {
+  var elt = e.detail.elt;
+  if (elt && elt.tagName === 'FORM' && elt.closest && elt.closest('#bulk-edit-modal-body')) {
+    var o = document.getElementById('bulk-edit-saving-overlay');
+    if (o) o.classList.add('hidden');
+  }
+});
 
 // Erreur de suppression en masse (sélection vide / trop de lignes) — renvoyée via
 // HX-Trigger par bulk_delete_rows, pas de modale dédiée pour cette action.

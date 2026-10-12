@@ -4,6 +4,7 @@
   hx-swap="innerHTML"
   hx-include="#filters-zone, #global-search"
   hx-on:htmx:config-request="event.detail.parameters.row_ids = window.bulkSelectedIds ? [...window.bulkSelectedIds] : []"
+  hx-disabled-elt="#bulk-edit-apply-btn, #bulk-edit-cancel-btn"
   class="space-y-4">
   <input type="hidden" name="page" value="{{ page | default(1) }}">
 
@@ -35,12 +36,18 @@
   </div>
 
   <div class="flex gap-2 pt-2">
-    <button type="submit"
-      class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-1.5 rounded-lg transition">
-      Appliquer
+    <button type="submit" id="bulk-edit-apply-btn"
+      class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-1.5 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+      <span class="htmx-indicator-hide">Appliquer</span>
+      <span class="htmx-indicator">
+        <svg class="animate-spin w-3.5 h-3.5 mr-1 inline-block align-[-3px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>Application…
+      </span>
     </button>
-    <button type="button" onclick="closeBulkEditModal()"
-      class="text-sm text-gray-500 hover:text-gray-700 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition">
+    <button type="button" id="bulk-edit-cancel-btn" onclick="closeBulkEditModal()"
+      class="text-sm text-gray-500 hover:text-gray-700 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition disabled:opacity-60 disabled:cursor-not-allowed">
       Annuler
     </button>
   </div>
