@@ -259,6 +259,51 @@ def test_bulk_share_rejects_no_columns_selected(admin_client, db, admin_user):
     assert "colonne" in resp.text.lower()
 
 
+def test_bulk_share_never_attaches_files_even_if_forged(admin_client, db, admin_user, upload_dir, monkeypatch):
+    """
+    Le partage en masse n'a jamais de pièces jointes — pas d'UI, pas de lecture du
+    champ côté serveur, et build_bulk_rows_share_eml()/send_bulk_rows_share_email()
+    n'ont même pas de paramètre `attachments`. On vérifie qu'un `attachment_ids`
+    forgé dans la requête n'a strictement aucun effet.
+    """
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+    att = _make_attachment(db, rows[0], admin_user, upload_dir)
+
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return b"RAW-EML-BYTES"
+
+    monkeypatch.setattr("app.routers.share.build_bulk_rows_share_eml", fake_build)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/bulk-share",
+        data={
+            "row_ids": [rows[0].id], "col_ids": [cols[0].id],
+            "recipients": "a@exemple.com", "message": "",
+            "attachment_ids": [att.id],  # forgé — ce champ n'existe même pas pour ce flux
+        },
+    )
+
+    assert resp.status_code == 200
+    assert "attachments" not in captured
+    assert resp.headers["content-type"] == "message/rfc822"
+
+
+def test_bulk_share_modal_has_no_attachment_ui(admin_client, db, admin_user, upload_dir):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+    _make_attachment(db, rows[0], admin_user, upload_dir)
+
+    resp = admin_client.get(f"/tables/{table.id}/rows/bulk-share")
+
+    assert resp.status_code == 200
+    assert "Pièces jointes" not in resp.text
+    assert "attachment_ids" not in resp.text
+
+
 def test_bulk_share_rejects_too_many_rows(admin_client, db, admin_user):
     table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
     rows = _make_rows(db, table, cols[0], ["V"] * (BULK_SHARE_MAX_ROWS + 1), admin_user)
