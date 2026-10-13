@@ -41,6 +41,25 @@
     <div id="share-row-message-history" class="flex flex-wrap gap-1 mt-1.5"></div>
   </div>
 
+  {% if attachments %}
+  <div>
+    <label class="block text-xs font-medium text-gray-600 mb-1">Pièces jointes à inclure</label>
+    <div class="max-h-32 overflow-y-auto border border-gray-200 rounded-lg px-3 py-2 space-y-1">
+      {% for att in attachments %}
+      <label class="flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" name="attachment_ids" value="{{ att.id }}"
+          {% if checked_attachment_ids is defined %}{% if att.id in checked_attachment_ids %}checked{% endif %}{% else %}checked{% endif %}
+          class="rounded border-gray-300 text-blue-600 focus:ring-blue-400">
+        <span class="truncate">{{ att.original_name }}</span>
+        <span class="text-gray-400 text-xs whitespace-nowrap">
+          {% if att.size >= 1048576 %}{{ (att.size / 1048576) | round(1) }} Mo{% else %}{{ (att.size / 1024) | round(1) }} Ko{% endif %}
+        </span>
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <div class="flex flex-wrap gap-2 pt-2">
     {% if smtp_configured | default(false) %}
     <button type="submit" name="share_action" value="send" id="share-row-send-btn"

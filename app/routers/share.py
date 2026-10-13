@@ -15,7 +15,15 @@ Deux façons d'envoyer, au choix de l'utilisateur dans la modale (champ "share_a
 Accès en lecture suffisant (comme l'export Excel) : partager ne modifie aucune donnée.
 Respecte toujours les colonnes masquées (ColumnPermission.hidden) via
 get_visible_columns() — jamais contournable depuis le formulaire.
+
+Pièces jointes de la ligne (RowAttachment) : partage d'une ligne uniquement (pas en
+masse pour l'instant — ambigu quand plusieurs lignes ont des fichiers différents, et
+la taille cumulée grossit vite). Sélection via checkboxes, jamais un fichier
+n'appartenant pas à cette ligne même si l'id est forgé côté client ; plafond de
+taille cumulée (MAX_SHARE_ATTACHMENTS_MB) commun aux deux modes d'envoi.
 """
+import logging
+import os
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -33,12 +41,42 @@ from app.email_utils import (
 )
 from app.models import DataTable, TableRow, User
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/tables", tags=["share"])
 templates = Jinja2Templates(directory="app/templates")
 
 MAX_RECIPIENTS = 10
 BULK_SHARE_MAX_ROWS = 200
+MAX_SHARE_ATTACHMENTS_MB = 20
 _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def _read_selected_attachments(row: TableRow, selected_ids: set[int]) -> list[tuple[str, bytes]]:
+    """
+    Lit sur disque les pièces jointes de `row` dont l'id est dans `selected_ids`.
+    Ignore silencieusement un id qui n'appartient pas à cette ligne (jamais confiance
+    dans le formulaire) et un fichier manquant sur disque (ne doit pas bloquer tout
+    l'envoi pour un fichier orphelin). Lève ValueError si le total dépasse
+    MAX_SHARE_ATTACHMENTS_MB.
+    """
+    attachments = [a for a in row.attachments if a.id in selected_ids]
+    total_bytes = sum(a.size for a in attachments)
+    max_bytes = MAX_SHARE_ATTACHMENTS_MB * 1024 * 1024
+    if total_bytes > max_bytes:
+        raise ValueError(
+            f"Pièces jointes trop volumineuses ({total_bytes / 1024 / 1024:.1f} Mo, "
+            f"max {MAX_SHARE_ATTACHMENTS_MB} Mo) — désélectionnez-en."
+        )
+    result = []
+    for att in attachments:
+        path = os.path.join(settings.UPLOAD_DIR, att.stored_name)
+        try:
+            with open(path, "rb") as f:
+                result.append((att.original_name, f.read()))
+        except OSError:
+            logger.warning("share: pièce jointe introuvable sur disque (id=%s, %s)", att.id, path)
+    return result
 
 
 def _parse_recipients(raw: str) -> list[str]:
@@ -102,6 +140,7 @@ def share_row_modal(
         request, "partials/share_row_modal.html",
         {
             "table": table, "row": row, "columns": get_visible_columns(table, user, db),
+            "attachments": row.attachments,
             "smtp_configured": bool(settings.SMTP_HOST),
         },
     )
@@ -134,14 +173,26 @@ async def share_row_send(
             request, "partials/share_row_modal.html",
             {
                 "table": table, "row": row, "columns": columns,
+                "attachments": row.attachments,
                 "error": err, "recipients_value": recipients_raw,
                 "message_value": message, "title_value": email_title,
+                "checked_attachment_ids": selected_attachment_ids,
                 "smtp_configured": bool(settings.SMTP_HOST),
             },
         )
 
     try:
+        selected_attachment_ids = {int(i) for i in form.getlist("attachment_ids")}
+    except ValueError:
+        selected_attachment_ids = set()
+
+    try:
         recipients = _parse_recipients(recipients_raw)
+    except ValueError as exc:
+        return _error(str(exc))
+
+    try:
+        attachments = _read_selected_attachments(row, selected_attachment_ids)
     except ValueError as exc:
         return _error(str(exc))
 
@@ -160,6 +211,7 @@ async def share_row_send(
                 columns=columns,
                 cells=cells,
                 brand_title=email_title or "DataTracker",
+                attachments=attachments,
             )
         except Exception:
             return _error("Échec de l'envoi — vérifiez la configuration SMTP ou réessayez plus tard.")
@@ -167,8 +219,8 @@ async def share_row_send(
             db, user, "share_row_email", "row",
             resource_id=row.id, resource_name=table.name, table_id=table.id,
             details=(
-                f"Ligne #{row.id} : email envoyé à {len(recipients)} "
-                f"destinataire(s) : {', '.join(recipients)}"
+                f"Ligne #{row.id} : email envoyé à {len(recipients)} destinataire(s) "
+                f"({len(attachments)} pièce(s) jointe(s)) : {', '.join(recipients)}"
             ),
         )
         db.commit()
@@ -185,13 +237,14 @@ async def share_row_send(
         columns=columns,
         cells=cells,
         brand_title=email_title or "DataTracker",
+        attachments=attachments,
     )
     log_action(
         db, user, "share_row_email", "row",
         resource_id=row.id, resource_name=table.name, table_id=table.id,
         details=(
-            f"Ligne #{row.id} : brouillon .eml généré pour {len(recipients)} "
-            f"destinataire(s) : {', '.join(recipients)}"
+            f"Ligne #{row.id} : brouillon .eml généré pour {len(recipients)} destinataire(s) "
+            f"({len(attachments)} pièce(s) jointe(s)) : {', '.join(recipients)}"
         ),
     )
     db.commit()

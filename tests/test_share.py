@@ -4,9 +4,37 @@ import re
 import pytest
 
 from app.config import settings
-from app.models import ActivityLog, ColumnPermission, ColumnType, PermissionLevel, TablePermission, TableRow, CellValue
-from app.routers.share import BULK_SHARE_MAX_ROWS
+from app.models import (
+    ActivityLog, ColumnPermission, ColumnType, PermissionLevel, RowAttachment,
+    TablePermission, TableRow, CellValue,
+)
+from app.routers.share import BULK_SHARE_MAX_ROWS, MAX_SHARE_ATTACHMENTS_MB
 from tests.helpers import make_table
+
+
+@pytest.fixture
+def upload_dir(tmp_path, monkeypatch):
+    """Redirige les uploads vers un répertoire temporaire isolé par test."""
+    monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path))
+    return tmp_path
+
+
+def _make_attachment(db, row, user, upload_dir, name="rapport.pdf", content=b"%PDF test content", size=None):
+    """Crée un RowAttachment en base ET le fichier correspondant sur disque."""
+    import os
+    import uuid
+    stored_name = uuid.uuid4().hex + ".pdf"
+    with open(os.path.join(str(upload_dir), stored_name), "wb") as f:
+        f.write(content)
+    att = RowAttachment(
+        row_id=row.id, table_id=row.table_id, uploaded_by=user.id,
+        original_name=name, stored_name=stored_name, mime_type="application/pdf",
+        size=size if size is not None else len(content),
+    )
+    db.add(att)
+    db.commit()
+    db.refresh(att)
+    return att
 
 
 def _make_rows(db, table, col, values, user):
@@ -527,3 +555,122 @@ def test_send_row_share_email_raises_when_smtp_not_configured(monkeypatch):
             to_addresses=["dest@exemple.com"], reply_to="e@exemple.com", shared_by="e",
             table_name="Clients", table_id=1, row_id=1, message="x", columns=[], cells={},
         )
+
+
+# ── Pièces jointes de la ligne ────────────────────────────────────────────────────
+
+def test_share_row_modal_shows_attachment_checkboxes(admin_client, db, admin_user, upload_dir):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+    att = _make_attachment(db, rows[0], admin_user, upload_dir)
+
+    resp = admin_client.get(f"/tables/{table.id}/rows/{rows[0].id}/share")
+
+    assert resp.status_code == 200
+    assert "Pièces jointes" in resp.text
+    assert att.original_name in resp.text
+
+
+def test_share_row_send_includes_selected_attachment(admin_client, db, admin_user, upload_dir, monkeypatch):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+    att = _make_attachment(db, rows[0], admin_user, upload_dir, name="rapport.pdf", content=b"PDF-BYTES")
+
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return b"RAW-EML-BYTES"
+
+    monkeypatch.setattr("app.routers.share.build_row_share_eml", fake_build)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"recipients": "a@exemple.com", "message": "", "attachment_ids": [att.id]},
+    )
+
+    assert resp.status_code == 200
+    assert captured["attachments"] == [("rapport.pdf", b"PDF-BYTES")]
+
+
+def test_share_row_excludes_unchecked_attachment(admin_client, db, admin_user, upload_dir, monkeypatch):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+    _make_attachment(db, rows[0], admin_user, upload_dir)
+
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return b"RAW-EML-BYTES"
+
+    monkeypatch.setattr("app.routers.share.build_row_share_eml", fake_build)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"recipients": "a@exemple.com", "message": ""},  # pas de attachment_ids
+    )
+
+    assert resp.status_code == 200
+    assert captured["attachments"] == []
+
+
+def test_share_row_ignores_attachment_from_another_row(admin_client, db, admin_user, upload_dir, monkeypatch):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont", "Martin"], admin_user)
+    other_att = _make_attachment(db, rows[1], admin_user, upload_dir)  # appartient à l'AUTRE ligne
+
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        return b"RAW-EML-BYTES"
+
+    monkeypatch.setattr("app.routers.share.build_row_share_eml", fake_build)
+
+    # Le client forge l'id de la PJ de l'autre ligne pour la ligne partagée ici.
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"recipients": "a@exemple.com", "message": "", "attachment_ids": [other_att.id]},
+    )
+
+    assert resp.status_code == 200
+    assert captured["attachments"] == []
+
+
+def test_share_row_rejects_attachments_exceeding_size_cap(admin_client, db, admin_user, upload_dir):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+    # Taille déclarée en base dépasse le plafond (le fichier réel sur disque reste petit).
+    att = _make_attachment(
+        db, rows[0], admin_user, upload_dir,
+        size=(MAX_SHARE_ATTACHMENTS_MB + 1) * 1024 * 1024,
+    )
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"recipients": "a@exemple.com", "message": "", "attachment_ids": [att.id]},
+    )
+
+    assert resp.status_code == 200
+    assert "volumineuses" in resp.text.lower()
+
+
+def test_share_row_eml_contains_real_attachment(admin_client, db, admin_user, upload_dir):
+    import email as email_pkg
+
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+    att = _make_attachment(db, rows[0], admin_user, upload_dir, name="contrat.pdf", content=b"CONTENU-PDF")
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"recipients": "a@exemple.com", "message": "", "attachment_ids": [att.id]},
+    )
+
+    assert resp.status_code == 200
+    msg = email_pkg.message_from_bytes(resp.content)
+    assert msg.get_content_type() == "multipart/mixed"
+    attachment_parts = [p for p in msg.walk() if p.get_filename() == "contrat.pdf"]
+    assert len(attachment_parts) == 1
+    assert attachment_parts[0].get_payload(decode=True) == b"CONTENU-PDF"

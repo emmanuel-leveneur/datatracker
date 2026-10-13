@@ -6,6 +6,8 @@ import html
 import logging
 import smtplib
 from datetime import date, datetime
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -832,6 +834,29 @@ Email envoyé via {brand_title} par {shared_by}.
 """
 
 
+def _attach_files(msg: MIMEMultipart, attachments: list[tuple[str, bytes]] | None) -> MIMEMultipart:
+    """
+    Enveloppe un message "alternative" (texte+HTML) dans un message "mixed" portant
+    en plus les fichiers de `attachments` (liste de (nom_original, octets)) comme
+    pièces jointes RFC 2183 classiques. Retourne `msg` inchangé si `attachments` est
+    vide/None — pas de restructuration inutile.
+    """
+    if not attachments:
+        return msg
+    wrapper = MIMEMultipart("mixed")
+    for header in ("Subject", "From", "To", "Reply-To"):
+        if header in msg:
+            wrapper[header] = msg[header]
+    wrapper.attach(msg)
+    for filename, data in attachments:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        wrapper.attach(part)
+    return wrapper
+
+
 def _build_row_share_message(
     to_addresses: list[str],
     from_address: str,
@@ -844,6 +869,7 @@ def _build_row_share_message(
     cells: dict,
     brand_title: str = "DataTracker",
     reply_to: str | None = None,
+    attachments: list[tuple[str, bytes]] | None = None,
 ) -> MIMEMultipart:
     """
     Construit le message MIME de partage d'une ligne (fiche complète + texte libre).
@@ -852,6 +878,8 @@ def _build_row_share_message(
       demande adressée à un tiers (défaut : "DataTracker").
     - reply_to : si l'expéditeur est un compte technique (envoi direct), permet au
       destinataire de répondre à la bonne personne malgré tout.
+    - attachments : fichiers de la ligne à joindre, (nom_original, octets) — jamais
+      un fichier n'appartenant pas à cette ligne (filtré par l'appelant).
     Ne l'envoie pas — voir build_row_share_eml() (téléchargement) et
     send_row_share_email() (envoi direct via SMTP).
     """
@@ -899,7 +927,7 @@ def _build_row_share_message(
         msg["Reply-To"] = reply_to
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
-    return msg
+    return _attach_files(msg, attachments)
 
 
 def build_row_share_eml(
@@ -913,6 +941,7 @@ def build_row_share_eml(
     columns,
     cells: dict,
     brand_title: str = "DataTracker",
+    attachments: list[tuple[str, bytes]] | None = None,
 ) -> bytes:
     """
     Construit (sans l'envoyer) le message MIME (.eml) de partage d'une ligne. L'email
@@ -923,7 +952,7 @@ def build_row_share_eml(
     """
     msg = _build_row_share_message(
         to_addresses, from_address, shared_by, table_name, table_id, row_id,
-        message, columns, cells, brand_title,
+        message, columns, cells, brand_title, attachments=attachments,
     )
     msg["X-Unsent"] = "1"  # Apple Mail : ouvre le .eml en brouillon éditable plutôt qu'en lecture.
     return msg.as_bytes()
@@ -940,6 +969,7 @@ def send_row_share_email(
     columns,
     cells: dict,
     brand_title: str = "DataTracker",
+    attachments: list[tuple[str, bytes]] | None = None,
 ) -> None:
     """
     Envoie directement par email (SMTP) la fiche d'une ligne. From = le compte
@@ -956,7 +986,7 @@ def send_row_share_email(
 
     msg = _build_row_share_message(
         to_addresses, from_address, shared_by, table_name, table_id, row_id,
-        message, columns, cells, brand_title, reply_to=reply_to,
+        message, columns, cells, brand_title, reply_to=reply_to, attachments=attachments,
     )
     _dispatch_smtp(msg, to_addresses, from_address)
 
