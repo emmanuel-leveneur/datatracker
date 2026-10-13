@@ -3,6 +3,7 @@ import re
 
 import pytest
 
+from app.config import settings
 from app.models import ActivityLog, ColumnPermission, ColumnType, PermissionLevel, TablePermission, TableRow, CellValue
 from app.routers.share import BULK_SHARE_MAX_ROWS
 from tests.helpers import make_table
@@ -366,3 +367,163 @@ def test_eml_filename_is_sanitized(admin_client, db, admin_user):
     filename = m.group(1)
     assert filename.endswith(".eml")
     assert re.match(r'^[A-Za-z0-9_\-]+\.eml$', filename)
+
+
+# ── Envoi direct (action=send) ────────────────────────────────────────────────────
+
+def test_share_row_modal_shows_send_button_only_when_smtp_configured(admin_client, db, admin_user, monkeypatch):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.exemple.com")
+    resp = admin_client.get(f"/tables/{table.id}/rows/{rows[0].id}/share")
+    assert 'value="send"' in resp.text
+
+    monkeypatch.setattr(settings, "SMTP_HOST", "")
+    resp = admin_client.get(f"/tables/{table.id}/rows/{rows[0].id}/share")
+    assert 'value="send"' not in resp.text
+    assert "indisponible" in resp.text.lower()
+
+
+def test_share_row_send_action_dispatches_and_logs(admin_client, db, admin_user, monkeypatch):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+
+    captured = {}
+
+    def fake_send(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("app.routers.share.send_row_share_email", fake_send)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"share_action": "send", "recipients": "a@exemple.com, b@exemple.com", "message": "Voici la fiche."},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sent"] is True
+    assert data["recipients"] == ["a@exemple.com", "b@exemple.com"]
+    assert captured["to_addresses"] == ["a@exemple.com", "b@exemple.com"]
+    assert captured["reply_to"] == admin_user.email  # jamais from_address=user.email
+    assert "from_address" not in captured  # décidé en interne par send_row_share_email (compte technique)
+    assert captured["message"] == "Voici la fiche."
+
+    db.expire_all()
+    log = db.query(ActivityLog).filter_by(action="share_row_email", table_id=table.id).first()
+    assert log is not None
+    assert "envoyé" in log.details.lower()
+
+
+def test_share_row_send_action_handles_smtp_failure_gracefully(admin_client, db, admin_user, monkeypatch):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont"], admin_user)
+
+    def fake_send(**kwargs):
+        raise RuntimeError("SMTP non configuré — envoi direct indisponible.")
+
+    monkeypatch.setattr("app.routers.share.send_row_share_email", fake_send)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/{rows[0].id}/share",
+        data={"share_action": "send", "recipients": "a@exemple.com", "message": ""},
+    )
+
+    assert resp.status_code == 200
+    assert "échec" in resp.text.lower()
+    db.expire_all()
+    assert db.query(ActivityLog).filter_by(action="share_row_email").first() is None
+
+
+def test_bulk_share_send_action_dispatches_and_logs(admin_client, db, admin_user, monkeypatch):
+    table, cols = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+    rows = _make_rows(db, table, cols[0], ["Dupont", "Martin"], admin_user)
+
+    captured = {}
+
+    def fake_send(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("app.routers.share.send_bulk_rows_share_email", fake_send)
+
+    resp = admin_client.post(
+        f"/tables/{table.id}/rows/bulk-share",
+        data={
+            "share_action": "send",
+            "row_ids": [r.id for r in rows],
+            "col_ids": [cols[0].id],
+            "recipients": "a@exemple.com",
+            "message": "",
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sent"] is True
+    assert captured["reply_to"] == admin_user.email
+    assert "from_address" not in captured
+
+    db.expire_all()
+    log = db.query(ActivityLog).filter_by(action="share_rows_email", table_id=table.id).first()
+    assert log is not None
+    assert "envoyé" in log.details.lower()
+
+
+def test_send_row_share_email_uses_technical_account_as_from(monkeypatch):
+    """
+    Vérifie directement (sans mock du dispatch SMTP) que send_row_share_email()
+    utilise bien le compte technique en From et l'utilisateur en Reply-To — jamais
+    l'inverse, pour éviter un From usurpant une adresse non autorisée par le relais.
+    """
+    from unittest.mock import MagicMock, patch
+    import email as email_pkg
+    from app import email_utils
+
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.exemple.com")
+    monkeypatch.setattr(settings, "SMTP_FROM", "noreply@exemple.com")
+    monkeypatch.setattr(settings, "SMTP_USER", "")
+    monkeypatch.setattr(settings, "SMTP_PASSWORD", "")
+
+    class FakeCol:
+        def __init__(self, id, name, col_type):
+            self.id = id
+            self.name = name
+            self.col_type = type("T", (), {"value": col_type})()
+
+    sent = {}
+
+    def fake_smtp(*a, **k):
+        m = MagicMock()
+        m.sendmail = lambda frm, to, msg: sent.update(frm=frm, to=to, msg=msg)
+        return m
+
+    with patch("smtplib.SMTP", side_effect=fake_smtp):
+        email_utils.send_row_share_email(
+            to_addresses=["dest@exemple.com"],
+            reply_to="emmanuel@exemple.com",
+            shared_by="emmanuel",
+            table_name="Clients",
+            table_id=1,
+            row_id=1,
+            message="x",
+            columns=[FakeCol(1, "Nom", "text")],
+            cells={1: "Dupont"},
+        )
+
+    assert sent["frm"] == "noreply@exemple.com"
+    msg = email_pkg.message_from_string(sent["msg"])
+    assert msg["From"] == "noreply@exemple.com"
+    assert msg["Reply-To"] == "emmanuel@exemple.com"
+
+
+def test_send_row_share_email_raises_when_smtp_not_configured(monkeypatch):
+    from app import email_utils
+
+    monkeypatch.setattr(settings, "SMTP_HOST", "")
+
+    with pytest.raises(RuntimeError):
+        email_utils.send_row_share_email(
+            to_addresses=["dest@exemple.com"], reply_to="e@exemple.com", shared_by="e",
+            table_name="Clients", table_id=1, row_id=1, message="x", columns=[], cells={},
+        )

@@ -832,7 +832,7 @@ Email envoyé via {brand_title} par {shared_by}.
 """
 
 
-def build_row_share_eml(
+def _build_row_share_message(
     to_addresses: list[str],
     from_address: str,
     shared_by: str,
@@ -843,16 +843,17 @@ def build_row_share_eml(
     columns,
     cells: dict,
     brand_title: str = "DataTracker",
-) -> bytes:
+    reply_to: str | None = None,
+) -> MIMEMultipart:
     """
-    Construit (sans l'envoyer) le message MIME (.eml) de partage d'une ligne : fiche
-    complète + texte libre, destinataires/objet pré-remplis. L'email n'est jamais
-    envoyé par DataTracker — le fichier est téléchargé puis ouvert/édité/envoyé par
-    l'utilisateur depuis son propre client mail (ne dépend donc pas de SMTP_HOST).
+    Construit le message MIME de partage d'une ligne (fiche complète + texte libre).
     - brand_title : remplace "DataTracker" dans l'en-tête et le pied de page (HTML et
       texte) — permet de dépersonnaliser l'email quand il sert de support à une
       demande adressée à un tiers (défaut : "DataTracker").
-    Retourne les octets bruts du message (RFC 822), prêts à être servis en téléchargement.
+    - reply_to : si l'expéditeur est un compte technique (envoi direct), permet au
+      destinataire de répondre à la bonne personne malgré tout.
+    Ne l'envoie pas — voir build_row_share_eml() (téléchargement) et
+    send_row_share_email() (envoi direct via SMTP).
     """
     table_url = f"{settings.APP_URL.rstrip('/')}/tables/{table_id}"
     subject = f"{table_name} — partagé par {shared_by}"
@@ -894,13 +895,73 @@ def build_row_share_eml(
     msg["Subject"] = subject
     msg["From"] = from_address
     msg["To"] = ", ".join(to_addresses)
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
+    return msg
 
+
+def build_row_share_eml(
+    to_addresses: list[str],
+    from_address: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_id: int,
+    message: str,
+    columns,
+    cells: dict,
+    brand_title: str = "DataTracker",
+) -> bytes:
+    """
+    Construit (sans l'envoyer) le message MIME (.eml) de partage d'une ligne. L'email
+    n'est jamais envoyé par DataTracker ici — le fichier est téléchargé puis ouvert/
+    édité/envoyé par l'utilisateur depuis son propre client mail (ne dépend donc pas
+    de SMTP_HOST). From = l'utilisateur lui-même (il l'envoie en son nom).
+    Retourne les octets bruts du message (RFC 822), prêts à être servis en téléchargement.
+    """
+    msg = _build_row_share_message(
+        to_addresses, from_address, shared_by, table_name, table_id, row_id,
+        message, columns, cells, brand_title,
+    )
+    msg["X-Unsent"] = "1"  # Apple Mail : ouvre le .eml en brouillon éditable plutôt qu'en lecture.
     return msg.as_bytes()
 
 
-def build_bulk_rows_share_eml(
+def send_row_share_email(
+    to_addresses: list[str],
+    reply_to: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_id: int,
+    message: str,
+    columns,
+    cells: dict,
+    brand_title: str = "DataTracker",
+) -> None:
+    """
+    Envoie directement par email (SMTP) la fiche d'une ligne. From = le compte
+    technique de l'application (settings.SMTP_FROM/SMTP_USER) — jamais l'adresse de
+    l'utilisateur, qui n'est généralement pas autorisée à émettre via ce relais
+    (SPF/DKIM) ; Reply-To = l'utilisateur, pour que les réponses lui arrivent bien.
+    Lève une exception en cas d'échec (SMTP non configuré, erreur réseau, etc.) —
+    contrairement aux autres fonctions d'envoi de ce module, l'appelant doit pouvoir
+    le signaler à l'utilisateur plutôt que l'ignorer silencieusement.
+    """
+    from_address = settings.SMTP_FROM or settings.SMTP_USER
+    if not settings.SMTP_HOST or not from_address:
+        raise RuntimeError("SMTP non configuré — envoi direct indisponible.")
+
+    msg = _build_row_share_message(
+        to_addresses, from_address, shared_by, table_name, table_id, row_id,
+        message, columns, cells, brand_title, reply_to=reply_to,
+    )
+    _dispatch_smtp(msg, to_addresses, from_address)
+
+
+def _build_bulk_rows_share_message(
     to_addresses: list[str],
     from_address: str,
     shared_by: str,
@@ -911,15 +972,9 @@ def build_bulk_rows_share_eml(
     columns,
     rows: list[dict],
     brand_title: str = "DataTracker",
-) -> bytes:
-    """
-    Construit (sans l'envoyer) le message MIME (.eml) de partage de plusieurs lignes :
-    tableau HTML des colonnes choisies + texte libre, destinataires/objet pré-remplis.
-    - rows : liste de {col_id: valeur_brute}, une entrée par ligne partagée.
-    - brand_title : voir build_row_share_eml() — même rôle de dépersonnalisation.
-    Même logique que build_row_share_eml() — jamais envoyé par DataTracker.
-    Retourne les octets bruts du message (RFC 822).
-    """
+    reply_to: str | None = None,
+) -> MIMEMultipart:
+    """Équivalent de _build_row_share_message() pour le partage en masse."""
     table_url = f"{settings.APP_URL.rstrip('/')}/tables/{table_id}"
     row_label = "ligne" if row_count == 1 else "lignes"
     subject = f"{table_name} — {row_count} {row_label} partagée(s) par {shared_by}"
@@ -964,10 +1019,86 @@ def build_bulk_rows_share_eml(
     msg["Subject"] = subject
     msg["From"] = from_address
     msg["To"] = ", ".join(to_addresses)
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg.attach(MIMEText(text_body, "plain", "utf-8"))
     msg.attach(MIMEText(html_body, "html", "utf-8"))
+    return msg
 
+
+def build_bulk_rows_share_eml(
+    to_addresses: list[str],
+    from_address: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_count: int,
+    message: str,
+    columns,
+    rows: list[dict],
+    brand_title: str = "DataTracker",
+) -> bytes:
+    """
+    Construit (sans l'envoyer) le message MIME (.eml) de partage de plusieurs lignes.
+    - rows : liste de {col_id: valeur_brute}, une entrée par ligne partagée.
+    Même logique que build_row_share_eml() — jamais envoyé par DataTracker ici.
+    Retourne les octets bruts du message (RFC 822).
+    """
+    msg = _build_bulk_rows_share_message(
+        to_addresses, from_address, shared_by, table_name, table_id, row_count,
+        message, columns, rows, brand_title,
+    )
+    msg["X-Unsent"] = "1"
     return msg.as_bytes()
+
+
+def send_bulk_rows_share_email(
+    to_addresses: list[str],
+    reply_to: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_count: int,
+    message: str,
+    columns,
+    rows: list[dict],
+    brand_title: str = "DataTracker",
+) -> None:
+    """
+    Envoie directement par email (SMTP) le tableau de plusieurs lignes. Voir
+    send_row_share_email() pour la logique From/Reply-To et la gestion des erreurs
+    (lève une exception, ne l'avale pas silencieusement).
+    """
+    from_address = settings.SMTP_FROM or settings.SMTP_USER
+    if not settings.SMTP_HOST or not from_address:
+        raise RuntimeError("SMTP non configuré — envoi direct indisponible.")
+
+    msg = _build_bulk_rows_share_message(
+        to_addresses, from_address, shared_by, table_name, table_id, row_count,
+        message, columns, rows, brand_title, reply_to=reply_to,
+    )
+    _dispatch_smtp(msg, to_addresses, from_address)
+
+
+def _dispatch_smtp(msg: MIMEMultipart, to_addresses: list[str], from_address: str) -> None:
+    """
+    Envoi SMTP effectif, réutilisé par send_row_share_email()/send_bulk_rows_share_email().
+    Lève une exception en cas d'échec (contrairement aux autres envois de ce module,
+    qui logguent et avalent l'erreur) — ici l'utilisateur doit être prévenu si ça échoue.
+    """
+    if settings.SMTP_USE_TLS:
+        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+    else:
+        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+    try:
+        if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        server.sendmail(from_address, to_addresses, msg.as_string())
+    finally:
+        server.quit()
 
 
 def send_share_notification_email(

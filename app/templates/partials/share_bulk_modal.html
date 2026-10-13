@@ -53,10 +53,22 @@
     <div id="share-bulk-message-history" class="flex flex-wrap gap-1 mt-1.5"></div>
   </div>
 
-  <div class="flex gap-2 pt-2">
-    <button type="submit" id="share-bulk-send-btn"
+  <div class="flex flex-wrap gap-2 pt-2">
+    {% if smtp_configured | default(false) %}
+    <button type="submit" name="share_action" value="send" id="share-bulk-send-btn"
       class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-1.5 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
-      <span class="htmx-indicator-hide">Préparer l'email</span>
+      <span class="htmx-indicator-hide">Envoyer</span>
+      <span class="htmx-indicator">
+        <svg class="animate-spin w-3.5 h-3.5 mr-1 inline-block align-[-3px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>Envoi…
+      </span>
+    </button>
+    {% endif %}
+    <button type="submit" name="share_action" value="download" id="share-bulk-download-btn"
+      class="{{ 'bg-blue-600 hover:bg-blue-700 text-white' if not (smtp_configured | default(false)) else 'text-gray-700 bg-gray-100 hover:bg-gray-200' }} text-sm font-semibold px-5 py-1.5 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+      <span class="htmx-indicator-hide">Télécharger le .eml</span>
       <span class="htmx-indicator">
         <svg class="animate-spin w-3.5 h-3.5 mr-1 inline-block align-[-3px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -69,6 +81,9 @@
       Annuler
     </button>
   </div>
+  {% if not (smtp_configured | default(false)) %}
+  <p class="text-xs text-gray-400">Envoi direct indisponible (SMTP non configuré) — téléchargez le fichier et envoyez-le depuis votre propre client mail.</p>
+  {% endif %}
   {% else %}
   <p class="text-sm text-gray-400 italic">Aucune colonne visible sur cette table.</p>
   <div class="flex gap-2 pt-2">

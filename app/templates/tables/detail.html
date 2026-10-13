@@ -1398,14 +1398,21 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
 async function _submitShareForm(e, bodyTargetId, closeFnName, extraFormData) {
   e.preventDefault();
   var form = e.target;
+  // Le 2e argument (submitter) permet \u00e0 FormData d'inclure name="share_action" avec
+  // la valeur du bouton effectivement cliqu\u00e9 ("send" ou "download") \u2014 n\u00e9cessaire car
+  // on construit la FormData nous-m\u00eames (e.preventDefault() plus haut), le navigateur
+  // ne le fait pas pour nous comme lors d'une soumission classique. IMPORTANT : \u00e0
+  // construire AVANT de d\u00e9sactiver les boutons ci-dessous \u2014 un bouton d\u00e9sactiv\u00e9 est
+  // exclu de l'ensemble des champs soumis (comme pour une vraie soumission de
+  // formulaire), donc son name=value dispara\u00eetrait si on inversait l'ordre.
+  var fd = new FormData(form, e.submitter);
   var buttons = form.querySelectorAll('button');
   buttons.forEach(function(b) { b.disabled = true; });
-  var submitBtn = form.querySelector('button[type="submit"]');
+  var submitBtn = e.submitter;
   if (submitBtn) submitBtn.classList.add('htmx-request');
   var prefix = bodyTargetId.replace('-modal-body', '');
 
   try {
-    var fd = new FormData(form);
     if (extraFormData) extraFormData(fd);
     var resp = await fetch(form.action, { method: 'POST', body: fd });
     var contentType = resp.headers.get('Content-Type') || '';
@@ -1427,9 +1434,23 @@ async function _submitShareForm(e, bodyTargetId, closeFnName, extraFormData) {
         '<div class="flex flex-col items-center text-center gap-3 py-4">' +
         '<div class="w-11 h-11 rounded-full bg-green-100 text-green-600 flex items-center justify-center">' +
         '<i data-lucide="check" class="w-5 h-5"></i></div>' +
-        '<div><p class="text-sm font-semibold text-gray-800">Email prêt — fichier téléchargé</p>' +
-        '<p class="text-xs text-gray-500 mt-1">Ouvrez « ' + filename + ' » avec votre client mail ' +
-        'par défaut pour le relire, l\'ajuster et l\'envoyer.</p></div>' +
+        '<div><p class="text-sm font-semibold text-gray-800">Email pr\u00eat \u2014 fichier t\u00e9l\u00e9charg\u00e9</p>' +
+        '<p class="text-xs text-gray-500 mt-1">Ouvrez \u00ab ' + filename + ' \u00bb avec votre client mail ' +
+        'par d\u00e9faut pour le relire, l\'ajuster et l\'envoyer.</p></div>' +
+        '<button type="button" onclick="' + closeFnName + '()" ' +
+        'class="text-sm text-white bg-blue-600 hover:bg-blue-700 px-5 py-1.5 rounded-lg transition mt-1">Fermer</button>' +
+        '</div>';
+    } else if (contentType.indexOf('application/json') !== -1) {
+      var data = await resp.json();
+      _recordShareHistory({{ table.id }}, fd.get('email_title'), fd.get('recipients'), fd.get('message'));
+
+      body.innerHTML =
+        '<div class="flex flex-col items-center text-center gap-3 py-4">' +
+        '<div class="w-11 h-11 rounded-full bg-green-100 text-green-600 flex items-center justify-center">' +
+        '<i data-lucide="check" class="w-5 h-5"></i></div>' +
+        '<div><p class="text-sm font-semibold text-gray-800">Email envoy\u00e9</p>' +
+        '<p class="text-xs text-gray-500 mt-1">\u00e0 ' + data.recipients.length + ' destinataire' +
+        (data.recipients.length > 1 ? 's' : '') + ' : ' + data.recipients.join(', ') + '</p></div>' +
         '<button type="button" onclick="' + closeFnName + '()" ' +
         'class="text-sm text-white bg-blue-600 hover:bg-blue-700 px-5 py-1.5 rounded-lg transition mt-1">Fermer</button>' +
         '</div>';
