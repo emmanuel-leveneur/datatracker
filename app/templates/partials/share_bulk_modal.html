@@ -1,0 +1,96 @@
+<form
+  action="/tables/{{ table.id }}/rows/bulk-share"
+  method="post"
+  onsubmit="return submitBulkShareForm(event)"
+  class="space-y-4">
+
+  <p id="share-bulk-count-msg" class="text-sm text-gray-600"></p>
+
+  {% if error %}
+  <p class="text-xs text-red-600 font-medium bg-red-50 border border-red-200 rounded-lg px-3 py-2">&#9888; {{ error }}</p>
+  {% endif %}
+
+  {% if columns %}
+  <div>
+    <label class="block text-xs font-medium text-gray-600 mb-1">Colonnes à inclure</label>
+    <div class="max-h-36 overflow-y-auto border border-gray-200 rounded-lg px-3 py-2 space-y-1">
+      {% for col in columns %}
+      <label class="flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" name="col_ids" value="{{ col.id }}"
+          {% if checked_col_ids is defined %}{% if col.id in checked_col_ids %}checked{% endif %}{% else %}checked{% endif %}
+          class="rounded border-gray-300 text-blue-600 focus:ring-blue-400">
+        {{ col.name }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div>
+    <label class="block text-xs font-medium text-gray-600 mb-1">Titre affiché dans l'email (facultatif)</label>
+    <input type="text" name="email_title" maxlength="80"
+      value="{{ title_value | default('') }}"
+      placeholder="Laissez vide pour afficher « DataTracker »"
+      class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+    <p class="text-xs text-gray-400 mt-1">Remplace « DataTracker » en haut de l'email — utile pour ne pas exposer l'outil face à un destinataire externe.</p>
+    <div id="share-bulk-title-history" class="flex flex-wrap gap-1 mt-1.5"></div>
+  </div>
+
+  <div>
+    <label class="block text-xs font-medium text-gray-600 mb-1">Destinataire(s)</label>
+    <input type="text" name="recipients" required
+      value="{{ recipients_value | default('') }}"
+      placeholder="ex. alice@exemple.com, bob@exemple.com"
+      class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+    <p class="text-xs text-gray-400 mt-1">Séparez plusieurs adresses par une virgule.</p>
+    <div id="share-bulk-recipients-history" class="flex flex-wrap gap-1 mt-1.5"></div>
+  </div>
+
+  <div>
+    <label class="block text-xs font-medium text-gray-600 mb-1">Message (facultatif)</label>
+    <textarea name="message" rows="3"
+      placeholder="Un mot pour accompagner cet envoi…"
+      class="w-full border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none">{{ message_value | default('') }}</textarea>
+    <div id="share-bulk-message-history" class="flex flex-wrap gap-1 mt-1.5"></div>
+  </div>
+
+  <div class="flex flex-wrap gap-2 pt-2">
+    {% if smtp_configured | default(false) %}
+    <button type="submit" name="share_action" value="send" id="share-bulk-send-btn"
+      class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-5 py-1.5 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+      <span class="htmx-indicator-hide">Envoyer</span>
+      <span class="htmx-indicator">
+        <svg class="animate-spin w-3.5 h-3.5 mr-1 inline-block align-[-3px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>Envoi…
+      </span>
+    </button>
+    {% endif %}
+    <button type="submit" name="share_action" value="download" id="share-bulk-download-btn"
+      class="{{ 'bg-blue-600 hover:bg-blue-700 text-white' if not (smtp_configured | default(false)) else 'text-gray-700 bg-gray-100 hover:bg-gray-200' }} text-sm font-semibold px-5 py-1.5 rounded-lg transition disabled:opacity-60 disabled:cursor-not-allowed">
+      <span class="htmx-indicator-hide">Télécharger le .eml</span>
+      <span class="htmx-indicator">
+        <svg class="animate-spin w-3.5 h-3.5 mr-1 inline-block align-[-3px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>Génération…
+      </span>
+    </button>
+    <button type="button" id="share-bulk-cancel-btn" onclick="closeBulkShareModal()"
+      class="text-sm text-gray-500 hover:text-gray-700 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition disabled:opacity-60 disabled:cursor-not-allowed">
+      Annuler
+    </button>
+  </div>
+  {% if not (smtp_configured | default(false)) %}
+  <p class="text-xs text-gray-400">Envoi direct indisponible (SMTP non configuré) — téléchargez le fichier et envoyez-le depuis votre propre client mail.</p>
+  {% endif %}
+  {% else %}
+  <p class="text-sm text-gray-400 italic">Aucune colonne visible sur cette table.</p>
+  <div class="flex gap-2 pt-2">
+    <button type="button" onclick="closeBulkShareModal()"
+      class="text-sm text-gray-500 hover:text-gray-700 px-4 py-1.5 rounded-lg hover:bg-gray-100 transition">
+      Fermer
+    </button>
+  </div>
+  {% endif %}
+</form>

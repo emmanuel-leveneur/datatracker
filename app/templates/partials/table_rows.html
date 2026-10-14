@@ -72,6 +72,15 @@
           <i data-lucide="{% if _ac %}paperclip{% else %}eye{% endif %}" class="w-3.5 h-3.5"></i>
           {% if _ac %}<span class="text-xs font-semibold leading-none">{{ _ac }}</span>{% endif %}
         </button>
+        {# Bouton partager par email #}
+        <button
+          hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/share"
+          hx-target="#share-row-modal-body"
+          hx-swap="innerHTML"
+          title="Partager par email"
+          class="text-gray-300 hover:text-emerald-500 hover:bg-emerald-50 p-1.5 rounded transition inline-flex">
+          <i data-lucide="send" class="w-3.5 h-3.5"></i>
+        </button>
         {# Bouton historique #}
         <button
           hx-get="/tables/{{ table.id }}/rows/{{ item.row.id }}/history"

@@ -6,6 +6,8 @@ import html
 import logging
 import smtplib
 from datetime import date, datetime
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -629,6 +631,504 @@ def send_alert_email(
         logger.info("email_utils: email envoyé à %s — %s", to_addresses, subject)
     except Exception as exc:
         logger.error("email_utils: échec envoi email — %s", exc)
+
+
+def _build_bulk_rows_table_html(columns, rows: list[dict]) -> tuple[str, str]:
+    """
+    Construit l'en-tête et le corps d'un tableau HTML multi-lignes pour le partage en
+    masse. `rows` est une liste de {col_id: valeur_brute}, une entrée par ligne, dans
+    l'ordre d'affichage voulu.
+    Retourne (header_html, body_html).
+    """
+    th_style = (
+        "font-size:11px;font-weight:700;color:#065f46;text-transform:uppercase;"
+        "letter-spacing:0.4px;padding:9px 12px;text-align:left;white-space:nowrap;"
+        "border-bottom:2px solid #a7f3d0;"
+    )
+    header_html = "".join(
+        f'<th style="{th_style}">{html.escape(col.name)}</th>' for col in columns
+    )
+
+    td_style = (
+        "font-size:12.5px;color:#111827;padding:8px 12px;"
+        "border-bottom:1px solid #f3f4f6;vertical-align:top;"
+    )
+    body_rows = []
+    for i, cells in enumerate(rows):
+        bg = "#ffffff" if i % 2 == 0 else "#f9fafb"
+        tds = []
+        for col in columns:
+            formatted = _fmt(cells.get(col.id, ""), col.col_type.value)
+            value_html = (
+                html.escape(formatted) if formatted
+                else '<span style="color:#d1d5db;font-style:italic;">—</span>'
+            )
+            tds.append(f'<td style="{td_style}">{value_html}</td>')
+        body_rows.append(f'<tr style="background-color:{bg};">{"".join(tds)}</tr>')
+    return header_html, "\n".join(body_rows)
+
+
+# ── Template partage (ligne unique / en masse) ─────────────────────────────────
+
+_SHARE_ROW_HEADER = """\
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{subject}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f3f4f6;
+             font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,
+             'Helvetica Neue',Arial,sans-serif;">
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+       style="background-color:#f3f4f6;min-height:100vh;">
+  <tr>
+    <td align="center" style="padding:40px 16px;">
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+             style="max-width:{max_width}px;">
+
+        <!-- Header -->
+        <tr>
+          <td style="background-color:#1d4ed8;border-radius:12px 12px 0 0;
+                      padding:22px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+              <tr>
+                <td>
+                  <span style="color:#ffffff;font-size:20px;font-weight:700;
+                               letter-spacing:0.3px;">{brand_title}</span>
+                </td>
+                <td align="right">
+                  <span style="display:inline-block;background-color:#065f46;
+                               color:#a7f3d0;font-size:11px;font-weight:600;
+                               padding:3px 10px;border-radius:20px;
+                               letter-spacing:0.4px;text-transform:uppercase;">
+                    Partage
+                  </span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Bande colorée -->
+        <tr>
+          <td style="height:4px;background:linear-gradient(90deg,#10b981,#34d399);"></td>
+        </tr>
+
+        <!-- Corps -->
+        <tr>
+          <td style="background-color:#ffffff;padding:28px 32px 24px 32px;">
+
+            <h1 style="margin:0 0 4px 0;font-size:21px;font-weight:700;
+                        color:#111827;line-height:1.3;">{table_name}</h1>
+            <p style="margin:0 0 20px 0;font-size:13px;color:#6b7280;">
+              Partagé par&nbsp;<span style="color:#374151;font-weight:600;">{shared_by}</span>
+              &nbsp;·&nbsp;{scope_label}
+            </p>
+"""
+
+_SHARE_MESSAGE_BLOCK = """\
+            <div style="background-color:#f9fafb;border:1px solid #e5e7eb;
+                         border-left:4px solid #10b981;border-radius:0 6px 6px 0;
+                         padding:12px 16px;margin-bottom:24px;">
+              <p style="margin:0;font-size:13px;color:#374151;line-height:1.7;
+                         white-space:pre-wrap;">{message}</p>
+            </div>
+"""
+
+_SHARE_SECTION_TITLE = """\
+            <p style="margin:0 0 8px 0;font-size:11px;font-weight:700;
+                       color:#9ca3af;text-transform:uppercase;letter-spacing:0.7px;">
+              {section_title}
+            </p>
+"""
+
+_SHARE_ROW_FICHE_WRAPPER = """\
+            <div style="border:1px solid #e5e7eb;border-radius:8px;
+                         overflow:hidden;margin-bottom:28px;">
+              <table width="100%" cellpadding="0" cellspacing="0"
+                     style="border-collapse:collapse;">
+{fiche_rows}
+              </table>
+            </div>
+"""
+
+_SHARE_BULK_TABLE_WRAPPER = """\
+            <div style="border:1px solid #e5e7eb;border-radius:8px;
+                         overflow:auto;margin-bottom:28px;">
+              <table width="100%" cellpadding="0" cellspacing="0"
+                     style="border-collapse:collapse;">
+                <tr style="background-color:#ecfdf5;">{table_header}</tr>
+{table_body}
+              </table>
+            </div>
+"""
+
+_SHARE_FOOTER = """\
+            <table cellpadding="0" cellspacing="0" role="presentation">
+              <tr>
+                <td style="border-radius:8px;background-color:#2563eb;">
+                  <a href="{table_url}"
+                     style="display:inline-block;padding:12px 28px;
+                            font-size:14px;font-weight:600;color:#ffffff;
+                            text-decoration:none;letter-spacing:0.2px;">
+                    Voir le tableau &nbsp;→
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background-color:#f9fafb;border-top:1px solid #e5e7eb;
+                      border-radius:0 0 12px 12px;padding:16px 32px;">
+            <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;
+                       line-height:1.6;">
+              Email envoyé via&nbsp;
+              <strong style="color:#6b7280;">{brand_title}</strong>
+              &nbsp;·&nbsp;par {shared_by}
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>
+"""
+
+_SHARE_ROW_TEXT_TEMPLATE = """\
+[{brand_title}] {table_name} — partagé par {shared_by}
+Ligne #{row_id}
+
+{message}
+
+── Données de la ligne ──────────────────
+{fiche_text}
+─────────────────────────────────────────
+
+Voir le tableau : {table_url}
+
+Email envoyé via {brand_title} par {shared_by}.
+"""
+
+_SHARE_BULK_TEXT_TEMPLATE = """\
+[{brand_title}] {table_name} — {row_count} ligne(s) partagée(s) par {shared_by}
+
+{message}
+
+── Données partagées ────────────────────
+{rows_text}
+─────────────────────────────────────────
+
+Voir le tableau : {table_url}
+
+Email envoyé via {brand_title} par {shared_by}.
+"""
+
+
+def _attach_files(msg: MIMEMultipart, attachments: list[tuple[str, bytes]] | None) -> MIMEMultipart:
+    """
+    Enveloppe un message "alternative" (texte+HTML) dans un message "mixed" portant
+    en plus les fichiers de `attachments` (liste de (nom_original, octets)) comme
+    pièces jointes RFC 2183 classiques. Retourne `msg` inchangé si `attachments` est
+    vide/None — pas de restructuration inutile.
+    """
+    if not attachments:
+        return msg
+    wrapper = MIMEMultipart("mixed")
+    for header in ("Subject", "From", "To", "Reply-To"):
+        if header in msg:
+            wrapper[header] = msg[header]
+    wrapper.attach(msg)
+    for filename, data in attachments:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        wrapper.attach(part)
+    return wrapper
+
+
+def _build_row_share_message(
+    to_addresses: list[str],
+    from_address: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_id: int,
+    message: str,
+    columns,
+    cells: dict,
+    brand_title: str = "DataTracker",
+    reply_to: str | None = None,
+    attachments: list[tuple[str, bytes]] | None = None,
+) -> MIMEMultipart:
+    """
+    Construit le message MIME de partage d'une ligne (fiche complète + texte libre).
+    - brand_title : remplace "DataTracker" dans l'en-tête et le pied de page (HTML et
+      texte) — permet de dépersonnaliser l'email quand il sert de support à une
+      demande adressée à un tiers (défaut : "DataTracker").
+    - reply_to : si l'expéditeur est un compte technique (envoi direct), permet au
+      destinataire de répondre à la bonne personne malgré tout.
+    - attachments : fichiers de la ligne à joindre, (nom_original, octets) — jamais
+      un fichier n'appartenant pas à cette ligne (filtré par l'appelant).
+    Ne l'envoie pas — voir build_row_share_eml() (téléchargement) et
+    send_row_share_email() (envoi direct via SMTP).
+    """
+    table_url = f"{settings.APP_URL.rstrip('/')}/tables/{table_id}"
+    subject = f"{table_name} — partagé par {shared_by}"
+
+    fiche_rows = _build_fiche_html(columns, cells, set())
+    fiche_section = (
+        _SHARE_SECTION_TITLE.format(section_title="Données de la ligne")
+        + _SHARE_ROW_FICHE_WRAPPER.format(fiche_rows=fiche_rows)
+    )
+
+    fiche_text_lines = []
+    for col in columns:
+        formatted = _fmt(cells.get(col.id, ""), col.col_type.value) or "—"
+        fiche_text_lines.append(f"  {col.name} : {formatted}")
+    fiche_text = "\n".join(fiche_text_lines)
+
+    html_body = (
+        _SHARE_ROW_HEADER.format(
+            subject=html.escape(subject), max_width=600,
+            brand_title=html.escape(brand_title),
+            table_name=html.escape(table_name),
+            shared_by=html.escape(shared_by),
+            scope_label=f"Ligne&nbsp;#{row_id}",
+        )
+        + _SHARE_MESSAGE_BLOCK.format(message=html.escape(message))
+        + fiche_section
+        + _SHARE_FOOTER.format(
+            table_url=table_url, shared_by=html.escape(shared_by),
+            brand_title=html.escape(brand_title),
+        )
+    )
+
+    text_body = _SHARE_ROW_TEXT_TEMPLATE.format(
+        brand_title=brand_title, table_name=table_name, shared_by=shared_by, row_id=row_id,
+        message=message, fiche_text=fiche_text, table_url=table_url,
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_address
+    msg["To"] = ", ".join(to_addresses)
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+    return _attach_files(msg, attachments)
+
+
+def build_row_share_eml(
+    to_addresses: list[str],
+    from_address: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_id: int,
+    message: str,
+    columns,
+    cells: dict,
+    brand_title: str = "DataTracker",
+    attachments: list[tuple[str, bytes]] | None = None,
+) -> bytes:
+    """
+    Construit (sans l'envoyer) le message MIME (.eml) de partage d'une ligne. L'email
+    n'est jamais envoyé par DataTracker ici — le fichier est téléchargé puis ouvert/
+    édité/envoyé par l'utilisateur depuis son propre client mail (ne dépend donc pas
+    de SMTP_HOST). From = l'utilisateur lui-même (il l'envoie en son nom).
+    Retourne les octets bruts du message (RFC 822), prêts à être servis en téléchargement.
+    """
+    msg = _build_row_share_message(
+        to_addresses, from_address, shared_by, table_name, table_id, row_id,
+        message, columns, cells, brand_title, attachments=attachments,
+    )
+    msg["X-Unsent"] = "1"  # Apple Mail : ouvre le .eml en brouillon éditable plutôt qu'en lecture.
+    return msg.as_bytes()
+
+
+def send_row_share_email(
+    to_addresses: list[str],
+    reply_to: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_id: int,
+    message: str,
+    columns,
+    cells: dict,
+    brand_title: str = "DataTracker",
+    attachments: list[tuple[str, bytes]] | None = None,
+) -> None:
+    """
+    Envoie directement par email (SMTP) la fiche d'une ligne. From = le compte
+    technique de l'application (settings.SMTP_FROM/SMTP_USER) — jamais l'adresse de
+    l'utilisateur, qui n'est généralement pas autorisée à émettre via ce relais
+    (SPF/DKIM) ; Reply-To = l'utilisateur, pour que les réponses lui arrivent bien.
+    Lève une exception en cas d'échec (SMTP non configuré, erreur réseau, etc.) —
+    contrairement aux autres fonctions d'envoi de ce module, l'appelant doit pouvoir
+    le signaler à l'utilisateur plutôt que l'ignorer silencieusement.
+    """
+    from_address = settings.SMTP_FROM or settings.SMTP_USER
+    if not settings.SMTP_HOST or not from_address:
+        raise RuntimeError("SMTP non configuré — envoi direct indisponible.")
+
+    msg = _build_row_share_message(
+        to_addresses, from_address, shared_by, table_name, table_id, row_id,
+        message, columns, cells, brand_title, reply_to=reply_to, attachments=attachments,
+    )
+    _dispatch_smtp(msg, to_addresses, from_address)
+
+
+def _build_bulk_rows_share_message(
+    to_addresses: list[str],
+    from_address: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_count: int,
+    message: str,
+    columns,
+    rows: list[dict],
+    brand_title: str = "DataTracker",
+    reply_to: str | None = None,
+) -> MIMEMultipart:
+    """Équivalent de _build_row_share_message() pour le partage en masse."""
+    table_url = f"{settings.APP_URL.rstrip('/')}/tables/{table_id}"
+    row_label = "ligne" if row_count == 1 else "lignes"
+    subject = f"{table_name} — {row_count} {row_label} partagée(s) par {shared_by}"
+
+    table_header, table_body = _build_bulk_rows_table_html(columns, rows)
+    table_section = (
+        _SHARE_SECTION_TITLE.format(section_title=f"Données partagées ({row_count} {row_label})")
+        + _SHARE_BULK_TABLE_WRAPPER.format(table_header=table_header, table_body=table_body)
+    )
+
+    rows_text_blocks = []
+    for i, cells in enumerate(rows, start=1):
+        lines = [f"Ligne {i}/{row_count} :"]
+        for col in columns:
+            formatted = _fmt(cells.get(col.id, ""), col.col_type.value) or "—"
+            lines.append(f"  {col.name} : {formatted}")
+        rows_text_blocks.append("\n".join(lines))
+    rows_text = "\n\n".join(rows_text_blocks)
+
+    html_body = (
+        _SHARE_ROW_HEADER.format(
+            subject=html.escape(subject), max_width=720,
+            brand_title=html.escape(brand_title),
+            table_name=html.escape(table_name),
+            shared_by=html.escape(shared_by),
+            scope_label=f"{row_count}&nbsp;{row_label}",
+        )
+        + _SHARE_MESSAGE_BLOCK.format(message=html.escape(message))
+        + table_section
+        + _SHARE_FOOTER.format(
+            table_url=table_url, shared_by=html.escape(shared_by),
+            brand_title=html.escape(brand_title),
+        )
+    )
+
+    text_body = _SHARE_BULK_TEXT_TEMPLATE.format(
+        brand_title=brand_title, table_name=table_name, row_count=row_count, shared_by=shared_by,
+        message=message, rows_text=rows_text, table_url=table_url,
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_address
+    msg["To"] = ", ".join(to_addresses)
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+    return msg
+
+
+def build_bulk_rows_share_eml(
+    to_addresses: list[str],
+    from_address: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_count: int,
+    message: str,
+    columns,
+    rows: list[dict],
+    brand_title: str = "DataTracker",
+) -> bytes:
+    """
+    Construit (sans l'envoyer) le message MIME (.eml) de partage de plusieurs lignes.
+    - rows : liste de {col_id: valeur_brute}, une entrée par ligne partagée.
+    Même logique que build_row_share_eml() — jamais envoyé par DataTracker ici.
+    Retourne les octets bruts du message (RFC 822).
+    """
+    msg = _build_bulk_rows_share_message(
+        to_addresses, from_address, shared_by, table_name, table_id, row_count,
+        message, columns, rows, brand_title,
+    )
+    msg["X-Unsent"] = "1"
+    return msg.as_bytes()
+
+
+def send_bulk_rows_share_email(
+    to_addresses: list[str],
+    reply_to: str,
+    shared_by: str,
+    table_name: str,
+    table_id: int,
+    row_count: int,
+    message: str,
+    columns,
+    rows: list[dict],
+    brand_title: str = "DataTracker",
+) -> None:
+    """
+    Envoie directement par email (SMTP) le tableau de plusieurs lignes. Voir
+    send_row_share_email() pour la logique From/Reply-To et la gestion des erreurs
+    (lève une exception, ne l'avale pas silencieusement).
+    """
+    from_address = settings.SMTP_FROM or settings.SMTP_USER
+    if not settings.SMTP_HOST or not from_address:
+        raise RuntimeError("SMTP non configuré — envoi direct indisponible.")
+
+    msg = _build_bulk_rows_share_message(
+        to_addresses, from_address, shared_by, table_name, table_id, row_count,
+        message, columns, rows, brand_title, reply_to=reply_to,
+    )
+    _dispatch_smtp(msg, to_addresses, from_address)
+
+
+def _dispatch_smtp(msg: MIMEMultipart, to_addresses: list[str], from_address: str) -> None:
+    """
+    Envoi SMTP effectif, réutilisé par send_row_share_email()/send_bulk_rows_share_email().
+    Lève une exception en cas d'échec (contrairement aux autres envois de ce module,
+    qui logguent et avalent l'erreur) — ici l'utilisateur doit être prévenu si ça échoue.
+    """
+    if settings.SMTP_USE_TLS:
+        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+    else:
+        server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10)
+    try:
+        if settings.SMTP_USER and settings.SMTP_PASSWORD:
+            server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        server.sendmail(from_address, to_addresses, msg.as_string())
+    finally:
+        server.quit()
 
 
 def send_share_notification_email(
