@@ -22,6 +22,7 @@
       <p class="font-semibold mb-1">Format attendu</p>
       <p>La première ligne du CSV doit contenir les noms des colonnes correspondant à ceux de la table :</p>
       <code class="mt-1 block text-xs">{{ columns | map(attribute='name') | join(', ') }}</code>
+      <p class="mt-2">Séparateur virgule <code>,</code> ou point-virgule <code>;</code> (export Excel), détecté automatiquement.</p>
     </div>
 
     <form method="post" action="/tables/{{ table.id }}/import" enctype="multipart/form-data" class="space-y-4">

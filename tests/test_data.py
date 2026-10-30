@@ -355,3 +355,94 @@ def test_import_csv_empty_date_value_is_allowed(admin_client, db, admin_user):
     assert resp.status_code == 200
     db.expire_all()
     assert db.query(TableRow).filter_by(table_id=table.id).count() == 1
+
+
+# ── Import CSV : séparateurs et encodage ──────────────────────────────────────
+
+def _import(client, table, payload: bytes):
+    return client.post(
+        f"/tables/{table.id}/import",
+        files={"file": ("data.csv", io.BytesIO(payload), "text/csv")},
+    )
+
+
+def _cell(db, table, col):
+    db.expire_all()
+    row = db.query(TableRow).filter_by(table_id=table.id).first()
+    return db.query(CellValue).filter_by(row_id=row.id, column_id=col.id).first().value
+
+
+def test_import_csv_semicolon_separator(admin_client, db, admin_user):
+    table, cols = make_table(
+        db, admin_user,
+        columns=[("Produit", ColumnType.TEXT), ("Stock", ColumnType.INTEGER)],
+    )
+
+    resp = _import(admin_client, table, b"Produit;Stock\nPomme;12\nBanane;7\n")
+
+    assert resp.status_code == 200
+    db.expire_all()
+    assert db.query(TableRow).filter_by(table_id=table.id).count() == 2
+    assert _cell(db, table, cols[0]) in ("Pomme", "Banane")
+
+
+def test_import_csv_semicolon_with_comma_decimals(admin_client, db, admin_user):
+    """Cas Excel FR : ';' comme séparateur et ',' décimale dans les valeurs."""
+    table, cols = make_table(
+        db, admin_user,
+        columns=[("Produit", ColumnType.TEXT), ("Prix", ColumnType.TEXT)],
+    )
+
+    resp = _import(admin_client, table, b"Produit;Prix\nPomme;3,5\n")
+
+    assert resp.status_code == 200
+    assert _cell(db, table, cols[0]) == "Pomme"
+    assert _cell(db, table, cols[1]) == "3,5"
+
+
+def test_import_csv_comma_with_quoted_semicolon(admin_client, db, admin_user):
+    table, cols = make_table(
+        db, admin_user,
+        columns=[("Nom", ColumnType.TEXT), ("Note", ColumnType.TEXT)],
+    )
+
+    resp = _import(admin_client, table, b'Nom,Note\n"Dupont; Jean",ok\n"Martin; Paul",ko\n')
+
+    assert resp.status_code == 200
+    db.expire_all()
+    values = {c.value for c in db.query(CellValue).filter_by(column_id=cols[0].id)}
+    assert values == {"Dupont; Jean", "Martin; Paul"}
+
+
+def test_import_csv_unmatched_headers_reports_error(admin_client, db, admin_user):
+    table, _ = make_table(db, admin_user, columns=[("Nom", ColumnType.TEXT)])
+
+    resp = _import(admin_client, table, b"Produit|Prix\nPomme|3\n")
+
+    assert resp.status_code == 200
+    assert "Aucune colonne du fichier ne correspond" in resp.text
+    assert "ligne(s) importée(s)" not in resp.text
+    db.expire_all()
+    assert db.query(TableRow).filter_by(table_id=table.id).count() == 0
+
+
+def test_import_csv_extra_fields_do_not_crash(admin_client, db, admin_user):
+    table, cols = make_table(
+        db, admin_user,
+        columns=[("Nom", ColumnType.TEXT), ("Ville", ColumnType.TEXT)],
+    )
+
+    resp = _import(admin_client, table, b"Nom,Ville\nAlice,Paris,en trop\nBob,Lyon\n")
+
+    assert resp.status_code == 200
+    db.expire_all()
+    assert db.query(TableRow).filter_by(table_id=table.id).count() == 2
+
+
+def test_import_csv_cp1252_encoding(admin_client, db, admin_user):
+    table, cols = make_table(db, admin_user, columns=[("Libellé", ColumnType.TEXT)])
+
+    resp = _import(admin_client, table, "Libellé\nCœur à 5 €\n".encode("cp1252"))
+
+    assert resp.status_code == 200
+    assert _cell(db, table, cols[0]) == "Cœur à 5 €"

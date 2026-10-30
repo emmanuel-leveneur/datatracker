@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, subqueryload, aliased
 from app.activity import log_action
 from app.alerts import evaluate_alerts_for_row, get_alert_row_data
 from app.database import get_db
-from app.import_utils import parse_date_or_datetime
+from app.import_utils import detect_separator, parse_date_or_datetime
 from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
     get_visible_columns, is_column_readonly,
@@ -1048,6 +1048,25 @@ def import_page(
     )
 
 
+def _detect_import_separator(text: str, col_names) -> str:
+    """Séparateur détecté par le Sniffer, sauf si un autre fait reconnaître plus
+    de colonnes de la table dans l'en-tête (le Sniffer échoue sur les lignes de
+    longueur irrégulière et retombe alors sur ';')."""
+    col_names = set(col_names)
+    first_line = text.split("\n", 1)[0]
+
+    def score(sep: str) -> int:
+        headers = next(csv.reader([first_line], delimiter=sep), [])
+        return sum(1 for h in headers if h.strip().lower() in col_names)
+
+    best = detect_separator(text)
+    best_score = score(best)
+    for sep in (",", ";", "\t", "|"):
+        if score(sep) > best_score:
+            best, best_score = sep, score(sep)
+    return best
+
+
 @router.post("/{table_id}/import")
 async def import_csv(
     request: Request,
@@ -1066,11 +1085,34 @@ async def import_csv(
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
-        text = content.decode("latin-1")
+        # Excel FR exporte en cp1252 (€, œ, ’) ; latin-1 en dernier recours
+        try:
+            text = content.decode("cp1252")
+        except UnicodeDecodeError:
+            text = content.decode("latin-1")
 
-    reader = csv.DictReader(io.StringIO(text))
     visible_cols = get_visible_columns(table, user, db)
     col_map = {col.name.lower(): col for col in visible_cols}
+    reader = csv.DictReader(
+        io.StringIO(text), delimiter=_detect_import_separator(text, col_map.keys())
+    )
+
+    file_headers = [h.strip() for h in (reader.fieldnames or []) if h]
+    if not any(h.lower() in col_map for h in file_headers):
+        found = ", ".join(file_headers) or "aucune"
+        expected = ", ".join(col.name for col in visible_cols)
+        return templates.TemplateResponse(
+            request, "tables/import.html",
+            {
+                "table": table,
+                "user": user,
+                "columns": visible_cols,
+                "errors": [
+                    f"Aucune colonne du fichier ne correspond à la table. "
+                    f"Colonnes trouvées : {found}. Colonnes attendues : {expected}."
+                ],
+            },
+        )
 
     unique_cols = {col.id: col for col in visible_cols if col.is_unique}
     seen_in_import: dict[int, set] = {col_id: set() for col_id in unique_cols}
@@ -1082,6 +1124,8 @@ async def import_csv(
         parsed: dict[int, str] = {}
         row_errors: list[str] = []
         for csv_col, value in csv_row.items():
+            if csv_col is None:  # champs en trop par rapport à l'en-tête
+                continue
             col = col_map.get(csv_col.strip().lower())
             if not col or is_column_readonly(col, user, db):
                 continue
