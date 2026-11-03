@@ -316,6 +316,53 @@ def parse_date_or_datetime(val: str, col_type: ColumnType) -> str | None:
     return val
 
 
+def _clean_number(val: str) -> str:
+    """Supprime les séparateurs de milliers (espaces, espaces insécables) et
+    ramène la décimale au point. Si '.' et ',' coexistent, le dernier est la
+    décimale (1.234,56 → 1234.56 ; 1,234.56 → 1234.56)."""
+    val = re.sub(r'[\s  ]', '', val)
+    if ',' in val and '.' in val:
+        if val.rfind(',') > val.rfind('.'):
+            val = val.replace('.', '').replace(',', '.')
+        else:
+            val = val.replace(',', '')
+    else:
+        val = val.replace(',', '.')
+    return val
+
+
+def parse_integer(val: str) -> str | None:
+    """'1 200' → '1200', '12,0' → '12'. Retourne None si non entier."""
+    cleaned = _clean_number(val)
+    if re.fullmatch(r'[+-]?\d+', cleaned):
+        return str(int(cleaned))
+    if re.fullmatch(r'[+-]?\d+\.0+', cleaned):
+        return str(int(float(cleaned)))
+    return None
+
+
+def parse_float(val: str) -> str | None:
+    """'3,5' → '3.5', '1 234,56' → '1234.56'. Retourne None si non numérique."""
+    cleaned = _clean_number(val)
+    if not re.fullmatch(r'[+-]?(\d+(\.\d+)?|\.\d+)', cleaned):
+        return None  # rejette aussi nan, inf, 1e5
+    return cleaned
+
+
+def parse_boolean(val: str) -> str | None:
+    """oui/non, vrai/faux, yes/no, 1/0… → 'true' / 'false'. None si inconnu."""
+    low = val.strip().lower()
+    if low in _BOOL_TRUE:
+        return 'true'
+    if low in _BOOL_FALSE:
+        return 'false'
+    return None
+
+
+def is_email(val: str) -> bool:
+    return _is_email(val.strip())
+
+
 def normalize_value(val: str, col_type: ColumnType) -> str:
     """Convertit une valeur brute vers le format de stockage interne."""
     val = val.strip()

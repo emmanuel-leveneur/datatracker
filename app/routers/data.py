@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session, subqueryload, aliased
 from app.activity import log_action
 from app.alerts import evaluate_alerts_for_row, get_alert_row_data
 from app.database import get_db
-from app.import_utils import detect_separator, parse_date_or_datetime
+from app.import_utils import (
+    detect_separator, is_email, parse_boolean, parse_date_or_datetime,
+    parse_float, parse_integer,
+)
 from app.dependencies import (
     can_access_table, get_current_user, get_table_or_404,
     get_visible_columns, is_column_readonly,
@@ -1067,6 +1070,85 @@ def _detect_import_separator(text: str, col_names) -> str:
     return best
 
 
+def _build_relation_lookups(db: Session, columns: list) -> dict:
+    """{col_id: (valeurs stockées par minuscule, valeurs par libellé minuscule)}
+    pour résoudre une cellule CSV de relation par sa valeur ou son libellé."""
+    lookups = {}
+    for col_id, options in _get_relation_options(db, columns).items():
+        by_value: dict[str, str] = {}
+        by_label: dict[str, set[str]] = {}
+        for value, label in options:
+            by_value[value.lower()] = value
+            by_label.setdefault(label.lower(), set()).add(value)
+        lookups[col_id] = (by_value, by_label)
+    return lookups
+
+
+def _parse_import_cell(col, raw: str, relation_lookups: dict) -> tuple[str, str | None]:
+    """Valide et normalise une cellule CSV selon le type de la colonne.
+    Retourne (valeur à stocker, message d'erreur ou None)."""
+    if col.col_type == ColumnType.TEXT:
+        return raw, None
+    val = raw.strip()
+    if not val:
+        return "", None
+
+    t = col.col_type
+    if t in (ColumnType.DATE, ColumnType.DATETIME):
+        converted = parse_date_or_datetime(val, t)
+        if converted is None:
+            expected = "AAAA-MM-JJ" if t == ColumnType.DATE else "AAAA-MM-JJ HH:MM"
+            return "", (f"« {val} » n'est pas une date reconnue "
+                        f"(format attendu : {expected}, ou JJ/MM/AAAA).")
+        return converted, None
+
+    if t == ColumnType.INTEGER:
+        converted = parse_integer(val)
+        if converted is None:
+            return "", f"« {val} » n'est pas un nombre entier."
+        return converted, None
+
+    if t in (ColumnType.FLOAT, ColumnType.LATITUDE, ColumnType.LONGITUDE):
+        converted = parse_float(val)
+        if converted is None:
+            return "", f"« {val} » n'est pas un nombre."
+        limit = {ColumnType.LATITUDE: 90, ColumnType.LONGITUDE: 180}.get(t)
+        if limit and not -limit <= float(converted) <= limit:
+            return "", f"« {val} » doit être compris entre -{limit} et {limit}."
+        return converted, None
+
+    if t == ColumnType.BOOLEAN:
+        converted = parse_boolean(val)
+        if converted is None:
+            return "", f"« {val} » n'est pas un booléen (oui/non, vrai/faux, 1/0)."
+        return converted, None
+
+    if t == ColumnType.EMAIL:
+        if not is_email(val):
+            return "", f"« {val} » n'est pas une adresse email valide."
+        return val, None
+
+    if t == ColumnType.SELECT and col.select_options:
+        options = [o.strip() for o in col.select_options.split(",") if o.strip()]
+        for opt in options:
+            if opt.lower() == val.lower():
+                return opt, None
+        return "", f"« {val} » ne fait pas partie des choix ({', '.join(options)})."
+
+    if t == ColumnType.RELATION and col.id in relation_lookups:
+        by_value, by_label = relation_lookups[col.id]
+        if val.lower() in by_value:
+            return by_value[val.lower()], None
+        matches = by_label.get(val.lower(), set())
+        if len(matches) == 1:
+            return next(iter(matches)), None
+        if len(matches) > 1:
+            return "", f"« {val} » correspond à plusieurs lignes de la table liée."
+        return "", f"« {val} » n'existe pas dans la table liée."
+
+    return val, None
+
+
 @router.post("/{table_id}/import")
 async def import_csv(
     request: Request,
@@ -1114,6 +1196,7 @@ async def import_csv(
             },
         )
 
+    relation_lookups = _build_relation_lookups(db, visible_cols)
     unique_cols = {col.id: col for col in visible_cols if col.is_unique}
     seen_in_import: dict[int, set] = {col_id: set() for col_id in unique_cols}
 
@@ -1129,19 +1212,11 @@ async def import_csv(
             col = col_map.get(csv_col.strip().lower())
             if not col or is_column_readonly(col, user, db):
                 continue
-            raw = (value or "").strip()
-            if col.col_type in (ColumnType.DATE, ColumnType.DATETIME) and raw:
-                converted = parse_date_or_datetime(raw, col.col_type)
-                if converted is None:
-                    expected = "AAAA-MM-JJ" if col.col_type == ColumnType.DATE else "AAAA-MM-JJ HH:MM"
-                    row_errors.append(
-                        f"Ligne {row_num} — {col.name} : « {raw} » n'est pas une date reconnue "
-                        f"(format attendu : {expected}, ou JJ/MM/AAAA)."
-                    )
-                    continue
-                parsed[col.id] = converted
-            else:
-                parsed[col.id] = value or ""
+            converted, error = _parse_import_cell(col, value or "", relation_lookups)
+            if error:
+                row_errors.append(f"Ligne {row_num} — {col.name} : {error}")
+                continue
+            parsed[col.id] = converted
 
         # Check unique constraints
         for col_id, col in unique_cols.items():

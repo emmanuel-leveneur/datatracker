@@ -446,3 +446,163 @@ def test_import_csv_cp1252_encoding(admin_client, db, admin_user):
 
     assert resp.status_code == 200
     assert _cell(db, table, cols[0]) == "Cœur à 5 €"
+
+
+# ── Import CSV : validation et normalisation par type ─────────────────────────
+
+def _import_one(client, db, admin_user, col_type, raw, **col_attrs):
+    """Importe une seule cellule dans une table à une colonne « Val »."""
+    table, cols = make_table(db, admin_user, columns=[("Val", col_type)])
+    for k, v in col_attrs.items():
+        setattr(cols[0], k, v)
+    db.commit()
+    resp = _import(client, table, f"Val\n{raw}\n".encode())
+    db.expire_all()
+    row = db.query(TableRow).filter_by(table_id=table.id).first()
+    stored = None
+    if row:
+        stored = db.query(CellValue).filter_by(row_id=row.id, column_id=cols[0].id).first().value
+    return resp, stored
+
+
+@pytest.mark.parametrize("col_type, raw, expected", [
+    (ColumnType.INTEGER, "42", "42"),
+    (ColumnType.INTEGER, "-7", "-7"),
+    (ColumnType.INTEGER, "1 200", "1200"),
+    (ColumnType.INTEGER, "12,0", "12"),
+    (ColumnType.FLOAT, "3,5", "3.5"),
+    (ColumnType.FLOAT, "1 234,56", "1234.56"),
+    (ColumnType.FLOAT, "1.234,56", "1234.56"),
+    (ColumnType.FLOAT, "1,234.56", "1234.56"),
+    (ColumnType.FLOAT, "-0.25", "-0.25"),
+    (ColumnType.LATITUDE, "48,8566", "48.8566"),
+    (ColumnType.LONGITUDE, "-2,35", "-2.35"),
+    (ColumnType.BOOLEAN, "Oui", "true"),
+    (ColumnType.BOOLEAN, "non", "false"),
+    (ColumnType.BOOLEAN, "VRAI", "true"),
+    (ColumnType.BOOLEAN, "0", "false"),
+    (ColumnType.EMAIL, " a.b@exemple.fr ", "a.b@exemple.fr"),
+])
+def test_import_csv_normalizes_typed_values(admin_client, db, admin_user, col_type, raw, expected):
+    resp, stored = _import_one(admin_client, db, admin_user, col_type, raw)
+    assert resp.status_code == 200
+    assert stored == expected
+
+
+@pytest.mark.parametrize("col_type, raw, message", [
+    (ColumnType.INTEGER, "3,5", "n&#39;est pas un nombre entier"),
+    (ColumnType.INTEGER, "abc", "n&#39;est pas un nombre entier"),
+    (ColumnType.FLOAT, "douze", "n&#39;est pas un nombre"),
+    (ColumnType.FLOAT, "nan", "n&#39;est pas un nombre"),
+    (ColumnType.LATITUDE, "95", "doit être compris entre -90 et 90"),
+    (ColumnType.LONGITUDE, "-181", "doit être compris entre -180 et 180"),
+    (ColumnType.BOOLEAN, "peut-être", "n&#39;est pas un booléen"),
+    (ColumnType.EMAIL, "pas-un-email", "n&#39;est pas une adresse email valide"),
+])
+def test_import_csv_rejects_invalid_typed_values(admin_client, db, admin_user, col_type, raw, message):
+    resp, stored = _import_one(admin_client, db, admin_user, col_type, raw)
+    assert resp.status_code == 200
+    assert message in resp.text
+    assert "Ligne 2 — Val" in resp.text
+    assert stored is None  # rollback : aucune ligne créée
+
+
+def test_import_csv_empty_typed_values_are_allowed(admin_client, db, admin_user):
+    table, cols = make_table(
+        db, admin_user,
+        columns=[("Nom", ColumnType.TEXT), ("N", ColumnType.INTEGER),
+                 ("B", ColumnType.BOOLEAN), ("E", ColumnType.EMAIL)],
+    )
+    resp = _import(admin_client, table, b"Nom,N,B,E\nAlice,,,\n")
+    assert resp.status_code == 200
+    db.expire_all()
+    assert db.query(TableRow).filter_by(table_id=table.id).count() == 1
+
+
+def test_import_csv_select_matches_option_case_insensitively(admin_client, db, admin_user):
+    resp, stored = _import_one(
+        admin_client, db, admin_user, ColumnType.SELECT, "en cours",
+        select_options="À faire, En cours, Terminé",
+    )
+    assert resp.status_code == 200
+    assert stored == "En cours"
+
+
+def test_import_csv_select_rejects_unknown_option(admin_client, db, admin_user):
+    resp, stored = _import_one(
+        admin_client, db, admin_user, ColumnType.SELECT, "Annulé",
+        select_options="À faire, En cours, Terminé",
+    )
+    assert "ne fait pas partie des choix (À faire, En cours, Terminé)" in resp.text
+    assert stored is None
+
+
+def test_import_csv_select_without_options_accepts_free_text(admin_client, db, admin_user):
+    resp, stored = _import_one(admin_client, db, admin_user, ColumnType.SELECT, "Libre")
+    assert stored == "Libre"
+
+
+def test_import_csv_text_is_not_altered(admin_client, db, admin_user):
+    resp, stored = _import_one(admin_client, db, admin_user, ColumnType.TEXT, "007")
+    assert stored == "007"
+
+
+def test_import_csv_unique_check_uses_normalized_value(admin_client, db, admin_user):
+    table, cols = make_table(db, admin_user, columns=[("Code", ColumnType.INTEGER)])
+    cols[0].is_unique = True
+    db.commit()
+    resp = _import(admin_client, table, b"Code\n1200\n1 200\n")
+    assert "est en doublon dans le fichier" in resp.text
+
+
+# ── Import CSV : colonnes relation ────────────────────────────────────────────
+
+def _make_relation(db, admin_user, value_col=False):
+    """Table « Clients » (Nom, Code) avec 3 lignes + table « Commandes » liée."""
+    clients, (c_nom, c_code) = make_table(
+        db, admin_user, name="Clients",
+        columns=[("Nom", ColumnType.TEXT), ("Code", ColumnType.TEXT)],
+    )
+    ids = {}
+    for nom, code in [("Dupont", "C1"), ("Martin", "C2"), ("Martin", "C3")]:
+        row = TableRow(table_id=clients.id, created_by_id=admin_user.id)
+        db.add(row)
+        db.flush()
+        db.add(CellValue(row_id=row.id, column_id=c_nom.id, value=nom))
+        db.add(CellValue(row_id=row.id, column_id=c_code.id, value=code))
+        ids[code] = row.id
+    cmd, (rel,) = make_table(db, admin_user, name="Commandes", columns=[("Client", ColumnType.RELATION)])
+    rel.related_table_id = clients.id
+    rel.related_display_col_id = c_nom.id
+    if value_col:
+        rel.related_value_col_id = c_code.id
+    db.commit()
+    return cmd, rel, ids
+
+
+def test_import_csv_relation_by_label(admin_client, db, admin_user):
+    cmd, rel, ids = _make_relation(db, admin_user)
+    resp = _import(admin_client, cmd, b"Client\ndupont\n")
+    assert resp.status_code == 200
+    assert _cell(db, cmd, rel) == str(ids["C1"])
+
+
+def test_import_csv_relation_by_stored_value(admin_client, db, admin_user):
+    cmd, rel, ids = _make_relation(db, admin_user, value_col=True)
+    resp = _import(admin_client, cmd, b"Client\nC3\n")
+    assert resp.status_code == 200
+    assert _cell(db, cmd, rel) == "C3"
+
+
+def test_import_csv_relation_ambiguous_label(admin_client, db, admin_user):
+    cmd, rel, ids = _make_relation(db, admin_user)
+    resp = _import(admin_client, cmd, b"Client\nMartin\n")
+    assert "correspond à plusieurs lignes de la table liée" in resp.text
+    db.expire_all()
+    assert db.query(TableRow).filter_by(table_id=cmd.id).count() == 0
+
+
+def test_import_csv_relation_unknown(admin_client, db, admin_user):
+    cmd, rel, ids = _make_relation(db, admin_user)
+    resp = _import(admin_client, cmd, b"Client\nDurand\n")
+    assert "n&#39;existe pas dans la table liée" in resp.text
