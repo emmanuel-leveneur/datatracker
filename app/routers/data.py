@@ -1047,7 +1047,13 @@ def import_page(
     visible_cols = get_visible_columns(table, user, db)
     return templates.TemplateResponse(
         request, "tables/import.html",
-        {"table": table, "user": user, "columns": visible_cols},
+        {
+            "table": table,
+            "user": user,
+            "columns": visible_cols,
+            "key_columns": _import_key_columns(visible_cols, user, db),
+            "mode": IMPORT_MODE_ADD,
+        },
     )
 
 
@@ -1149,11 +1155,37 @@ def _parse_import_cell(col, raw: str, relation_lookups: dict) -> tuple[str, str 
     return val, None
 
 
+IMPORT_MODE_ADD = "add"
+IMPORT_MODE_UPSERT = "upsert"
+
+
+def _import_key_columns(columns: list, user: User, db: Session) -> list:
+    """Colonnes utilisables comme clé de mise à jour : uniques et modifiables."""
+    return [c for c in columns if c.is_unique and not is_column_readonly(c, user, db)]
+
+
+def _find_row_by_key(db: Session, table_id: int, key_col_id: int, value: str) -> list[TableRow]:
+    """Lignes non supprimées de la table dont la colonne clé vaut `value` (casse ignorée)."""
+    return (
+        db.query(TableRow)
+        .join(CellValue, CellValue.row_id == TableRow.id)
+        .filter(
+            TableRow.table_id == table_id,
+            TableRow.deleted_at.is_(None),
+            CellValue.column_id == key_col_id,
+            sa_func.lower(CellValue.value) == value.lower(),
+        )
+        .all()
+    )
+
+
 @router.post("/{table_id}/import")
 async def import_csv(
     request: Request,
     table_id: int,
     file: UploadFile = File(...),
+    mode: str = Form(IMPORT_MODE_ADD),
+    key_col_id: str = Form(""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1162,6 +1194,33 @@ async def import_csv(
         raise HTTPException(status_code=404)
     if not can_access_table(table, user, db, require_write=True):
         raise HTTPException(status_code=403)
+
+    visible_cols = get_visible_columns(table, user, db)
+    cols_by_id = {col.id: col for col in visible_cols}
+    unique_cols = {col.id: col for col in visible_cols if col.is_unique}
+    key_columns = _import_key_columns(visible_cols, user, db)
+    upsert = mode == IMPORT_MODE_UPSERT
+
+    def render(errors=None, success=None):
+        return templates.TemplateResponse(
+            request, "tables/import.html",
+            {
+                "table": table,
+                "user": user,
+                "columns": visible_cols,
+                "key_columns": key_columns,
+                "mode": IMPORT_MODE_UPSERT if upsert else IMPORT_MODE_ADD,
+                "key_col_id": key_col_id,
+                "errors": errors or [],
+                "success": success,
+            },
+        )
+
+    key_col = None
+    if upsert:
+        key_col = next((c for c in key_columns if str(c.id) == key_col_id), None)
+        if key_col is None:
+            return render(errors=["Choisissez une colonne clé (colonne unique) pour la mise à jour."])
 
     content = await file.read()
     try:
@@ -1173,7 +1232,6 @@ async def import_csv(
         except UnicodeDecodeError:
             text = content.decode("latin-1")
 
-    visible_cols = get_visible_columns(table, user, db)
     col_map = {col.name.lower(): col for col in visible_cols}
     reader = csv.DictReader(
         io.StringIO(text), delimiter=_detect_import_separator(text, col_map.keys())
@@ -1183,24 +1241,17 @@ async def import_csv(
     if not any(h.lower() in col_map for h in file_headers):
         found = ", ".join(file_headers) or "aucune"
         expected = ", ".join(col.name for col in visible_cols)
-        return templates.TemplateResponse(
-            request, "tables/import.html",
-            {
-                "table": table,
-                "user": user,
-                "columns": visible_cols,
-                "errors": [
-                    f"Aucune colonne du fichier ne correspond à la table. "
-                    f"Colonnes trouvées : {found}. Colonnes attendues : {expected}."
-                ],
-            },
-        )
+        return render(errors=[
+            f"Aucune colonne du fichier ne correspond à la table. "
+            f"Colonnes trouvées : {found}. Colonnes attendues : {expected}."
+        ])
+    if key_col and key_col.name.lower() not in {h.lower() for h in file_headers}:
+        return render(errors=[f"La colonne clé « {key_col.name} » est absente du fichier."])
 
     relation_lookups = _build_relation_lookups(db, visible_cols)
-    unique_cols = {col.id: col for col in visible_cols if col.is_unique}
     seen_in_import: dict[int, set] = {col_id: set() for col_id in unique_cols}
 
-    imported = 0
+    added = updated = unchanged = 0
     errors: list[str] = []
     for row_num, csv_row in enumerate(reader, start=2):
         # Parse values for this CSV row
@@ -1217,8 +1268,25 @@ async def import_csv(
                 row_errors.append(f"Ligne {row_num} — {col.name} : {error}")
                 continue
             parsed[col.id] = converted
+        key_value = parsed.get(key_col.id, "") if key_col else ""
+
+        # Rapprochement avec une ligne existante (mode mise à jour)
+        existing_row = None
+        if key_col and not row_errors:
+            if not key_value:
+                row_errors.append(f"Ligne {row_num} — {key_col.name} : la clé est vide.")
+            else:
+                matches = _find_row_by_key(db, table_id, key_col.id, key_value)
+                if len(matches) > 1:
+                    row_errors.append(
+                        f"Ligne {row_num} — {key_col.name} : « {key_value} » correspond à "
+                        f"{len(matches)} lignes de la table."
+                    )
+                elif matches:
+                    existing_row = matches[0]
 
         # Check unique constraints
+        exclude_id = existing_row.id if existing_row else None
         for col_id, col in unique_cols.items():
             value = parsed.get(col_id, "")
             if value:
@@ -1227,7 +1295,9 @@ async def import_csv(
                     row_errors.append(
                         f"Ligne {row_num} — {col.name} : « {value} » est en doublon dans le fichier."
                     )
-                elif _check_unique_violation(db, col_id, value):
+                elif _check_unique_violation(
+                    db, col_id, value, exclude_row_id=exclude_id
+                ):
                     row_errors.append(
                         f"Ligne {row_num} — {col.name} : « {value} » existe déjà en base."
                     )
@@ -1242,6 +1312,30 @@ async def import_csv(
             if value:
                 seen_in_import[col_id].add(value.lower())
 
+        if existing_row is not None:
+            # Mise à jour : seules les cellules non vides du fichier sont écrites
+            cells = {cv.column_id: cv for cv in existing_row.cell_values}
+            diff = []
+            for col_id, value in parsed.items():
+                old = cells[col_id].value if col_id in cells else ""
+                if not value or value == (old or ""):
+                    continue
+                if col_id in cells:
+                    cells[col_id].value = value
+                else:
+                    db.add(CellValue(row_id=existing_row.id, column_id=col_id, value=value))
+                diff.append(f'"{cols_by_id[col_id].name}" : "{old or ""}" → "{value}"')
+            if not diff:
+                unchanged += 1
+                continue
+            log_action(db, user, "update_row", "row",
+                       resource_id=existing_row.id, resource_name=table.name, table_id=table.id,
+                       details="Import CSV\n" + "\n".join(diff))
+            db.flush()
+            evaluate_alerts_for_row(db, existing_row, table)
+            updated += 1
+            continue
+
         row = TableRow(table_id=table_id, created_by_id=user.id)
         db.add(row)
         db.flush()
@@ -1249,31 +1343,18 @@ async def import_csv(
             db.add(CellValue(row_id=row.id, column_id=col_id, value=value))
         db.flush()
         evaluate_alerts_for_row(db, row, table)
-        imported += 1
+        added += 1
 
     if errors:
         db.rollback()
-        return templates.TemplateResponse(
-            request, "tables/import.html",
-            {
-                "table": table,
-                "user": user,
-                "columns": visible_cols,
-                "errors": errors,
-            },
-        )
+        return render(errors=errors)
 
+    if upsert:
+        summary = (f"{added} ligne(s) ajoutée(s), {updated} mise(s) à jour, "
+                   f"{unchanged} inchangée(s) (clé : {key_col.name})")
+    else:
+        summary = f"{added} ligne(s) importée(s)"
     log_action(db, user, "import_csv", "row",
-               resource_name=table.name, details=f"{imported} ligne(s) importée(s)",
-               table_id=table.id)
+               resource_name=table.name, details=summary, table_id=table.id)
     db.commit()
-    return templates.TemplateResponse(
-        request, "tables/import.html",
-        {
-            "table": table,
-            "user": user,
-            "columns": visible_cols,
-            "success": f"{imported} ligne(s) importée(s)",
-            "errors": [],
-        },
-    )
+    return render(success=summary)

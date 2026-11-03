@@ -606,3 +606,227 @@ def test_import_csv_relation_unknown(admin_client, db, admin_user):
     cmd, rel, ids = _make_relation(db, admin_user)
     resp = _import(admin_client, cmd, b"Client\nDurand\n")
     assert "n&#39;existe pas dans la table liée" in resp.text
+
+
+# ── Import CSV : mode « Mettre à jour et ajouter » ────────────────────────────
+
+def _make_upsert_table(db, admin_user):
+    """Table Ref (unique) / Nom / Stock avec deux lignes existantes."""
+    table, cols = make_table(
+        db, admin_user,
+        columns=[("Ref", ColumnType.TEXT), ("Nom", ColumnType.TEXT), ("Stock", ColumnType.INTEGER)],
+    )
+    cols[0].is_unique = True
+    rows = {}
+    for ref, nom, stock in [("A1", "Pomme", "10"), ("B2", "Poire", "5")]:
+        row = TableRow(table_id=table.id, created_by_id=admin_user.id)
+        db.add(row)
+        db.flush()
+        for col, v in zip(cols, (ref, nom, stock)):
+            db.add(CellValue(row_id=row.id, column_id=col.id, value=v))
+        rows[ref] = row.id
+    db.commit()
+    return table, cols, rows
+
+
+def _upsert(client, table, key_col, payload: bytes):
+    return client.post(
+        f"/tables/{table.id}/import",
+        data={"mode": "upsert", "key_col_id": str(key_col.id)},
+        files={"file": ("data.csv", io.BytesIO(payload), "text/csv")},
+    )
+
+
+def _values(db, row_id, cols):
+    db.expire_all()
+    cells = {cv.column_id: cv.value for cv in db.query(CellValue).filter_by(row_id=row_id)}
+    return [cells.get(c.id, "") for c in cols]
+
+
+def _active_rows(db, table):
+    db.expire_all()
+    return db.query(TableRow).filter_by(table_id=table.id, deleted_at=None).count()
+
+
+def test_upsert_updates_existing_and_adds_new(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    resp = _upsert(admin_client, table, cols[0], b"Ref;Nom;Stock\nA1;Pomme verte;12\nC3;Kiwi;7\n")
+
+    assert resp.status_code == 200
+    assert "1 ligne(s) ajoutée(s), 1 mise(s) à jour, 0 inchangée(s)" in resp.text
+    assert _values(db, rows["A1"], cols) == ["A1", "Pomme verte", "12"]
+    assert _values(db, rows["B2"], cols) == ["B2", "Poire", "5"]
+    assert _active_rows(db, table) == 3
+
+
+def test_upsert_empty_cell_keeps_existing_value(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    _upsert(admin_client, table, cols[0], b"Ref;Nom;Stock\nA1;;99\n")
+
+    assert _values(db, rows["A1"], cols) == ["A1", "Pomme", "99"]
+
+
+def test_upsert_columns_absent_from_file_are_untouched(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    _upsert(admin_client, table, cols[0], b"Ref;Stock\nA1;0\n")
+
+    assert _values(db, rows["A1"], cols) == ["A1", "Pomme", "0"]
+
+
+def test_upsert_key_matches_case_insensitively(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    resp = _upsert(admin_client, table, cols[0], b"Ref;Stock\na1;3\n")
+
+    assert "0 ligne(s) ajoutée(s), 1 mise(s) à jour" in resp.text
+    assert _values(db, rows["A1"], cols)[2] == "3"
+    assert _active_rows(db, table) == 2
+
+
+def test_upsert_key_matches_after_type_normalization(admin_client, db, admin_user):
+    table, cols = make_table(
+        db, admin_user, columns=[("Code", ColumnType.INTEGER), ("Nom", ColumnType.TEXT)],
+    )
+    cols[0].is_unique = True
+    row = TableRow(table_id=table.id, created_by_id=admin_user.id)
+    db.add(row)
+    db.flush()
+    db.add(CellValue(row_id=row.id, column_id=cols[0].id, value="1200"))
+    db.commit()
+
+    resp = _upsert(admin_client, table, cols[0], b"Code;Nom\n1 200;Lot\n")
+
+    assert "1 mise(s) à jour" in resp.text
+    assert _values(db, row.id, cols) == ["1200", "Lot"]
+
+
+def test_upsert_identical_row_counts_as_unchanged_without_log(admin_client, db, admin_user):
+    from app.models import ActivityLog
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    resp = _upsert(admin_client, table, cols[0], b"Ref;Nom;Stock\nA1;Pomme;10\n")
+
+    assert "0 ligne(s) ajoutée(s), 0 mise(s) à jour, 1 inchangée(s)" in resp.text
+    db.expire_all()
+    assert db.query(ActivityLog).filter_by(action="update_row", resource_id=rows["A1"]).count() == 0
+
+
+def test_upsert_logs_diff_for_updated_row(admin_client, db, admin_user):
+    from app.models import ActivityLog
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    _upsert(admin_client, table, cols[0], b"Ref;Nom;Stock\nA1;Pomme;11\n")
+
+    db.expire_all()
+    log = db.query(ActivityLog).filter_by(action="update_row", resource_id=rows["A1"]).one()
+    assert log.table_id == table.id
+    assert '"Stock" : "10" → "11"' in log.details
+    assert "Nom" not in log.details
+    summary = db.query(ActivityLog).filter_by(action="import_csv", table_id=table.id).one()
+    assert "1 mise(s) à jour" in summary.details
+
+
+def test_upsert_empty_key_reports_error_and_rolls_back(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    resp = _upsert(admin_client, table, cols[0], b"Ref;Stock\nA1;1\n;2\n")
+
+    assert "Ligne 3 — Ref : la clé est vide." in resp.text
+    assert _values(db, rows["A1"], cols)[2] == "10"  # rollback de la ligne 2
+
+
+def test_upsert_duplicate_key_in_file(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    resp = _upsert(admin_client, table, cols[0], b"Ref;Stock\nA1;1\na1;2\n")
+
+    assert "est en doublon dans le fichier" in resp.text
+    assert _values(db, rows["A1"], cols)[2] == "10"
+
+
+def test_upsert_unique_conflict_with_another_row(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+    cols[1].is_unique = True  # Nom unique
+    db.commit()
+
+    resp = _upsert(admin_client, table, cols[0], b"Ref;Nom\nA1;Poire\n")
+
+    assert "« Poire » existe déjà en base" in resp.text
+    assert _values(db, rows["A1"], cols)[1] == "Pomme"
+
+
+def test_upsert_own_unique_value_is_not_a_conflict(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+    cols[1].is_unique = True
+    db.commit()
+
+    resp = _upsert(admin_client, table, cols[0], b"Ref;Nom;Stock\nA1;Pomme;1\n")
+
+    assert "1 mise(s) à jour" in resp.text
+
+
+def test_upsert_ignores_trashed_rows(admin_client, db, admin_user):
+    from datetime import datetime
+    table, cols, rows = _make_upsert_table(db, admin_user)
+    db.get(TableRow, rows["B2"]).deleted_at = datetime.now()
+    db.commit()
+
+    resp = _upsert(admin_client, table, cols[0], b"Ref;Stock\nB2;8\n")
+
+    assert "1 ligne(s) ajoutée(s), 0 mise(s) à jour" in resp.text
+    assert _values(db, rows["B2"], cols)[2] == "5"
+
+
+def test_upsert_requires_key_column_in_file(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    resp = _upsert(admin_client, table, cols[0], b"Nom;Stock\nPomme;1\n")
+
+    assert "La colonne clé « Ref » est absente du fichier." in resp.text
+    assert _active_rows(db, table) == 2
+
+
+def test_upsert_rejects_non_unique_key_column(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    resp = _upsert(admin_client, table, cols[1], b"Ref;Nom\nA1;X\n")
+
+    assert "Choisissez une colonne clé" in resp.text
+    assert _values(db, rows["A1"], cols)[1] == "Pomme"
+
+
+def test_add_mode_still_rejects_existing_unique_value(admin_client, db, admin_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+
+    resp = _import(admin_client, table, b"Ref;Nom\nA1;X\n")
+
+    assert "existe déjà en base" in resp.text
+    assert _active_rows(db, table) == 2
+
+
+def test_import_page_offers_upsert_only_with_unique_column(admin_client, db, admin_user):
+    plain, _ = make_table(db, admin_user, name="Plain", columns=[("Nom", ColumnType.TEXT)])
+    keyed, cols, _ = _make_upsert_table(db, admin_user)
+
+    resp_plain = admin_client.get(f"/tables/{plain.id}/import")
+    resp_keyed = admin_client.get(f"/tables/{keyed.id}/import")
+
+    assert "Nécessite une colonne marquée « unique »" in resp_plain.text
+    assert 'name="key_col_id"' not in resp_plain.text
+    assert f'<option value="{cols[0].id}"' in resp_keyed.text
+
+
+def test_readonly_unique_column_is_not_offered_as_key(user_client, db, admin_user, regular_user):
+    table, cols, rows = _make_upsert_table(db, admin_user)
+    db.add(TablePermission(table_id=table.id, user_id=regular_user.id, level=PermissionLevel.WRITE))
+    db.add(ColumnPermission(column_id=cols[0].id, user_id=regular_user.id, readonly=True))
+    db.commit()
+
+    page = user_client.get(f"/tables/{table.id}/import")
+    resp = _upsert(user_client, table, cols[0], b"Ref;Stock\nA1;1\n")
+
+    assert 'name="key_col_id"' not in page.text
+    assert "Choisissez une colonne clé" in resp.text
