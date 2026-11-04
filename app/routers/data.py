@@ -109,6 +109,7 @@ def _rows_template_ctx(
     page_size: int = DEFAULT_PAGE_SIZE,
     sort_col: int | None = None,
     sort_dir: str = "asc",
+    tile: str = "",
 ) -> dict:
     """Construit le contexte commun pour le rendu de partials/table_rows.html.
 
@@ -151,6 +152,22 @@ def _rows_template_ctx(
             CellValue.value.ilike(f"%{filter_val}%"),
         ).distinct().subquery()
         base = base.filter(TableRow.id.in_(col_subq))
+
+    # Vignette sélectionnée : filtre sur la valeur EXACTE de la colonne des vignettes
+    tiles_col_id = getattr(table, "tiles_col_id", None)
+    if tile and tiles_col_id in visible_ids:
+        if tile == "__vide__":
+            filled_subq = db.query(CellValue.row_id).filter(
+                CellValue.column_id == tiles_col_id,
+                CellValue.value.notin_(["", "None"]),
+            ).distinct().subquery()
+            base = base.filter(~TableRow.id.in_(filled_subq))
+        else:
+            tile_subq = db.query(CellValue.row_id).filter(
+                CellValue.column_id == tiles_col_id,
+                CellValue.value == tile,
+            ).distinct().subquery()
+            base = base.filter(TableRow.id.in_(tile_subq))
 
     total_count: int = base.count()
     total_pages = max(1, (total_count + page_size - 1) // page_size)
@@ -394,6 +411,7 @@ def get_rows(
     page_size: int = Query(DEFAULT_PAGE_SIZE),
     sort_col: str = Query(""),
     sort_dir: str = Query("asc"),
+    tile: str = Query(""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -407,7 +425,7 @@ def get_rows(
     sort_col_id = int(sort_col) if sort_col.strip().isdigit() else None
     return templates.TemplateResponse(
         request, "partials/table_rows_response.html",
-        _rows_template_ctx(db, table, user, page, q, col_filters, page_size, sort_col_id, sort_dir),
+        _rows_template_ctx(db, table, user, page, q, col_filters, page_size, sort_col_id, sort_dir, tile),
     )
 
 

@@ -82,6 +82,7 @@ class DataTable(Base):
     rgpd_responsable: Mapped[str] = mapped_column(String(256), default="")
     rgpd_destinataires: Mapped[str] = mapped_column(Text, default="")
     rgpd_hors_ue: Mapped[bool] = mapped_column(Boolean, default=False)
+    tiles_col_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)  # colonne des vignettes (pas de FK)
 
     owner: Mapped["User"] = relationship(back_populates="tables")
     columns: Mapped[list["TableColumn"]] = relationship(

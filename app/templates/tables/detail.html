@@ -628,6 +628,17 @@
          hx-get="/tables/{{ table.id }}/rows" hx-trigger="refresh-sort"
          hx-target="#table-body" hx-include="#filters-zone, #global-search" hx-vals='{"page": 1}'>
   <input type="hidden" id="sort-dir-input" name="sort_dir" value="{{ sort_dir or 'asc' }}">
+  {% if tiles_col %}
+  <input type="hidden" id="tile-input" name="tile" value="">
+  <div id="tiles-bar" class="mb-3">
+    <p class="text-xs text-gray-500 mb-1.5 flex items-center gap-1.5">
+      <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i> {{ tiles_col.name }}
+    </p>
+    <div id="tiles-list" class="flex flex-wrap gap-2">
+      <span class="text-xs text-gray-400">Chargement…</span>
+    </div>
+  </div>
+  {% endif %}
   {% if q or col_filters %}
   <div class="mb-2 flex justify-end">
     <button
@@ -848,6 +859,8 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
 // ──────────────────────────────────────────────────────────────────────────
 
 function clearAllFilters(tableId) {
+  var ti = document.getElementById('tile-input');
+  if (ti) ti.value = '';
   var gs = document.getElementById('global-search');
   if (gs) gs.value = '';
   document.querySelectorAll('#main-table thead input[type="search"]').forEach(function(inp) {
@@ -2265,6 +2278,79 @@ document.addEventListener('click', function(e) {
     var validModes = ['list', 'stats'{% if lat_col and lon_col %}, 'map'{% endif %}{% if date_cols %}, 'calendar'{% endif %}];
     applyViewMode(validModes.indexOf(saved) !== -1 ? saved : 'list');
   });
+})();
+</script>
+{% endif %}
+{% if tiles_col %}
+<script>
+// ── Vignettes : une par valeur de la colonne choisie, clic = filtre exact ──
+(function () {
+  var VIDE = '__vide__';
+  var listEl = document.getElementById('tiles-list');
+  var input = document.getElementById('tile-input');
+  if (!listEl || !input) return;
+  var items = [];
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function fmt(n) { return Number(n).toLocaleString('fr-FR'); }
+
+  function params() {
+    var p = new URLSearchParams();
+    var qEl = document.getElementById('global-search');
+    if (qEl && qEl.value) p.set('q', qEl.value);
+    document.querySelectorAll('#filters-zone [name^="filter_"]').forEach(function (el) {
+      if (el.value) p.set(el.name, el.value);
+    });
+    return p;
+  }
+
+  function tileHtml(i, label, count, active) {
+    return '<button type="button" data-tile="' + i + '" class="text-left min-w-[110px] px-3 py-2 rounded-lg border transition ' +
+      (active ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-gray-200 bg-white hover:bg-gray-50') + '">' +
+      '<div class="text-xl font-semibold ' + (active ? 'text-blue-700' : 'text-gray-800') + '">' + fmt(count) + '</div>' +
+      '<div class="text-xs truncate max-w-[180px] ' + (active ? 'text-blue-700' : 'text-gray-500') + '" title="' + esc(label) + '">' +
+      esc(label) + '</div></button>';
+  }
+
+  function render(data) {
+    items = [{ value: '', label: 'Toutes', count: data.total }].concat(data.items || []);
+    // La vignette sélectionnée reste visible même si la recherche en cours la vide
+    if (input.value && !items.some(function (it) { return it.value === input.value; })) {
+      items.push({ value: input.value, label: input.value === VIDE ? '(vide)' : input.value, count: 0 });
+    }
+    listEl.innerHTML = items.map(function (it, i) {
+      return tileHtml(i, it.label, it.count, input.value === it.value);
+    }).join('') + (data.more
+      ? '<span class="self-center text-xs text-gray-400">Seules les 50 valeurs les plus fréquentes sont affichées.</span>'
+      : '');
+  }
+
+  function load() {
+    fetch('/tables/{{ table.id }}/tiles?' + params().toString())
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(render)
+      .catch(function () {
+        listEl.innerHTML = '<span class="text-xs text-red-600">Impossible de charger les vignettes.</span>';
+      });
+  }
+
+  listEl.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-tile]');
+    if (!btn) return;
+    var it = items[parseInt(btn.dataset.tile, 10)];
+    if (!it) return;
+    input.value = (it.value === '' || input.value === it.value) ? '' : it.value;
+    // Recharge le tableau (page 1) avec les filtres + la vignette (#filters-zone inclus)
+    htmx.trigger('#sort-col-input', 'refresh-sort');
+  });
+
+  // Après chaque rechargement du tableau (recherche, filtres, vignette) : recompter
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    if (e.detail.target && e.detail.target.id === 'table-body') load();
+  });
+  document.addEventListener('DOMContentLoaded', load);
 })();
 </script>
 {% endif %}

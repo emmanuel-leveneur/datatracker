@@ -1,0 +1,1360 @@
+import csv
+import io
+import json
+from datetime import timezone, timedelta
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, File, status
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy.orm import Session, subqueryload, aliased
+from app.activity import log_action
+from app.alerts import evaluate_alerts_for_row, get_alert_row_data
+from app.database import get_db
+from app.import_utils import (
+    detect_separator, is_email, parse_boolean, parse_date_or_datetime,
+    parse_float, parse_integer,
+)
+from app.dependencies import (
+    can_access_table, get_current_user, get_table_or_404,
+    get_visible_columns, is_column_readonly,
+)
+from app.models import (
+    ActivityLog, CellValue, ColumnType, DataTable, RowAttachment, RowComment,
+    TableColumn, TableRow, User,
+)
+from sqlalchemy import and_, func as sa_func, Float
+
+router = APIRouter(prefix="/tables", tags=["data"])
+templates = Jinja2Templates(directory="app/templates")
+
+ALLOWED_PAGE_SIZES = [25, 50, 100, 250, 500]
+DEFAULT_PAGE_SIZE = 25
+BULK_EDIT_MAX_ROWS = 500
+# Types exclus de la modification en masse : nécessitent un widget dédié (autocomplete
+# relation, carte) incompatible avec le formulaire générique "1 colonne -> 1 valeur".
+_BULK_EDIT_EXCLUDED_TYPES = {ColumnType.RELATION, ColumnType.LATITUDE, ColumnType.LONGITUDE}
+
+
+def _bulk_editable_columns(table: DataTable, user: User, db: Session) -> list:
+    return [
+        col for col in get_visible_columns(table, user, db)
+        if col.col_type not in _BULK_EDIT_EXCLUDED_TYPES and not is_column_readonly(col, user, db)
+    ]
+
+
+def _check_unique_violation(
+    db: Session,
+    column_id: int,
+    value: str,
+    exclude_row_id: int | None = None,
+) -> bool:
+    """Returns True if value already exists in a non-deleted row for this column."""
+    if not value:
+        return False
+    query = (
+        db.query(CellValue)
+        .join(TableRow, CellValue.row_id == TableRow.id)
+        .filter(
+            CellValue.column_id == column_id,
+            sa_func.lower(CellValue.value) == value.lower(),
+            TableRow.deleted_at.is_(None),
+        )
+    )
+    if exclude_row_id is not None:
+        query = query.filter(CellValue.row_id != exclude_row_id)
+    return query.first() is not None
+
+
+_SORTABLE_TYPES = {
+    ColumnType.TEXT, ColumnType.INTEGER, ColumnType.FLOAT,
+    ColumnType.DATE, ColumnType.DATETIME, ColumnType.BOOLEAN,
+    ColumnType.EMAIL, ColumnType.SELECT,
+    ColumnType.LATITUDE, ColumnType.LONGITUDE,
+}
+_NUMERIC_SORT_TYPES = {ColumnType.INTEGER, ColumnType.FLOAT, ColumnType.LATITUDE, ColumnType.LONGITUDE}
+
+
+def _apply_row_sort(query, sort_col: TableColumn | None, sort_dir: str):
+    """Ajoute la jointure + le tri sur la valeur d'une colonne dynamique.
+
+    DATE/DATETIME sont stockés en ISO (YYYY-MM-DD[THH:MM]) : un tri texte suffit,
+    il coïncide avec l'ordre chronologique tant que le format est homogène.
+    """
+    if sort_col is None or sort_col.col_type not in _SORTABLE_TYPES:
+        return query.order_by(TableRow.created_at.desc())
+
+    sort_cv = aliased(CellValue)
+    value_expr = sort_cv.value
+    if sort_col.col_type in _NUMERIC_SORT_TYPES:
+        # CAST SQLite d'un texte non numérique -> 0.0 (pas d'erreur) : limitation acceptée,
+        # la donnée est déjà incohérente avec le type de colonne déclaré.
+        value_expr = sa_func.nullif(sort_cv.value, "").cast(Float)
+
+    order = value_expr.desc() if sort_dir == "desc" else value_expr.asc()
+    return (
+        query.outerjoin(
+            sort_cv,
+            and_(sort_cv.row_id == TableRow.id, sort_cv.column_id == sort_col.id),
+        )
+        .order_by(order.nullslast(), TableRow.id.asc())
+    )
+
+
+def _rows_template_ctx(
+    db: Session,
+    table,
+    user,
+    page: int = 1,
+    q: str = "",
+    col_filters: dict | None = None,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    sort_col: int | None = None,
+    sort_dir: str = "asc",
+) -> dict:
+    """Construit le contexte commun pour le rendu de partials/table_rows.html.
+
+    q            : recherche globale sur toutes les colonnes visibles
+    col_filters  : dict {str(col_id): valeur} pour filtres par colonne
+    sort_col     : id de la colonne triée (None = tri par défaut, création desc)
+    sort_dir     : "asc" ou "desc"
+    """
+    col_filters = col_filters or {}
+    page_size = page_size if page_size in ALLOWED_PAGE_SIZES else DEFAULT_PAGE_SIZE
+    visible = get_visible_columns(table, user, db)
+    visible_ids = {c.id for c in visible}
+    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible}
+    sort_col_obj = next((c for c in visible if c.id == sort_col), None)
+    sort_dir = "desc" if sort_dir == "desc" else "asc"
+
+    # Construction du filtre progressif via sous-requêtes
+    base = db.query(TableRow).filter(
+        TableRow.table_id == table.id, TableRow.deleted_at == None
+    )
+
+    if q:
+        matching_subq = db.query(CellValue.row_id).filter(
+            CellValue.value.ilike(f"%{q}%"),
+            CellValue.column_id.in_(visible_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val or not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_ids:
+            continue
+        col_subq = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col_id,
+            CellValue.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    total_count: int = base.count()
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    page = min(max(1, page), total_pages)
+
+    rows = _apply_row_sort(
+        base.options(subqueryload(TableRow.cell_values)), sort_col_obj, sort_dir
+    ).limit(page_size).offset((page - 1) * page_size).all()
+
+    rows_data = [
+        {"row": r, "cells": {cv.column_id: cv.value for cv in r.cell_values if cv.column_id in visible_ids}}
+        for r in rows
+    ]
+
+    # Comptage des commentaires et pièces jointes par ligne (batch queries)
+    row_ids = [r.id for r in rows]
+    comment_counts: dict[int, int] = {}
+    attachment_counts: dict[int, int] = {}
+    if row_ids:
+        counts = db.query(RowComment.row_id, sa_func.count(RowComment.id)).filter(
+            RowComment.row_id.in_(row_ids)
+        ).group_by(RowComment.row_id).all()
+        comment_counts = dict(counts)
+
+        att_counts = db.query(RowAttachment.row_id, sa_func.count(RowAttachment.id)).filter(
+            RowAttachment.row_id.in_(row_ids)
+        ).group_by(RowAttachment.row_id).all()
+        attachment_counts = dict(att_counts)
+
+    return {
+        "table": table,
+        "columns": visible,
+        "rows_data": rows_data,
+        "user": user,
+        "can_write": can_access_table(table, user, db, require_write=True),
+        "col_readonly": col_readonly,
+        "alerted_rows": get_alert_row_data(db, table.id, user.id),
+        "relation_labels": _resolve_relation_labels(db, visible),
+        "page": page,
+        "total_pages": total_pages,
+        "total_count": total_count,
+        "page_size": page_size,
+        "q": q,
+        "col_filters": col_filters,
+        "comment_counts": comment_counts,
+        "attachment_counts": attachment_counts,
+        "sort_col": sort_col_obj.id if sort_col_obj else None,
+        "sort_dir": sort_dir,
+    }
+
+
+def _resolve_relation_labels(db: Session, columns: list) -> dict:
+    """Retourne {col_id: {stored_val: label}} pour les colonnes relation sans colonne valeur.
+
+    Si related_value_col_id est défini, la valeur stockée est directement lisible
+    (ex: code fournisseur) — aucune résolution nécessaire, on n'inclut pas la colonne.
+    Si related_value_col_id est None, la valeur stockée est l'ID de ligne → résolution
+    vers le libellé de related_display_col_id.
+    """
+    result = {}
+    for col in columns:
+        if col.col_type.value != "relation" or not col.related_table_id or not col.related_display_col_id:
+            continue
+        if col.related_value_col_id:
+            continue  # valeur stockée déjà lisible, pas de résolution
+        rows = db.query(TableRow).filter(
+            TableRow.table_id == col.related_table_id,
+            TableRow.deleted_at == None,
+        ).all()
+        labels = {}
+        for row in rows:
+            for cv in row.cell_values:
+                if cv.column_id == col.related_display_col_id:
+                    labels[str(row.id)] = cv.value or f"#{row.id}"
+                    break
+            else:
+                labels[str(row.id)] = f"#{row.id}"
+        result[col.id] = labels
+    return result
+
+
+def _get_relation_options(db: Session, columns: list) -> dict:
+    """Retourne {col_id: [(valeur_stockée, label_affiché), ...]} pour le formulaire de saisie.
+
+    - Si related_value_col_id est défini : valeur stockée = contenu de cette colonne,
+      label affiché = contenu de related_display_col_id.
+    - Sinon : valeur stockée = str(row.id), label = contenu de related_display_col_id.
+    """
+    result = {}
+    for col in columns:
+        if col.col_type.value != "relation" or not col.related_table_id or not col.related_display_col_id:
+            continue
+        rows = db.query(TableRow).filter(
+            TableRow.table_id == col.related_table_id,
+            TableRow.deleted_at == None,
+        ).all()
+        options = []
+        for row in rows:
+            label = f"#{row.id}"
+            value = str(row.id)
+            for cv in row.cell_values:
+                if cv.column_id == col.related_display_col_id:
+                    label = cv.value or label
+                if col.related_value_col_id and cv.column_id == col.related_value_col_id:
+                    value = cv.value
+            if col.related_value_col_id and not value:
+                continue  # ligne sans valeur dans la colonne stockée → on l'exclut
+            options.append((value, label))
+        options.sort(key=lambda x: x[1].lower())
+        result[col.id] = options
+    return result
+
+
+def _row_details(row, columns) -> str:
+    """Formate le résumé d'une ligne pour les logs d'activité."""
+    col_map = {col.id: col.name for col in columns}
+    cells = {cv.column_id: cv.value for cv in row.cell_values}
+    parts = [
+        f"{col_map[cid]} -> {val}"
+        for cid, val in cells.items()
+        if cid in col_map and val not in (None, "")
+    ]
+    _reu = timezone(timedelta(hours=4))
+    created = row.created_at.replace(tzinfo=timezone.utc).astimezone(_reu).strftime("%d/%m/%Y %H:%M") if row.created_at else ""
+    return f"Ligne #{row.id} avec {', '.join(parts)} créée le {created}"
+
+
+def _row_summary_label(row, columns: list, cells: dict) -> str:
+    """Rappel court de la ligne pour le titre de la modale d'édition (2 premières valeurs non vides)."""
+    parts = []
+    for col in columns:
+        val = cells.get(col.id)
+        if val:
+            parts.append(val)
+        if len(parts) == 2:
+            break
+    return f"#{row.id} — {' · '.join(parts)}" if parts else f"#{row.id}"
+
+
+def _parse_col_filters(params: dict) -> dict:
+    """Extrait les filtres par colonne d'un dict de paramètres (query ou form).
+
+    Les inputs de filtre sont nommés filter_<col_id> pour éviter toute collision
+    avec les champs de formulaire de saisie (col_<col_id>).
+    """
+    return {k[7:]: str(v) for k, v in params.items() if k.startswith("filter_") and v}
+
+
+_RELATION_SEARCH_LIMIT = 50
+
+
+@router.get("/{table_id}/relation-search", response_class=HTMLResponse)
+def relation_search(
+    request: Request,
+    table_id: int,
+    col_id: int = Query(...),
+    q: str = Query(""),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retourne des suggestions HTML pour l'autocomplete d'une colonne relation."""
+    import html as html_lib
+    from app.models import TableColumn
+
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    col = db.get(TableColumn, col_id)
+    if not col or col.table_id != table_id or col.col_type.value != "relation":
+        return HTMLResponse("")
+    if not col.related_table_id or not col.related_display_col_id:
+        return HTMLResponse("")
+
+    base = db.query(TableRow).filter(
+        TableRow.table_id == col.related_table_id,
+        TableRow.deleted_at == None,
+    )
+    if q and q.strip():
+        matching = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col.related_display_col_id,
+            CellValue.value.ilike(f"%{q.strip()}%"),
+        ).subquery()
+        base = base.filter(TableRow.id.in_(matching))
+
+    rows = (
+        base.options(subqueryload(TableRow.cell_values))
+        .limit(_RELATION_SEARCH_LIMIT + 1)
+        .all()
+    )
+    truncated = len(rows) > _RELATION_SEARCH_LIMIT
+    rows = rows[:_RELATION_SEARCH_LIMIT]
+
+    results = []
+    for row in rows:
+        label = f"#{row.id}"
+        value = str(row.id)
+        for cv in row.cell_values:
+            if cv.column_id == col.related_display_col_id:
+                label = cv.value or label
+            if col.related_value_col_id and cv.column_id == col.related_value_col_id:
+                value = cv.value
+        if col.related_value_col_id and not value:
+            continue
+        results.append({"value": value, "label": label})
+    results.sort(key=lambda x: x["label"].lower())
+
+    def _li(r: dict) -> str:
+        v = html_lib.escape(r["value"])
+        l = html_lib.escape(r["label"])
+        value_badge = (
+            f'<span class="text-xs text-gray-400 shrink-0 ml-1">{v}</span>'
+            if col.related_value_col_id and r["value"] != r["label"]
+            else ""
+        )
+        return (
+            f'<li data-value="{v}" data-label="{l}" onclick="selectRelation(this)" '
+            f'class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm flex items-center justify-between gap-2">'
+            f'<span class="truncate">{l}</span>{value_badge}</li>'
+        )
+
+    items = "".join(_li(r) for r in results)
+    footer = (
+        f'<li class="px-3 py-1.5 text-xs text-gray-400 italic border-t border-gray-100">'
+        f'Affichage limité à {_RELATION_SEARCH_LIMIT} résultats — affinez la recherche</li>'
+        if truncated else ""
+    )
+    if not items:
+        return HTMLResponse(
+            '<p class="px-3 py-2 text-sm text-gray-400 italic">Aucun résultat</p>'
+        )
+    return HTMLResponse(f'<ul class="divide-y divide-gray-50">{items}{footer}</ul>')
+
+
+@router.get("/{table_id}/rows", response_class=HTMLResponse)
+def get_rows(
+    request: Request,
+    table_id: int,
+    page: int = Query(1, ge=1),
+    q: str = Query(""),
+    page_size: int = Query(DEFAULT_PAGE_SIZE),
+    sort_col: str = Query(""),
+    sort_dir: str = Query("asc"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retourne le partial table_rows.html (HTMX : refresh, recherche, filtre colonne, pagination, tri)."""
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+    col_filters = _parse_col_filters(dict(request.query_params))
+    sort_col_id = int(sort_col) if sort_col.strip().isdigit() else None
+    return templates.TemplateResponse(
+        request, "partials/table_rows_response.html",
+        _rows_template_ctx(db, table, user, page, q, col_filters, page_size, sort_col_id, sort_dir),
+    )
+
+
+@router.get("/{table_id}/rows/new", response_class=HTMLResponse)
+def new_row_form(
+    request: Request,
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    visible_cols = get_visible_columns(table, user, db)
+    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
+    return templates.TemplateResponse(
+        request, "partials/row_form.html",
+        {
+            "table": table,
+            "columns": visible_cols,
+            "col_readonly": col_readonly,
+            "row": None,
+            "cells": {},
+            "relation_options": _get_relation_options(db, visible_cols),
+        },
+    )
+
+
+@router.post("/{table_id}/rows/new")
+async def create_row(
+    request: Request,
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+
+    form = await request.form()
+    visible_cols = get_visible_columns(table, user, db)
+    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
+
+    # Collect form values before any DB write
+    form_values = {
+        col.id: str(form.get(f"col_{col.id}", ""))
+        for col in visible_cols
+        if not col_readonly.get(col.id)
+    }
+
+    # Check unique constraints
+    unique_errors: dict[int, str] = {}
+    for col in visible_cols:
+        if col.is_unique and not col_readonly.get(col.id):
+            value = form_values.get(col.id, "")
+            if _check_unique_violation(db, col.id, value):
+                unique_errors[col.id] = f'La valeur « {value} » existe déjà dans cette colonne.'
+
+    if unique_errors:
+        resp = templates.TemplateResponse(
+            request, "partials/row_form.html",
+            {
+                "table": table,
+                "columns": visible_cols,
+                "col_readonly": col_readonly,
+                "row": None,
+                "cells": form_values,
+                "errors": unique_errors,
+                "page": form.get("page", 1),
+                "relation_options": _get_relation_options(db, visible_cols),
+            },
+        )
+        resp.headers["HX-Retarget"] = "#row-form-area"
+        resp.headers["HX-Reswap"] = "innerHTML"
+        return resp
+
+    row = TableRow(table_id=table_id, created_by_id=user.id)
+    db.add(row)
+    db.flush()
+
+    cell_parts = []
+    for col in visible_cols:
+        if col_readonly.get(col.id):
+            continue
+        value = form_values.get(col.id, "")
+        db.add(CellValue(row_id=row.id, column_id=col.id, value=value))
+        if value:
+            cell_parts.append(f"{col.name} -> {value}")
+
+    from datetime import datetime as _dt
+    _reu = timezone(timedelta(hours=4))
+    created_str = _dt.now(timezone.utc).astimezone(_reu).strftime("%d/%m/%Y %H:%M")
+    details = f"Ligne #{row.id} avec {', '.join(cell_parts)} créée le {created_str}"
+    log_action(db, user, "create_row", "row",
+               resource_id=row.id, resource_name=table.name, table_id=table.id,
+               details=details)
+    db.flush()
+    evaluate_alerts_for_row(db, row, table)
+    db.commit()
+
+    if request.headers.get("HX-Request"):
+        # Page 1 : la nouvelle ligne apparaît en tête (tri created_at desc) ; filtres préservés
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
+        return templates.TemplateResponse(
+            request, "partials/table_rows_response.html",
+            _rows_template_ctx(db, table, user, page=1, q=q, col_filters=col_filters, page_size=page_size),
+        )
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/{table_id}/rows/bulk-edit", response_class=HTMLResponse)
+def bulk_edit_modal(
+    request: Request,
+    page: int = Query(1, ge=1),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    return templates.TemplateResponse(
+        request, "partials/bulk_edit_modal.html",
+        {
+            "table": table,
+            "columns": _bulk_editable_columns(table, user, db),
+            "page": page,
+        },
+    )
+
+
+@router.get("/{table_id}/rows/bulk-edit/field", response_class=HTMLResponse)
+def bulk_edit_field(
+    request: Request,
+    col_id: int = Query(...),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    editable = {c.id: c for c in _bulk_editable_columns(table, user, db)}
+    col = editable.get(col_id)
+    if not col:
+        return HTMLResponse("")
+    return templates.TemplateResponse(
+        request, "partials/bulk_edit_field.html", {"col": col},
+    )
+
+
+@router.post("/{table_id}/rows/bulk-edit")
+async def bulk_update_rows(
+    request: Request,
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+
+    form = await request.form()
+    editable_cols = {c.id: c for c in _bulk_editable_columns(table, user, db)}
+
+    def _error(message: str):
+        resp = templates.TemplateResponse(
+            request, "partials/bulk_edit_modal.html",
+            {
+                "table": table,
+                "columns": list(editable_cols.values()),
+                "page": form.get("page", 1),
+                "error": message,
+            },
+        )
+        resp.headers["HX-Retarget"] = "#bulk-edit-modal-body"
+        resp.headers["HX-Reswap"] = "innerHTML"
+        return resp
+
+    try:
+        row_ids = {int(i) for i in form.getlist("row_ids")}
+        col_id = int(str(form.get("col_id", "")))
+    except ValueError:
+        return _error("Sélection invalide.")
+    value = str(form.get("value", ""))
+
+    if not row_ids:
+        return _error("Aucune ligne sélectionnée.")
+    if len(row_ids) > BULK_EDIT_MAX_ROWS:
+        return _error(
+            f"Impossible de modifier plus de {BULK_EDIT_MAX_ROWS} lignes en une fois "
+            f"({len(row_ids)} sélectionnées)."
+        )
+
+    col = editable_cols.get(col_id)
+    if not col:
+        return _error("Colonne invalide ou non modifiable.")
+
+    rows = (
+        db.query(TableRow)
+        .filter(
+            TableRow.table_id == table_id,
+            TableRow.deleted_at.is_(None),
+            TableRow.id.in_(row_ids),
+        )
+        .options(subqueryload(TableRow.cell_values))
+        .all()
+    )
+    if not rows:
+        return _error("Aucune ligne valide dans la sélection.")
+
+    if col.is_unique and len(rows) > 1:
+        return _error(
+            f'"{col.name}" doit être unique : impossible d\'appliquer la même valeur à {len(rows)} lignes.'
+        )
+    if col.is_unique and len(rows) == 1 and _check_unique_violation(db, col.id, value, exclude_row_id=rows[0].id):
+        return _error(f'La valeur « {value} » existe déjà dans la colonne "{col.name}".')
+
+    for row in rows:
+        cell = next((cv for cv in row.cell_values if cv.column_id == col.id), None)
+        old_val = cell.value if cell else ""
+        if old_val == value:
+            continue
+        if cell:
+            cell.value = value
+        else:
+            db.add(CellValue(row_id=row.id, column_id=col.id, value=value))
+        log_action(db, user, "update_row", "row",
+                   resource_id=row.id, resource_name=table.name, table_id=table.id,
+                   details=f'"{col.name}" : "{old_val}" → "{value}"')
+        db.flush()
+        evaluate_alerts_for_row(db, row, table)
+
+    db.commit()
+
+    if request.headers.get("HX-Request"):
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
+        page = int(form.get("page", 1))
+        resp = templates.TemplateResponse(
+            request, "partials/table_rows_response.html",
+            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
+        )
+        resp.headers["HX-Trigger"] = "closeBulkEditModal"
+        return resp
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/rows/bulk-delete")
+async def bulk_delete_rows(
+    request: Request,
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from datetime import datetime
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+
+    form = await request.form()
+
+    def _render(error: str | None = None):
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
+        page = int(form.get("page", 1))
+        resp = templates.TemplateResponse(
+            request, "partials/table_rows_response.html",
+            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
+        )
+        if error:
+            resp.headers["HX-Trigger"] = json.dumps({"bulkDeleteError": error})
+        return resp
+
+    try:
+        row_ids = {int(i) for i in form.getlist("row_ids")}
+    except ValueError:
+        row_ids = set()
+
+    if not row_ids:
+        return _render("Aucune ligne sélectionnée.")
+    if len(row_ids) > BULK_EDIT_MAX_ROWS:
+        return _render(
+            f"Impossible de supprimer plus de {BULK_EDIT_MAX_ROWS} lignes en une fois "
+            f"({len(row_ids)} sélectionnées)."
+        )
+
+    rows = (
+        db.query(TableRow)
+        .filter(
+            TableRow.table_id == table_id,
+            TableRow.deleted_at.is_(None),
+            TableRow.id.in_(row_ids),
+        )
+        .options(subqueryload(TableRow.cell_values))
+        .all()
+    )
+    if not rows:
+        return _render("Aucune ligne valide dans la sélection.")
+
+    now = datetime.utcnow()
+    for row in rows:
+        row.deleted_at = now
+        log_action(db, user, "trash_row", "row",
+                   resource_id=row.id, resource_name=table.name, table_id=table.id,
+                   details=_row_details(row, table.columns))
+    db.commit()
+
+    if request.headers.get("HX-Request"):
+        return _render()
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/{table_id}/rows/{row_id}/edit", response_class=HTMLResponse)
+def edit_row_form(
+    request: Request,
+    table_id: int,
+    row_id: int,
+    page: int = Query(1, ge=1),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    row = db.get(TableRow, row_id)
+    if not row or row.table_id != table_id:
+        raise HTTPException(status_code=404)
+
+    visible_cols = get_visible_columns(table, user, db)
+    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
+    cells = {cv.column_id: cv.value for cv in row.cell_values}
+
+    return templates.TemplateResponse(
+        request, "partials/edit_row_form.html",
+        {
+            "table": table,
+            "columns": visible_cols,
+            "col_readonly": col_readonly,
+            "row": row,
+            "cells": cells,
+            "page": page,
+            "relation_options": _get_relation_options(db, visible_cols),
+            "row_label": _row_summary_label(row, visible_cols, cells),
+        },
+    )
+
+
+@router.post("/{table_id}/rows/{row_id}/edit")
+async def update_row(
+    request: Request,
+    table_id: int,
+    row_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    row = db.get(TableRow, row_id)
+    if not row or row.table_id != table_id:
+        raise HTTPException(status_code=404)
+
+    form = await request.form()
+    visible_cols = get_visible_columns(table, user, db)
+    col_readonly = {col.id: is_column_readonly(col, user, db) for col in visible_cols}
+    existing_cells = {cv.column_id: cv for cv in row.cell_values}
+
+    # Capture old values before modification
+    old_values = {cv.column_id: cv.value for cv in row.cell_values}
+
+    # Collect new values
+    form_values = {
+        col.id: str(form.get(f"col_{col.id}", ""))
+        for col in visible_cols
+        if not col_readonly.get(col.id)
+    }
+
+    # Check unique constraints (exclude current row)
+    unique_errors: dict[int, str] = {}
+    for col in visible_cols:
+        if col.is_unique and not col_readonly.get(col.id):
+            value = form_values.get(col.id, "")
+            if _check_unique_violation(db, col.id, value, exclude_row_id=row.id):
+                unique_errors[col.id] = f'La valeur « {value} » existe déjà dans cette colonne.'
+
+    if unique_errors:
+        cells = {cv.column_id: cv.value for cv in row.cell_values}
+        cells.update(form_values)
+        resp = templates.TemplateResponse(
+            request, "partials/edit_row_form.html",
+            {
+                "table": table,
+                "columns": visible_cols,
+                "col_readonly": col_readonly,
+                "row": row,
+                "cells": cells,
+                "errors": unique_errors,
+                "page": form.get("page", 1),
+                "relation_options": _get_relation_options(db, visible_cols),
+                "row_label": _row_summary_label(row, visible_cols, cells),
+            },
+        )
+        resp.headers["HX-Retarget"] = "#edit-row-modal-body"
+        resp.headers["HX-Reswap"] = "innerHTML"
+        return resp
+
+    for col in visible_cols:
+        if col_readonly.get(col.id):
+            continue
+        value = form_values.get(col.id, "")
+        if col.id in existing_cells:
+            existing_cells[col.id].value = value
+        else:
+            db.add(CellValue(row_id=row.id, column_id=col.id, value=value))
+
+    diff = []
+    for col in visible_cols:
+        if col_readonly.get(col.id):
+            continue
+        new_val = form_values.get(col.id, "")
+        old_val = old_values.get(col.id, "")
+        if old_val != new_val:
+            diff.append(f'"{col.name}" : "{old_val}" → "{new_val}"')
+
+    log_action(db, user, "update_row", "row",
+               resource_id=row.id, resource_name=table.name, table_id=table.id,
+               details="\n".join(diff) if diff else "Aucune modification")
+    db.flush()
+    evaluate_alerts_for_row(db, row, table)
+    db.commit()
+
+    if request.headers.get("HX-Request"):
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
+        page = int(form.get("page", 1))
+        resp = templates.TemplateResponse(
+            request, "partials/table_rows_response.html",
+            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
+        )
+        resp.headers["HX-Trigger"] = "closeEditRowModal"
+        return resp
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/rows/{row_id}/delete")
+async def trash_row(
+    request: Request,
+    table_id: int,
+    row_id: int,
+    page: int = Query(1, ge=1),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from datetime import datetime
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    row = db.get(TableRow, row_id)
+    if not row or row.table_id != table_id:
+        raise HTTPException(status_code=404)
+    row.deleted_at = datetime.utcnow()
+    log_action(db, user, "trash_row", "row",
+               resource_id=row.id, resource_name=table.name, table_id=table.id,
+               details=_row_details(row, table.columns))
+    db.commit()
+
+    if request.headers.get("HX-Request"):
+        form = await request.form()
+        q = str(form.get("q", ""))
+        col_filters = _parse_col_filters(dict(form))
+        page_size = int(form.get("page_size", DEFAULT_PAGE_SIZE))
+        return templates.TemplateResponse(
+            request, "partials/table_rows_response.html",
+            _rows_template_ctx(db, table, user, page=page, q=q, col_filters=col_filters, page_size=page_size),
+        )
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/rows/{row_id}/restore")
+def restore_row(
+    table_id: int,
+    row_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    row = db.get(TableRow, row_id)
+    if not row or row.table_id != table_id:
+        raise HTTPException(status_code=404)
+    row.deleted_at = None
+    log_action(db, user, "restore_row", "row",
+               resource_id=row.id, resource_name=table.name, table_id=table.id,
+               details=_row_details(row, table.columns))
+    db.commit()
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/trash/empty")
+def empty_trash(
+    table_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    from app.routers.attachments import _delete_attachment_files
+    trashed = db.query(TableRow).filter(
+        TableRow.table_id == table_id,
+        TableRow.deleted_at.isnot(None),
+    ).all()
+    count = len(trashed)
+    for row in trashed:
+        _delete_attachment_files(row.attachments)
+        db.delete(row)
+    if count:
+        log_action(db, user, "empty_trash", "table",
+                   resource_id=table.id, resource_name=table.name, table_id=table.id,
+                   details=f"{count} ligne(s) supprimée(s) définitivement")
+    db.commit()
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/rows/{row_id}/delete-permanent")
+def delete_row_permanent(
+    table_id: int,
+    row_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    row = db.get(TableRow, row_id)
+    if not row or row.table_id != table_id:
+        raise HTTPException(status_code=404)
+    if row.deleted_at is None:
+        raise HTTPException(status_code=400, detail="La ligne doit d'abord être mise à la corbeille")
+    from app.routers.attachments import _delete_attachment_files
+    _delete_attachment_files(row.attachments)
+    log_action(db, user, "delete_row", "row",
+               resource_id=row.id, resource_name=table.name, table_id=table.id,
+               details=_row_details(row, table.columns))
+    db.delete(row)
+    db.commit()
+    return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/{table_id}/rows/{row_id}/history", response_class=HTMLResponse)
+def row_history(
+    request: Request,
+    table_id: int,
+    row_id: int,
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+    logs = (
+        db.query(ActivityLog)
+        .filter(
+            ActivityLog.resource_id == row_id,
+            ActivityLog.action.in_(["create_row", "update_row", "trash_row", "restore_row", "delete_row",
+                                    "upload_attachment", "delete_attachment"]),
+        )
+        .order_by(ActivityLog.timestamp.desc())
+        .all()
+    )
+    return templates.TemplateResponse(
+        request, "partials/row_history.html",
+        {"entries": logs, "row_id": row_id},
+    )
+
+
+@router.get("/{table_id}/rows/{row_id}/detail", response_class=HTMLResponse)
+def row_detail(
+    request: Request,
+    table_id: int,
+    row_id: int,
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+    row = db.get(TableRow, row_id)
+    if not row or row.table_id != table_id:
+        raise HTTPException(status_code=404)
+    visible_cols = get_visible_columns(table, user, db)
+    cells = {cv.column_id: cv.value for cv in row.cell_values}
+    relation_labels = _resolve_relation_labels(db, visible_cols)
+    return templates.TemplateResponse(
+        request, "partials/row_detail.html",
+        {
+            "table": table,
+            "row": row,
+            "columns": visible_cols,
+            "cells": cells,
+            "relation_labels": relation_labels,
+        },
+    )
+
+
+@router.get("/{table_id}/import", response_class=HTMLResponse)
+def import_page(
+    request: Request,
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+    visible_cols = get_visible_columns(table, user, db)
+    return templates.TemplateResponse(
+        request, "tables/import.html",
+        {
+            "table": table,
+            "user": user,
+            "columns": visible_cols,
+            "key_columns": _import_key_columns(visible_cols, user, db),
+            "mode": IMPORT_MODE_ADD,
+        },
+    )
+
+
+def _detect_import_separator(text: str, col_names) -> str:
+    """Séparateur détecté par le Sniffer, sauf si un autre fait reconnaître plus
+    de colonnes de la table dans l'en-tête (le Sniffer échoue sur les lignes de
+    longueur irrégulière et retombe alors sur ';')."""
+    col_names = set(col_names)
+    first_line = text.split("\n", 1)[0]
+
+    def score(sep: str) -> int:
+        headers = next(csv.reader([first_line], delimiter=sep), [])
+        return sum(1 for h in headers if h.strip().lower() in col_names)
+
+    best = detect_separator(text)
+    best_score = score(best)
+    for sep in (",", ";", "\t", "|"):
+        if score(sep) > best_score:
+            best, best_score = sep, score(sep)
+    return best
+
+
+def _build_relation_lookups(db: Session, columns: list) -> dict:
+    """{col_id: (valeurs stockées par minuscule, valeurs par libellé minuscule)}
+    pour résoudre une cellule CSV de relation par sa valeur ou son libellé."""
+    lookups = {}
+    for col_id, options in _get_relation_options(db, columns).items():
+        by_value: dict[str, str] = {}
+        by_label: dict[str, set[str]] = {}
+        for value, label in options:
+            by_value[value.lower()] = value
+            by_label.setdefault(label.lower(), set()).add(value)
+        lookups[col_id] = (by_value, by_label)
+    return lookups
+
+
+def _parse_import_cell(col, raw: str, relation_lookups: dict) -> tuple[str, str | None]:
+    """Valide et normalise une cellule CSV selon le type de la colonne.
+    Retourne (valeur à stocker, message d'erreur ou None)."""
+    if col.col_type == ColumnType.TEXT:
+        return raw, None
+    val = raw.strip()
+    if not val:
+        return "", None
+
+    t = col.col_type
+    if t in (ColumnType.DATE, ColumnType.DATETIME):
+        converted = parse_date_or_datetime(val, t)
+        if converted is None:
+            expected = "AAAA-MM-JJ" if t == ColumnType.DATE else "AAAA-MM-JJ HH:MM"
+            return "", (f"« {val} » n'est pas une date reconnue "
+                        f"(format attendu : {expected}, ou JJ/MM/AAAA).")
+        return converted, None
+
+    if t == ColumnType.INTEGER:
+        converted = parse_integer(val)
+        if converted is None:
+            return "", f"« {val} » n'est pas un nombre entier."
+        return converted, None
+
+    if t in (ColumnType.FLOAT, ColumnType.LATITUDE, ColumnType.LONGITUDE):
+        converted = parse_float(val)
+        if converted is None:
+            return "", f"« {val} » n'est pas un nombre."
+        limit = {ColumnType.LATITUDE: 90, ColumnType.LONGITUDE: 180}.get(t)
+        if limit and not -limit <= float(converted) <= limit:
+            return "", f"« {val} » doit être compris entre -{limit} et {limit}."
+        return converted, None
+
+    if t == ColumnType.BOOLEAN:
+        converted = parse_boolean(val)
+        if converted is None:
+            return "", f"« {val} » n'est pas un booléen (oui/non, vrai/faux, 1/0)."
+        return converted, None
+
+    if t == ColumnType.EMAIL:
+        if not is_email(val):
+            return "", f"« {val} » n'est pas une adresse email valide."
+        return val, None
+
+    if t == ColumnType.SELECT and col.select_options:
+        options = [o.strip() for o in col.select_options.split(",") if o.strip()]
+        for opt in options:
+            if opt.lower() == val.lower():
+                return opt, None
+        return "", f"« {val} » ne fait pas partie des choix ({', '.join(options)})."
+
+    if t == ColumnType.RELATION and col.id in relation_lookups:
+        by_value, by_label = relation_lookups[col.id]
+        if val.lower() in by_value:
+            return by_value[val.lower()], None
+        matches = by_label.get(val.lower(), set())
+        if len(matches) == 1:
+            return next(iter(matches)), None
+        if len(matches) > 1:
+            return "", f"« {val} » correspond à plusieurs lignes de la table liée."
+        return "", f"« {val} » n'existe pas dans la table liée."
+
+    return val, None
+
+
+IMPORT_MODE_ADD = "add"
+IMPORT_MODE_UPSERT = "upsert"
+
+
+def _import_key_columns(columns: list, user: User, db: Session) -> list:
+    """Colonnes utilisables comme clé de mise à jour : uniques et modifiables."""
+    return [c for c in columns if c.is_unique and not is_column_readonly(c, user, db)]
+
+
+def _find_row_by_key(db: Session, table_id: int, key_col_id: int, value: str) -> list[TableRow]:
+    """Lignes non supprimées de la table dont la colonne clé vaut `value` (casse ignorée)."""
+    return (
+        db.query(TableRow)
+        .join(CellValue, CellValue.row_id == TableRow.id)
+        .filter(
+            TableRow.table_id == table_id,
+            TableRow.deleted_at.is_(None),
+            CellValue.column_id == key_col_id,
+            sa_func.lower(CellValue.value) == value.lower(),
+        )
+        .all()
+    )
+
+
+@router.post("/{table_id}/import")
+async def import_csv(
+    request: Request,
+    table_id: int,
+    file: UploadFile = File(...),
+    mode: str = Form(IMPORT_MODE_ADD),
+    key_col_id: str = Form(""),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    table = db.get(DataTable, table_id)
+    if not table:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403)
+
+    visible_cols = get_visible_columns(table, user, db)
+    cols_by_id = {col.id: col for col in visible_cols}
+    unique_cols = {col.id: col for col in visible_cols if col.is_unique}
+    key_columns = _import_key_columns(visible_cols, user, db)
+    upsert = mode == IMPORT_MODE_UPSERT
+
+    def render(errors=None, success=None):
+        return templates.TemplateResponse(
+            request, "tables/import.html",
+            {
+                "table": table,
+                "user": user,
+                "columns": visible_cols,
+                "key_columns": key_columns,
+                "mode": IMPORT_MODE_UPSERT if upsert else IMPORT_MODE_ADD,
+                "key_col_id": key_col_id,
+                "errors": errors or [],
+                "success": success,
+            },
+        )
+
+    key_col = None
+    if upsert:
+        key_col = next((c for c in key_columns if str(c.id) == key_col_id), None)
+        if key_col is None:
+            return render(errors=["Choisissez une colonne clé (colonne unique) pour la mise à jour."])
+
+    content = await file.read()
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        # Excel FR exporte en cp1252 (€, œ, ’) ; latin-1 en dernier recours
+        try:
+            text = content.decode("cp1252")
+        except UnicodeDecodeError:
+            text = content.decode("latin-1")
+
+    col_map = {col.name.lower(): col for col in visible_cols}
+    reader = csv.DictReader(
+        io.StringIO(text), delimiter=_detect_import_separator(text, col_map.keys())
+    )
+
+    file_headers = [h.strip() for h in (reader.fieldnames or []) if h]
+    if not any(h.lower() in col_map for h in file_headers):
+        found = ", ".join(file_headers) or "aucune"
+        expected = ", ".join(col.name for col in visible_cols)
+        return render(errors=[
+            f"Aucune colonne du fichier ne correspond à la table. "
+            f"Colonnes trouvées : {found}. Colonnes attendues : {expected}."
+        ])
+    if key_col and key_col.name.lower() not in {h.lower() for h in file_headers}:
+        return render(errors=[f"La colonne clé « {key_col.name} » est absente du fichier."])
+
+    relation_lookups = _build_relation_lookups(db, visible_cols)
+    seen_in_import: dict[int, set] = {col_id: set() for col_id in unique_cols}
+
+    added = updated = unchanged = 0
+    errors: list[str] = []
+    for row_num, csv_row in enumerate(reader, start=2):
+        # Parse values for this CSV row
+        parsed: dict[int, str] = {}
+        row_errors: list[str] = []
+        for csv_col, value in csv_row.items():
+            if csv_col is None:  # champs en trop par rapport à l'en-tête
+                continue
+            col = col_map.get(csv_col.strip().lower())
+            if not col or is_column_readonly(col, user, db):
+                continue
+            converted, error = _parse_import_cell(col, value or "", relation_lookups)
+            if error:
+                row_errors.append(f"Ligne {row_num} — {col.name} : {error}")
+                continue
+            parsed[col.id] = converted
+        key_value = parsed.get(key_col.id, "") if key_col else ""
+
+        # Rapprochement avec une ligne existante (mode mise à jour)
+        existing_row = None
+        if key_col and not row_errors:
+            if not key_value:
+                row_errors.append(f"Ligne {row_num} — {key_col.name} : la clé est vide.")
+            else:
+                matches = _find_row_by_key(db, table_id, key_col.id, key_value)
+                if len(matches) > 1:
+                    row_errors.append(
+                        f"Ligne {row_num} — {key_col.name} : « {key_value} » correspond à "
+                        f"{len(matches)} lignes de la table."
+                    )
+                elif matches:
+                    existing_row = matches[0]
+
+        # Check unique constraints
+        exclude_id = existing_row.id if existing_row else None
+        for col_id, col in unique_cols.items():
+            value = parsed.get(col_id, "")
+            if value:
+                val_lower = value.lower()
+                if val_lower in seen_in_import[col_id]:
+                    row_errors.append(
+                        f"Ligne {row_num} — {col.name} : « {value} » est en doublon dans le fichier."
+                    )
+                elif _check_unique_violation(
+                    db, col_id, value, exclude_row_id=exclude_id
+                ):
+                    row_errors.append(
+                        f"Ligne {row_num} — {col.name} : « {value} » existe déjà en base."
+                    )
+
+        if row_errors:
+            errors.extend(row_errors)
+            continue
+
+        # Mark values as seen for intra-import dedup
+        for col_id in unique_cols:
+            value = parsed.get(col_id, "")
+            if value:
+                seen_in_import[col_id].add(value.lower())
+
+        if existing_row is not None:
+            # Mise à jour : seules les cellules non vides du fichier sont écrites
+            cells = {cv.column_id: cv for cv in existing_row.cell_values}
+            diff = []
+            for col_id, value in parsed.items():
+                old = cells[col_id].value if col_id in cells else ""
+                if not value or value == (old or ""):
+                    continue
+                if col_id in cells:
+                    cells[col_id].value = value
+                else:
+                    db.add(CellValue(row_id=existing_row.id, column_id=col_id, value=value))
+                diff.append(f'"{cols_by_id[col_id].name}" : "{old or ""}" → "{value}"')
+            if not diff:
+                unchanged += 1
+                continue
+            log_action(db, user, "update_row", "row",
+                       resource_id=existing_row.id, resource_name=table.name, table_id=table.id,
+                       details="Import CSV\n" + "\n".join(diff))
+            db.flush()
+            evaluate_alerts_for_row(db, existing_row, table)
+            updated += 1
+            continue
+
+        row = TableRow(table_id=table_id, created_by_id=user.id)
+        db.add(row)
+        db.flush()
+        for col_id, value in parsed.items():
+            db.add(CellValue(row_id=row.id, column_id=col_id, value=value))
+        db.flush()
+        evaluate_alerts_for_row(db, row, table)
+        added += 1
+
+    if errors:
+        db.rollback()
+        return render(errors=errors)
+
+    if upsert:
+        summary = (f"{added} ligne(s) ajoutée(s), {updated} mise(s) à jour, "
+                   f"{unchanged} inchangée(s) (clé : {key_col.name})")
+    else:
+        summary = f"{added} ligne(s) importée(s)"
+    log_action(db, user, "import_csv", "row",
+               resource_name=table.name, details=summary, table_id=table.id)
+    db.commit()
+    return render(success=summary)

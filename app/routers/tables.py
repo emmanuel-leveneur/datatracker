@@ -492,6 +492,7 @@ def table_detail(
             "lon_col": lon_col,
             "date_cols": date_cols,
             "table_sync": table_sync,
+            "tiles_col": next((c for c in visible_cols if c.id == table.tiles_col_id and c.col_type.value != "relation"), None),
         },
     )
 
@@ -824,6 +825,91 @@ def table_stats(
     }
 
 
+# ── Vignettes (filtre rapide par valeur) ────────────────────────────────────
+
+_TILES_EMPTY = "__vide__"
+_TILES_MAX = 50
+
+
+@router.get("/{table_id}/tiles")
+def table_tiles(
+    request: Request,
+    q: str = Query(""),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Nombre de lignes par valeur de la colonne des vignettes, selon la recherche
+    et les filtres en cours (la vignette sélectionnée elle-même n'est pas appliquée)."""
+    if table.deleted_at is not None:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    from app.dependencies import get_visible_columns
+    visible_cols = get_visible_columns(table, user, db)
+    visible_col_ids = {c.id for c in visible_cols}
+    col = next(
+        (c for c in visible_cols if c.id == table.tiles_col_id and c.col_type.value != "relation"),
+        None,
+    )
+    if not col:
+        return {"column": None, "total": 0, "items": [], "more": False}
+
+    col_filters = {k[7:]: v for k, v in request.query_params.items() if k.startswith("filter_") and v}
+    base = db.query(TableRow).filter(
+        TableRow.table_id == table.id,
+        TableRow.deleted_at == None,
+    )
+    if q:
+        matching_subq = db.query(CellValue.row_id).filter(
+            CellValue.value.ilike(f"%{q}%"),
+            CellValue.column_id.in_(visible_col_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_col_ids:
+            continue
+        col_subq = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col_id,
+            CellValue.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    total = base.count()
+    ids_subq = base.with_entities(TableRow.id).subquery()
+    counts = (
+        db.query(CellValue.value, sa_func.count(CellValue.id))
+        .filter(
+            CellValue.column_id == col.id,
+            CellValue.row_id.in_(select(ids_subq.c.id)),
+            CellValue.value.notin_(["", "None"]),
+        )
+        .group_by(CellValue.value)
+        .all()
+    )
+    items = sorted(
+        ({"value": v, "label": v, "count": n} for v, n in counts),
+        key=lambda it: (-it["count"], it["label"].lower()),
+    )
+    empty = total - sum(it["count"] for it in items)
+    if empty > 0:
+        items.append({"value": _TILES_EMPTY, "label": "(vide)", "count": empty})
+
+    return {
+        "column": col.name,
+        "total": total,
+        "items": items[:_TILES_MAX],
+        "more": len(items) > _TILES_MAX,
+    }
+
+
 @router.get("/{table_id}/edit", response_class=HTMLResponse)
 def edit_table_page(
     request: Request,
@@ -868,6 +954,7 @@ def edit_table(
     rgpd_responsable: str = Form(""),
     rgpd_destinataires: str = Form(""),
     rgpd_hors_ue: str = Form(""),
+    tiles_col_id: str = Form(""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -928,6 +1015,8 @@ def edit_table(
     table.rgpd_responsable = rgpd_responsable
     table.rgpd_destinataires = rgpd_destinataires
     table.rgpd_hors_ue = bool(rgpd_hors_ue)
+    _tiles = int(tiles_col_id) if tiles_col_id.strip().isdigit() else None
+    table.tiles_col_id = _tiles if _tiles in {c.id for c in table.columns} else None
 
     submitted_ids = set(col_ids)
 
