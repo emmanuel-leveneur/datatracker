@@ -646,6 +646,184 @@ def table_events(
     return events
 
 
+# ── Statistiques ────────────────────────────────────────────────────────────
+
+def _parse_number(value):
+    """Convertit une cellule texte en nombre (accepte '12,5', '1 250', espaces insécables)."""
+    if value is None:
+        return None
+    s = str(value).strip().replace("\u00a0", "").replace("\u202f", "").replace(" ", "").replace(",", ".")
+    if not s or s == "None":
+        return None
+    try:
+        n = float(s)
+    except ValueError:
+        return None
+    if n != n or n in (float("inf"), float("-inf")):  # NaN / infini
+        return None
+    return n
+
+
+_STATS_AGG_LABELS = {"sum": "Somme", "avg": "Moyenne", "min": "Min", "max": "Max"}
+
+
+@router.get("/{table_id}/stats")
+def table_stats(
+    request: Request,
+    q: str = Query(""),
+    group_col: str = Query(""),
+    value_col: str = Query(""),
+    agg: str = Query("sum"),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if table.deleted_at is not None:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    from collections import Counter, defaultdict
+    from app.dependencies import get_visible_columns
+
+    visible_cols = get_visible_columns(table, user, db)
+    visible_col_ids = {c.id for c in visible_cols}
+    stat_cols = [c for c in visible_cols if c.col_type.value != "relation"]
+    date_types = (ColumnType.DATE, ColumnType.DATETIME)
+
+    # ── Mêmes filtres que la liste / la carte / le calendrier ──
+    col_filters = {k[7:]: v for k, v in request.query_params.items() if k.startswith("filter_") and v}
+    base = db.query(TableRow).filter(
+        TableRow.table_id == table.id,
+        TableRow.deleted_at == None,
+    )
+    if q:
+        matching_subq = db.query(CellValue.row_id).filter(
+            CellValue.value.ilike(f"%{q}%"),
+            CellValue.column_id.in_(visible_col_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_col_ids:
+            continue
+        col_subq = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col_id,
+            CellValue.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    rows = base.options(subqueryload(TableRow.cell_values)).all()
+    cells_by_row = [
+        {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
+        for row in rows
+    ]
+    total = len(cells_by_row)
+
+    def _clean(v):
+        v = (v or "").strip()
+        return "" if v == "None" else v
+
+    def _month(v):
+        d = _normalize_event_date(v)
+        return d[:7] if d and len(d) >= 7 else ""
+
+    # ── Statistiques par colonne ──
+    columns_out = []
+    for col in stat_cols:
+        values = [v for v in (_clean(c.get(col.id)) for c in cells_by_row) if v]
+        entry = {
+            "id": col.id,
+            "name": col.name,
+            "type": col.col_type.value,
+            "filled": len(values),
+            "empty": total - len(values),
+            "distinct": len(set(values)),
+        }
+        if col.col_type in date_types:
+            months = [m for m in (_month(v) for v in values) if m]
+            entry["top"] = sorted(Counter(months).items())[-12:]
+            entry["top_label"] = "Lignes par mois (12 derniers mois avec données)"
+            dates = sorted(d[:10] for d in (_normalize_event_date(v) for v in values) if d)
+            if dates:
+                entry["date_min"], entry["date_max"] = dates[0], dates[-1]
+        else:
+            nums = [n for n in (_parse_number(v) for v in values) if n is not None]
+            # Colonne considérée comme numérique si au moins 80 % des valeurs sont des nombres
+            if values and len(nums) >= 0.8 * len(values):
+                entry["numeric"] = {
+                    "count": len(nums),
+                    "sum": sum(nums),
+                    "avg": sum(nums) / len(nums),
+                    "min": min(nums),
+                    "max": max(nums),
+                }
+            else:
+                entry["top"] = Counter(values).most_common(10)
+                entry["top_label"] = "Valeurs les plus fréquentes"
+        columns_out.append(entry)
+
+    # ── Regroupement (« Grouper par » + « Valeur ») ──
+    group = None
+    gcol = next((c for c in stat_cols if str(c.id) == group_col), None)
+    if gcol:
+        vcol = next((c for c in stat_cols if str(c.id) == value_col), None)
+        agg = agg if agg in _STATS_AGG_LABELS else "sum"
+        buckets = defaultdict(list)
+        for cells in cells_by_row:
+            key = _clean(cells.get(gcol.id))
+            if gcol.col_type in date_types:
+                key = _month(key)
+            key = key or "(vide)"
+            if vcol:
+                n = _parse_number(cells.get(vcol.id))
+                if n is not None:
+                    buckets[key].append(n)
+            else:
+                buckets[key].append(1)
+
+        items = []
+        for key, vals in buckets.items():
+            if not vals:
+                continue
+            if not vcol:
+                val = len(vals)
+            elif agg == "avg":
+                val = sum(vals) / len(vals)
+            elif agg == "min":
+                val = min(vals)
+            elif agg == "max":
+                val = max(vals)
+            else:
+                val = sum(vals)
+            items.append({"label": key, "value": val})
+
+        if gcol.col_type in date_types:
+            items.sort(key=lambda it: (it["label"] == "(vide)", it["label"]))
+        else:
+            items.sort(key=lambda it: it["value"], reverse=True)
+
+        value_label = f"{_STATS_AGG_LABELS[agg]} de {vcol.name}" if vcol else "Nombre de lignes"
+        group = {
+            "col_name": gcol.name,
+            "value_label": value_label,
+            "title": f"{value_label} par {gcol.name}",
+            "items": items[:50],
+        }
+
+    return {
+        "total_rows": total,
+        "filtered": bool(q or any(v.strip() for v in col_filters.values())),
+        "columns": columns_out,
+        "group": group,
+    }
+
+
 @router.get("/{table_id}/edit", response_class=HTMLResponse)
 def edit_table_page(
     request: Request,
