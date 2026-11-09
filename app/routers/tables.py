@@ -492,6 +492,7 @@ def table_detail(
             "lon_col": lon_col,
             "date_cols": date_cols,
             "table_sync": table_sync,
+            "status_col": _planner_status_col(table, visible_cols),
             "tiles_col": next((c for c in visible_cols if c.id == table.tiles_col_id and c.col_type.value != "relation"), None),
         },
     )
@@ -910,6 +911,119 @@ def table_tiles(
     }
 
 
+# ── Planner (colonnes par statut) ───────────────────────────────────────────
+
+_PLANNER_EMPTY = "__vide__"
+_PLANNER_MAX_BUCKETS = 30
+_PLANNER_MAX_CARDS = 200  # par colonne de statut
+
+
+def _planner_status_col(table, visible_cols):
+    return next(
+        (c for c in visible_cols if c.id == table.status_col_id
+         and c.col_type.value not in ("relation", "latitude", "longitude")),
+        None,
+    )
+
+
+@router.get("/{table_id}/board")
+def table_board(
+    request: Request,
+    q: str = Query(""),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Données du Planner : une colonne par statut, avec les cartes des lignes,
+    selon la recherche et les filtres en cours."""
+    if table.deleted_at is not None:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    from app.dependencies import get_visible_columns, is_column_readonly
+    visible_cols = get_visible_columns(table, user, db)
+    visible_col_ids = {c.id for c in visible_cols}
+    scol = _planner_status_col(table, visible_cols)
+    if not scol:
+        return {"column": None, "can_move": False, "total": 0, "buckets": []}
+
+    col_filters = {k[7:]: v for k, v in request.query_params.items() if k.startswith("filter_") and v}
+    base = db.query(TableRow).filter(
+        TableRow.table_id == table.id,
+        TableRow.deleted_at == None,
+    )
+    if q:
+        matching_subq = db.query(CellValue.row_id).filter(
+            CellValue.value.ilike(f"%{q}%"),
+            CellValue.column_id.in_(visible_col_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_col_ids:
+            continue
+        col_subq = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col_id,
+            CellValue.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    rows = base.options(subqueryload(TableRow.cell_values)).order_by(TableRow.id.desc()).all()
+
+    # Contenu des cartes : la 1re colonne remplie = titre, puis 2 champs
+    card_cols = [c for c in visible_cols if c.id != scol.id and c.col_type.value != "relation"]
+
+    # Ordre des colonnes de statut : options du « select », puis valeurs trouvées
+    options = []
+    if scol.col_type == ColumnType.SELECT and scol.select_options:
+        options = [o.strip() for o in scol.select_options.split(",") if o.strip()]
+    canon = {o.lower(): o for o in options}
+
+    buckets: dict[str, dict] = {_PLANNER_EMPTY: {"value": _PLANNER_EMPTY, "label": "Sans statut", "count": 0, "cards": []}}
+    for o in options:
+        buckets[o] = {"value": o, "label": o, "count": 0, "cards": []}
+
+    for row in rows:
+        cells = {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
+        raw = (cells.get(scol.id) or "").strip()
+        if raw == "None":
+            raw = ""
+        key = canon.get(raw.lower(), raw) if raw else _PLANNER_EMPTY
+        if key not in buckets:
+            buckets[key] = {"value": key, "label": key, "count": 0, "cards": []}
+        b = buckets[key]
+        b["count"] += 1
+        if len(b["cards"]) < _PLANNER_MAX_CARDS:
+            filled = [(c.name, cells[c.id]) for c in card_cols
+                      if cells.get(c.id) and cells.get(c.id) != "None"]
+            title = filled[0][1] if filled else f"Ligne #{row.id}"
+            b["cards"].append({"row_id": row.id, "title": title, "fields": filled[1:3]})
+
+    # Sans statut d'abord (seulement s'il y a des lignes), options dans l'ordre, autres valeurs triées
+    ordered = [buckets[o] for o in options]
+    extra = sorted((k for k in buckets if k != _PLANNER_EMPTY and k not in options), key=str.lower)
+    ordered += [buckets[k] for k in extra]
+    if buckets[_PLANNER_EMPTY]["count"]:
+        ordered.insert(0, buckets[_PLANNER_EMPTY])
+
+    can_move = (
+        can_access_table(table, user, db, require_write=True)
+        and not is_column_readonly(scol, user, db)
+    )
+    return {
+        "column": scol.name,
+        "can_move": bool(can_move),
+        "total": len(rows),
+        "buckets": ordered[:_PLANNER_MAX_BUCKETS],
+    }
+
+
 @router.get("/{table_id}/edit", response_class=HTMLResponse)
 def edit_table_page(
     request: Request,
@@ -954,6 +1068,7 @@ def edit_table(
     rgpd_responsable: str = Form(""),
     rgpd_destinataires: str = Form(""),
     rgpd_hors_ue: str = Form(""),
+    status_col_id: str = Form(""),
     tiles_col_id: str = Form(""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1015,6 +1130,8 @@ def edit_table(
     table.rgpd_responsable = rgpd_responsable
     table.rgpd_destinataires = rgpd_destinataires
     table.rgpd_hors_ue = bool(rgpd_hors_ue)
+    _status = int(status_col_id) if status_col_id.strip().isdigit() else None
+    table.status_col_id = _status if _status in {c.id for c in table.columns} else None
     _tiles = int(tiles_col_id) if tiles_col_id.strip().isdigit() else None
     table.tiles_col_id = _tiles if _tiles in {c.id for c in table.columns} else None
 

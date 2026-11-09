@@ -64,6 +64,7 @@ def _run_migrations():
             ("rgpd_responsable", "ALTER TABLE data_tables ADD COLUMN rgpd_responsable VARCHAR(256) DEFAULT ''"),
             ("rgpd_destinataires", "ALTER TABLE data_tables ADD COLUMN rgpd_destinataires TEXT DEFAULT ''"),
             ("rgpd_hors_ue", "ALTER TABLE data_tables ADD COLUMN rgpd_hors_ue BOOLEAN DEFAULT 0"),
+            ("status_col_id", "ALTER TABLE data_tables ADD COLUMN status_col_id INTEGER"),
             ("tiles_col_id", "ALTER TABLE data_tables ADD COLUMN tiles_col_id INTEGER"),
         ],
         "table_rows": [

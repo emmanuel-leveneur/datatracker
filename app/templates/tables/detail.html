@@ -333,6 +333,12 @@
         class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
         <i data-lucide="bar-chart-3" class="w-4 h-4"></i> Statistiques
       </button>
+      {% if status_col %}
+      <button id="btn-planner-view" onclick="setViewMode('planner')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
+        <i data-lucide="kanban" class="w-4 h-4"></i> Planner
+      </button>
+      {% endif %}
     </div>
     {% endif %}
     {% if columns %}
@@ -568,6 +574,25 @@
   <div id="calendar-wrap" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white">
     <div id="calendar-el"></div>
   </div>
+</div>
+{% endif %}
+
+{% if status_col %}
+<!-- Planner view -->
+<div id="planner-view" class="hidden">
+  <div class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm px-3 py-2 flex flex-wrap items-center gap-3 text-xs">
+    <span class="flex items-center gap-1.5 text-gray-500">
+      <i data-lucide="kanban" class="w-3.5 h-3.5 text-gray-400"></i>
+      Statuts : <span class="font-semibold text-gray-700">{{ status_col.name }}</span>
+    </span>
+    <span id="planner-summary" class="text-gray-500"></span>
+    <span id="planner-msg" class="text-red-600"></span>
+    <button type="button" onclick="loadPlanner()"
+      class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+      <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Actualiser
+    </button>
+  </div>
+  <div id="planner-board" class="flex gap-3 overflow-x-auto pb-3 items-start"></div>
 </div>
 {% endif %}
 
@@ -1766,9 +1791,11 @@ document.addEventListener('click', function(e) {
     var btnCal   = document.getElementById('btn-calendar-view');
     var statsView = document.getElementById('stats-view');
     var btnStats  = document.getElementById('btn-stats-view');
+    var plannerView = document.getElementById('planner-view');
+    var btnPlanner  = document.getElementById('btn-planner-view');
 
-    [listView, mapView, calView, statsView].forEach(function(el) { if (el) el.classList.add('hidden'); });
-    [btnList, btnMap, btnCal, btnStats].forEach(function(btn) {
+    [listView, mapView, calView, statsView, plannerView].forEach(function(el) { if (el) el.classList.add('hidden'); });
+    [btnList, btnMap, btnCal, btnStats, btnPlanner].forEach(function(btn) {
       if (!btn) return;
       btn.classList.remove(...activeClass);
       btn.classList.add(...inactiveClass);
@@ -1795,6 +1822,11 @@ document.addEventListener('click', function(e) {
       btnStats.classList.remove(...inactiveClass);
       btnStats.classList.add(...activeClass);
       loadStats();
+    } else if (mode === 'planner' && plannerView) {
+      plannerView.classList.remove('hidden');
+      btnPlanner.classList.remove(...inactiveClass);
+      btnPlanner.classList.add(...activeClass);
+      loadPlanner();
     } else {
       listView.classList.remove('hidden');
       btnList.classList.remove(...inactiveClass);
@@ -2275,7 +2307,7 @@ document.addEventListener('click', function(e) {
   document.addEventListener('DOMContentLoaded', function () {
     var saved;
     try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
-    var validModes = ['list', 'stats'{% if lat_col and lon_col %}, 'map'{% endif %}{% if date_cols %}, 'calendar'{% endif %}];
+    var validModes = ['list', 'stats'{% if status_col %}, 'planner'{% endif %}{% if lat_col and lon_col %}, 'map'{% endif %}{% if date_cols %}, 'calendar'{% endif %}];
     applyViewMode(validModes.indexOf(saved) !== -1 ? saved : 'list');
   });
 })();
@@ -2351,6 +2383,160 @@ document.addEventListener('click', function(e) {
     if (e.detail.target && e.detail.target.id === 'table-body') load();
   });
   document.addEventListener('DOMContentLoaded', load);
+})();
+</script>
+{% endif %}
+{% if status_col %}
+<script>
+// ── Planner : une colonne par statut, glisser-déposer pour changer le statut ──
+(function () {
+  var TABLE_ID = {{ table.id }};
+  var board = document.getElementById('planner-board');
+  if (!board) return;
+  var bound = false, timer = null, dragId = null, dragFrom = null, canMove = false;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function fmt(n) { return Number(n).toLocaleString('fr-FR'); }
+  function visible() {
+    var v = document.getElementById('planner-view');
+    return v && !v.classList.contains('hidden');
+  }
+  function params() {
+    var p = new URLSearchParams();
+    var qEl = document.getElementById('global-search');
+    if (qEl && qEl.value) p.set('q', qEl.value);
+    document.querySelectorAll('#filters-zone [name^="filter_"]').forEach(function (el) {
+      if (el.value) p.set(el.name, el.value);
+    });
+    return p;
+  }
+  function msg(t) { document.getElementById('planner-msg').textContent = t || ''; }
+
+  function cardHtml(c) {
+    var h = '<div class="planner-card bg-white border border-gray-200 rounded-lg p-2.5 shadow-sm text-sm hover:border-blue-300 ' +
+      (canMove ? 'cursor-grab' : 'cursor-pointer') + '" draggable="' + (canMove ? 'true' : 'false') +
+      '" data-row="' + c.row_id + '">' +
+      '<div class="font-medium text-gray-800 break-words">' + esc(c.title) + '</div>';
+    (c.fields || []).forEach(function (f) {
+      h += '<div class="text-xs text-gray-500 truncate" title="' + esc(f[1]) + '"><span class="text-gray-400">' +
+        esc(f[0]) + ' :</span> ' + esc(f[1]) + '</div>';
+    });
+    return h + '</div>';
+  }
+
+  function render(data) {
+    canMove = !!data.can_move;
+    document.getElementById('planner-summary').textContent =
+      fmt(data.total) + ' ligne(s)' + (canMove ? ' · glissez une carte pour changer son statut' : ' · lecture seule');
+    board.innerHTML = data.buckets.map(function (b) {
+      var more = b.count > b.cards.length
+        ? '<p class="text-xs text-gray-400 text-center py-1">+ ' + fmt(b.count - b.cards.length) + ' non affichée(s)</p>' : '';
+      return '<div class="planner-col shrink-0 w-72 bg-gray-100 rounded-xl flex flex-col max-h-[75vh]" data-value="' + esc(b.value) + '">' +
+        '<div class="flex items-center justify-between px-3 py-2">' +
+        '<span class="text-sm font-semibold text-gray-700 truncate" title="' + esc(b.label) + '">' + esc(b.label) + '</span>' +
+        '<span class="planner-count text-xs bg-white text-gray-500 rounded-full px-2 py-0.5">' + fmt(b.count) + '</span></div>' +
+        '<div class="planner-list flex-1 overflow-y-auto px-2 pb-2 space-y-2 min-h-[60px] rounded-b-xl">' +
+        b.cards.map(cardHtml).join('') + more + '</div></div>';
+    }).join('');
+  }
+
+  window.loadPlanner = function () {
+    if (!bound) {
+      bound = true;
+      var qEl = document.getElementById('global-search');
+      if (qEl) qEl.addEventListener('input', function () {
+        if (!visible()) return;
+        clearTimeout(timer);
+        timer = setTimeout(window.loadPlanner, 350);
+      });
+    }
+    msg('');
+    fetch('/tables/' + TABLE_ID + '/board?' + params().toString())
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(render)
+      .catch(function () { msg('Impossible de charger le Planner.'); });
+  };
+
+  function addCount(col, delta) {
+    var el = col.querySelector('.planner-count');
+    var n = parseInt(el.textContent.replace(/\D/g, ''), 10) || 0;
+    el.textContent = fmt(n + delta);
+  }
+
+  // Clic sur une carte : fiche de la ligne (comme dans le calendrier)
+  board.addEventListener('click', function (e) {
+    var card = e.target.closest('.planner-card');
+    if (!card) return;
+    htmx.ajax('GET', '/tables/' + TABLE_ID + '/rows/' + card.dataset.row + '/detail', {
+      target: '#row-detail-modal-body', swap: 'innerHTML'
+    });
+  });
+
+  board.addEventListener('dragstart', function (e) {
+    var card = e.target.closest('.planner-card');
+    if (!card || !canMove) return;
+    dragId = card.dataset.row;
+    dragFrom = card.closest('.planner-col');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragId);
+    setTimeout(function () { card.classList.add('opacity-40'); }, 0);
+  });
+  board.addEventListener('dragend', function (e) {
+    var card = e.target.closest('.planner-card');
+    if (card) card.classList.remove('opacity-40');
+    board.querySelectorAll('.planner-col').forEach(function (c) { c.classList.remove('ring-2', 'ring-blue-400'); });
+  });
+  board.addEventListener('dragover', function (e) {
+    var col = e.target.closest('.planner-col');
+    if (!col || !dragId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    board.querySelectorAll('.planner-col').forEach(function (c) {
+      c.classList.toggle('ring-2', c === col);
+      c.classList.toggle('ring-blue-400', c === col);
+    });
+  });
+  board.addEventListener('drop', function (e) {
+    var col = e.target.closest('.planner-col');
+    if (!col || !dragId) return;
+    e.preventDefault();
+    var id = dragId, from = dragFrom;
+    dragId = null; dragFrom = null;
+    if (col === from) return;
+    var card = board.querySelector('.planner-card[data-row="' + id + '"]');
+    if (!card) return;
+    // Déplacement immédiat à l'écran, puis enregistrement
+    col.querySelector('.planner-list').prepend(card);
+    addCount(col, 1); addCount(from, -1);
+    var body = new URLSearchParams();
+    body.set('value', col.dataset.value);
+    fetch('/tables/' + TABLE_ID + '/rows/' + id + '/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString()
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (!r.ok) throw new Error(d.detail || 'Enregistrement refusé.');
+          return d;
+        });
+      })
+      .then(function () {
+        msg('');
+        // La liste (et les vignettes) seront à jour au retour sur l'onglet Liste
+        if (document.getElementById('sort-col-input')) htmx.trigger('#sort-col-input', 'refresh-sort');
+      })
+      .catch(function (err) {
+        msg('Statut non modifié : ' + err.message);
+        window.loadPlanner();
+      });
+  });
+
+  // Après une modification dans la fiche de la ligne : rafraîchir le Planner
+  document.body.addEventListener('closeEditRowModal', function () { if (visible()) window.loadPlanner(); });
 })();
 </script>
 {% endif %}

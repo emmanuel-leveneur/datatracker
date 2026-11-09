@@ -883,6 +883,60 @@ async def update_row(
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@router.post("/{table_id}/rows/{row_id}/status")
+def set_row_status(
+    table_id: int,
+    row_id: int,
+    value: str = Form(""),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Planner : change la valeur de la colonne des statuts d'une ligne (glisser-déposer)."""
+    table = db.get(DataTable, table_id)
+    if not table or table.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Table introuvable.")
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403, detail="Vous n'avez pas le droit de modifier cette table.")
+    row = db.get(TableRow, row_id)
+    if not row or row.table_id != table_id or row.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Ligne introuvable.")
+
+    visible = get_visible_columns(table, user, db)
+    col = next(
+        (c for c in visible if c.id == getattr(table, "status_col_id", None)
+         and c.col_type.value not in ("relation", "latitude", "longitude")),
+        None,
+    )
+    if not col:
+        raise HTTPException(status_code=400, detail="Aucune colonne des statuts n'est définie.")
+    if is_column_readonly(col, user, db):
+        raise HTTPException(status_code=403, detail=f"La colonne « {col.name} » est en lecture seule pour vous.")
+
+    value = "" if value == "__vide__" else value.strip()
+    if value and col.col_type == ColumnType.SELECT and col.select_options:
+        options = {o.strip().lower(): o.strip() for o in col.select_options.split(",") if o.strip()}
+        if value.lower() not in options:
+            raise HTTPException(status_code=400, detail=f"« {value} » ne fait pas partie des choix.")
+        value = options[value.lower()]
+    if col.is_unique and _check_unique_violation(db, col.id, value, exclude_row_id=row.id):
+        raise HTTPException(status_code=409, detail=f"La valeur « {value} » existe déjà dans cette colonne.")
+
+    cell = next((cv for cv in row.cell_values if cv.column_id == col.id), None)
+    old_val = cell.value if cell else ""
+    if (old_val or "") != value:
+        if cell:
+            cell.value = value
+        else:
+            db.add(CellValue(row_id=row.id, column_id=col.id, value=value))
+        log_action(db, user, "update_row", "row",
+                   resource_id=row.id, resource_name=table.name, table_id=table.id,
+                   details=f'Planner — "{col.name}" : "{old_val or ""}" → "{value}"')
+        db.flush()
+        evaluate_alerts_for_row(db, row, table)
+        db.commit()
+    return {"ok": True, "row_id": row.id, "value": value}
+
+
 @router.post("/{table_id}/rows/{row_id}/delete")
 async def trash_row(
     request: Request,
