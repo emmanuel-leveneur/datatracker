@@ -104,6 +104,12 @@
         Fiche détail
       </h2>
       <div class="flex items-center gap-1">
+        {% if can_write %}
+        <button onclick="editFromDetail()" title="Modifier la ligne"
+          class="text-gray-400 hover:text-blue-600 p-1.5 rounded-lg hover:bg-blue-50 transition">
+          <i data-lucide="pencil" class="w-4 h-4"></i>
+        </button>
+        {% endif %}
         <button onclick="openShareRowModal()" title="Partager par email"
           class="text-gray-400 hover:text-emerald-600 p-1.5 rounded-lg hover:bg-emerald-50 transition">
           <i data-lucide="plus" class="w-4 h-4"></i>
@@ -1364,6 +1370,16 @@ function closePdfPreview() {
 function openDetailModal() {
   document.getElementById('row-detail-backdrop').classList.remove('hidden');
   document.getElementById('row-detail-modal').classList.remove('hidden');
+}
+// Crayon de la fiche détail : ferme la fiche et ouvre le formulaire de modification
+function editFromDetail() {
+  var id = window.currentDetailRowId;
+  if (!id) return;
+  closeDetailModal();
+  htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + id + '/edit', {
+    target: '#edit-row-modal-body',
+    swap: 'innerHTML'
+  });
 }
 function closeDetailModal() {
   document.getElementById('row-detail-backdrop').classList.add('hidden');
