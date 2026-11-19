@@ -361,6 +361,27 @@
       <p class="text-xs text-gray-400 mt-1">Ajoute un onglet Planner : une colonne par statut, et les lignes se déplacent par glisser-déposer. Avec une colonne de type « select », les statuts suivent l'ordre de ses options. Une colonne que vous venez d'ajouter doit d'abord être enregistrée.</p>
     </div>
 
+    {% if calendar_series %}
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Calendrier : dates affichées</label>
+      <div class="space-y-1.5">
+        {% for s in calendar_series %}
+        <div class="flex items-center gap-3 text-sm">
+          <input type="hidden" name="cal_col_ids" value="{{ s.id }}" />
+          <input type="color" name="cal_colors" value="{{ s.color }}" title="Couleur de « {{ s.name }} »"
+            class="w-8 h-8 rounded border border-gray-300 cursor-pointer p-0.5 bg-white" />
+          <span class="flex-1 text-gray-700">{{ s.name }}</span>
+          <label class="flex items-center gap-1.5 text-gray-600 cursor-pointer">
+            <input type="checkbox" name="cal_show" value="{{ s.id }}" class="rounded" {% if s.show %}checked{% endif %} />
+            Afficher par défaut
+          </label>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="text-xs text-gray-400 mt-1">Couleur et affichage par défaut de chaque colonne date dans l'onglet Calendrier, identiques pour tous. Chacun peut ensuite masquer ou afficher une date en cliquant sur la légende du calendrier. Une colonne date que vous venez d'ajouter doit d'abord être enregistrée.</p>
+    </div>
+    {% endif %}
+
     <div class="flex gap-3 pt-2 border-t border-gray-100">
       <button type="submit"
         class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2 rounded-lg text-sm transition">

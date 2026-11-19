@@ -491,6 +491,7 @@ def table_detail(
             "lat_col": lat_col,
             "lon_col": lon_col,
             "date_cols": date_cols,
+            "calendar_series": _calendar_series(table, date_cols),
             "table_sync": table_sync,
             "status_col": _planner_status_col(table, visible_cols),
             "tiles_col": next((c for c in visible_cols if c.id == table.tiles_col_id and c.col_type.value != "relation"), None),
@@ -589,6 +590,7 @@ def table_events(
     request: Request,
     q: str = Query(""),
     date_col: int = Query(...),
+    label_col: str = Query(""),
     table: DataTable = Depends(get_table_or_404),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -642,7 +644,11 @@ def table_events(
         start = _normalize_event_date(cells.get(date_col))
         if not start:
             continue
-        title = next((cells[c.id] for c in other_cols if cells.get(c.id)), f"#{row.id}")
+        label_id = int(label_col) if label_col.strip().isdigit() else None
+        if label_id in visible_col_ids:
+            title = cells.get(label_id) or f"#{row.id}"
+        else:
+            title = next((cells[c.id] for c in other_cols if cells.get(c.id)), f"#{row.id}")
         events.append({"id": row.id, "row_id": row.id, "title": title, "start": start})
 
     return events
@@ -1024,6 +1030,48 @@ def table_board(
     }
 
 
+# ── Calendrier : colonnes date affichées et leurs couleurs ──────────────────
+
+_CAL_PALETTE = ["#2563eb", "#16a34a", "#ea580c", "#9333ea", "#db2777", "#0891b2", "#ca8a04", "#475569"]
+_CAL_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _calendar_series(table, date_cols):
+    """[{id, name, color, show}] pour chaque colonne date, d'après table.calendar_config.
+
+    Sans réglage enregistré : seule la 1re colonne date est affichée (comportement historique),
+    couleurs de la palette par défaut. Une colonne date ajoutée après le réglage est masquée
+    par défaut. Si aucune n'est cochée, la 1re reste affichée pour ne pas montrer un calendrier vide.
+    """
+    import json
+    try:
+        cfg = json.loads(getattr(table, "calendar_config", "") or "[]")
+    except ValueError:
+        cfg = []
+    by_id = {}
+    for item in cfg if isinstance(cfg, list) else []:
+        if isinstance(item, dict):
+            try:
+                by_id[int(item.get("col"))] = item
+            except (TypeError, ValueError):
+                continue
+    series = []
+    for i, col in enumerate(date_cols):
+        item = by_id.get(col.id)
+        color = str(item.get("color") or "") if item else ""
+        if not _CAL_HEX_RE.match(color):
+            color = _CAL_PALETTE[i % len(_CAL_PALETTE)]
+        show = bool(item.get("show")) if item else (not by_id and i == 0)
+        series.append({"id": col.id, "name": col.name, "color": color.lower(), "show": show})
+    if series and not any(s["show"] for s in series):
+        series[0]["show"] = True
+    return series
+
+
+def _table_date_cols(table):
+    return [c for c in table.columns if c.col_type in (ColumnType.DATE, ColumnType.DATETIME)]
+
+
 @router.get("/{table_id}/edit", response_class=HTMLResponse)
 def edit_table_page(
     request: Request,
@@ -1042,6 +1090,7 @@ def edit_table_page(
             "table": table,
             "column_types": COLUMN_TYPES,
             "all_tables_json": _all_tables_json(db, user, exclude_id=table.id),
+            "calendar_series": _calendar_series(table, _table_date_cols(table)),
         },
     )
 
@@ -1068,6 +1117,9 @@ def edit_table(
     rgpd_responsable: str = Form(""),
     rgpd_destinataires: str = Form(""),
     rgpd_hors_ue: str = Form(""),
+    cal_col_ids: list[str] = Form(default=[]),
+    cal_colors: list[str] = Form(default=[]),
+    cal_show: list[str] = Form(default=[]),
     status_col_id: str = Form(""),
     tiles_col_id: str = Form(""),
     user: User = Depends(get_current_user),
@@ -1118,6 +1170,7 @@ def edit_table(
                 "table": table,
                 "column_types": COLUMN_TYPES,
                 "all_tables_json": _all_tables_json(db, user, exclude_id=table.id),
+            "calendar_series": _calendar_series(table, _table_date_cols(table)),
                 "dup_errors": dup_errors,
             },
         )
@@ -1130,6 +1183,20 @@ def edit_table(
     table.rgpd_responsable = rgpd_responsable
     table.rgpd_destinataires = rgpd_destinataires
     table.rgpd_hors_ue = bool(rgpd_hors_ue)
+    # Calendrier : couleurs et affichage par défaut (seulement si la section était dans le formulaire)
+    if cal_col_ids:
+        import json as _json
+        _date_ids = {c.id for c in _table_date_cols(table)}
+        _show = set(cal_show)
+        _cfg = []
+        for _i, _cid in enumerate(cal_col_ids):
+            if not _cid.strip().isdigit() or int(_cid) not in _date_ids:
+                continue
+            _color = cal_colors[_i].strip() if _i < len(cal_colors) else ""
+            if not _CAL_HEX_RE.match(_color):
+                _color = _CAL_PALETTE[len(_cfg) % len(_CAL_PALETTE)]
+            _cfg.append({"col": int(_cid), "color": _color.lower(), "show": _cid in _show})
+        table.calendar_config = _json.dumps(_cfg)
     _status = int(status_col_id) if status_col_id.strip().isdigit() else None
     table.status_col_id = _status if _status in {c.id for c in table.columns} else None
     _tiles = int(tiles_col_id) if tiles_col_id.strip().isdigit() else None

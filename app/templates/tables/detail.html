@@ -535,18 +535,29 @@
 <div id="calendar-view" class="hidden" data-default-date-col="{{ date_cols[0].id }}">
   <div id="calendar-filter-bar" class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm">
     <div class="flex flex-wrap items-center gap-2 px-3 py-2">
-      {% if date_cols | length > 1 %}
-      <div class="flex items-center gap-1.5 shrink-0">
+      <div id="calendar-series" class="flex flex-wrap items-center gap-1.5">
         <i data-lucide="calendar-days" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
-        <span class="text-xs text-gray-500 whitespace-nowrap">Colonne date</span>
-        <select id="calendar-date-col-select" onchange="onCalendarDateColChange()"
+        <span class="text-xs text-gray-500 whitespace-nowrap">Dates</span>
+        {% for s in calendar_series %}
+        <button type="button" class="cal-series flex items-center gap-1.5 px-2 py-1 text-xs border border-gray-200 rounded-lg hover:bg-gray-50 transition"
+          data-col="{{ s.id }}" data-color="{{ s.color }}" data-name="{{ s.name }}" data-default="{{ '1' if s.show else '0' }}"
+          onclick="toggleCalendarSeries(this)" title="Afficher ou masquer « {{ s.name }} »">
+          <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: {{ s.color }}"></span>
+          <span class="cal-series-name text-gray-700">{{ s.name }}</span>
+        </button>
+        {% endfor %}
+      </div>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <i data-lucide="type" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
+        <span class="text-xs text-gray-500 whitespace-nowrap">Colonne affichée</span>
+        <select id="calendar-label-col-select" onchange="onCalendarLabelColChange()"
           class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
-          {% for col in date_cols %}
+          <option value="">— Automatique —</option>
+          {% for col in columns %}{% if col.col_type.value != 'relation' %}
           <option value="{{ col.id }}">{{ col.name }}</option>
-          {% endfor %}
+          {% endif %}{% endfor %}
         </select>
       </div>
-      {% endif %}
       <button type="button" onclick="toggleFilterPanel('calendar-filter-panel', 'calendar-filter-toggle-icon')"
         class="ml-auto flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
         <i data-lucide="filter" class="w-3.5 h-3.5"></i>
@@ -2086,12 +2097,31 @@ document.addEventListener('click', function(e) {
         locale: 'fr',
         headerToolbar: { left: 'prev,next today', center: 'title', right: '' },
         events: function(info, successCallback, failureCallback) {
-          var params = collectFilterParams();
-          params.set('date_col', getCalendarDateCol());
-          fetch('/tables/{{ table.id }}/events?' + params.toString())
-            .then(function(r) { return r.json(); })
-            .then(successCallback)
+          // Une requête par colonne date affichée, chaque série avec sa couleur
+          var series = calendarSeries().filter(function(s) { return s.on; });
+          if (!series.length) { successCallback([]); return; }
+          Promise.all(series.map(function(s) {
+            var params = collectFilterParams();
+            params.set('date_col', s.id);
+            if (getCalendarLabelCol()) params.set('label_col', getCalendarLabelCol());
+            return fetch('/tables/{{ table.id }}/events?' + params.toString())
+              .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+              .then(function(list) {
+                return list.map(function(e) {
+                  e.id = e.row_id + '-' + s.id;
+                  e.color = s.color;
+                  e.contrastColor = '#ffffff';
+                  e.extendedProps = { row_id: e.row_id, series: s.name };
+                  return e;
+                });
+              });
+          }))
+            .then(function(lists) { successCallback([].concat.apply([], lists)); })
             .catch(failureCallback);
+        },
+        eventDidMount: function(info) {
+          var serie = info.event.extendedProps && info.event.extendedProps.series;
+          if (serie) info.el.setAttribute('title', serie + ' : ' + info.event.title);
         },
         eventClick: function(info) {
           info.jsEvent.preventDefault();
@@ -2108,6 +2138,8 @@ document.addEventListener('click', function(e) {
         },
       });
       populateCalendarYearSelect();
+      restoreCalendarLabelCol();
+      paintCalendarSeries();
       _calendar.render();
 
       var bar = document.getElementById('calendar-filter-bar');
@@ -2130,6 +2162,66 @@ document.addEventListener('click', function(e) {
       _calendar.refetchEvents();
     }
   }
+
+  // ── Colonne affichée sur les événements (mémorisée dans ce navigateur) ────
+  var CAL_LABEL_KEY = 'calendar_label_{{ table.id }}';
+
+  function getCalendarLabelCol() {
+    var sel = document.getElementById('calendar-label-col-select');
+    return sel ? sel.value : '';
+  }
+
+  function restoreCalendarLabelCol() {
+    var sel = document.getElementById('calendar-label-col-select');
+    if (!sel) return;
+    var saved = '';
+    try { saved = localStorage.getItem(CAL_LABEL_KEY) || ''; } catch (e) {}
+    if (saved && sel.querySelector('option[value="' + saved + '"]')) sel.value = saved;
+  }
+
+  window.onCalendarLabelColChange = function() {
+    try { localStorage.setItem(CAL_LABEL_KEY, getCalendarLabelCol()); } catch (e) {}
+    if (_calendar) _calendar.refetchEvents();
+  };
+
+  // ── Légende du calendrier : colonnes date affichées (choix mémorisé dans ce navigateur) ──
+  var CAL_SERIES_KEY = 'calendar_series_{{ table.id }}';
+
+  function calendarSeriesState() {
+    try { return JSON.parse(localStorage.getItem(CAL_SERIES_KEY) || '{}') || {}; } catch (e) { return {}; }
+  }
+
+  function calendarSeries() {
+    var state = calendarSeriesState();
+    return Array.prototype.map.call(document.querySelectorAll('#calendar-series .cal-series'), function(btn) {
+      var id = btn.dataset.col;
+      return {
+        id: id,
+        name: btn.dataset.name,
+        color: btn.dataset.color,
+        on: (id in state) ? !!state[id] : btn.dataset.default === '1',
+        btn: btn
+      };
+    });
+  }
+
+  function paintCalendarSeries() {
+    calendarSeries().forEach(function(s) {
+      s.btn.classList.toggle('opacity-40', !s.on);
+      s.btn.querySelector('.cal-series-name').classList.toggle('line-through', !s.on);
+      s.btn.setAttribute('aria-pressed', s.on ? 'true' : 'false');
+    });
+  }
+
+  window.toggleCalendarSeries = function(btn) {
+    var state = calendarSeriesState();
+    var current = calendarSeries().find(function(s) { return s.btn === btn; });
+    if (!current) return;
+    state[current.id] = !current.on;
+    try { localStorage.setItem(CAL_SERIES_KEY, JSON.stringify(state)); } catch (e) {}
+    paintCalendarSeries();
+    if (_calendar) _calendar.refetchEvents();
+  };
 
   window.onCalendarDateColChange = function() {
     if (_calendar) _calendar.refetchEvents();
