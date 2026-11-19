@@ -1704,6 +1704,29 @@ document.addEventListener('click', function(e) {
   var activeClass   = ['bg-blue-600', 'text-white'];
   var inactiveClass = ['bg-white', 'text-gray-600', 'hover:bg-gray-50'];
 
+  // ── Rechargement des onglets seulement si quelque chose a changé ─────────
+  // Signature = recherche + filtres + version des données. Toute requête HTMX qui
+  // modifie des données (POST…) ou un déplacement dans le Planner incrémente la version.
+  var _dataVersion = 0;
+  var _viewSig = {};
+  function _viewNeedsReload(mode) {
+    var sig = collectFilterParams().toString() + '#' + _dataVersion;
+    if (_viewSig[mode] === sig) return false;
+    _viewSig[mode] = sig;
+    return true;
+  }
+  window.markTableDataChanged = function () { _dataVersion++; };
+  document.body.addEventListener('htmx:afterRequest', function (e) {
+    var cfg = e.detail && e.detail.requestConfig;
+    var verb = cfg && cfg.verb ? String(cfg.verb).toLowerCase() : 'get';
+    if (verb !== 'get' && e.detail.successful) _dataVersion++;
+  });
+  // Icônes : uniquement dans l'onglet affiché (la liste est gérée par base.html)
+  function _refreshViewIcons(el) {
+    if (!el || !window.lucide) return;
+    try { lucide.createIcons({ root: el }); } catch (e) { lucide.createIcons(); }
+  }
+
   // ── Collecte des filtres (mode-aware) ─────────────────────────────────────
   function collectFilterParams() {
     var params = new URLSearchParams();
@@ -1835,7 +1858,8 @@ document.addEventListener('click', function(e) {
       btnMap.classList.remove(...inactiveClass);
       btnMap.classList.add(...activeClass);
       resizeMap();
-      initMap(collectFilterParams());
+      if (_viewNeedsReload('map')) initMap(collectFilterParams());
+      _refreshViewIcons(mapView);
     } else if (mode === 'calendar' && calView) {
       syncFilters('filters-zone', 'calendar-filter-bar');
       updateFilterIndicator('calendar-filter-bar', 'calendar-filter-badge', 'calendar-filter-chips');
@@ -1843,23 +1867,26 @@ document.addEventListener('click', function(e) {
       btnCal.classList.remove(...inactiveClass);
       btnCal.classList.add(...activeClass);
       resizeCalendarEl();
-      initCalendar();
+      if (_viewNeedsReload('calendar') || !_calendar) initCalendar();
+      _refreshViewIcons(calView);
     } else if (mode === 'stats' && statsView) {
       statsView.classList.remove('hidden');
       btnStats.classList.remove(...inactiveClass);
       btnStats.classList.add(...activeClass);
-      loadStats();
+      if (_viewNeedsReload('stats')) loadStats();
+      _refreshViewIcons(statsView);
     } else if (mode === 'planner' && plannerView) {
       plannerView.classList.remove('hidden');
       btnPlanner.classList.remove(...inactiveClass);
       btnPlanner.classList.add(...activeClass);
-      loadPlanner();
+      if (_viewNeedsReload('planner')) loadPlanner();
+      _refreshViewIcons(plannerView);
     } else {
       listView.classList.remove('hidden');
       btnList.classList.remove(...inactiveClass);
       btnList.classList.add(...activeClass);
     }
-    lucide.createIcons();
+    _refreshViewIcons(document.getElementById('view-switcher') || (btnList && btnList.parentNode));
   }
 
   window.setViewMode = function (mode) {
@@ -2103,6 +2130,8 @@ document.addEventListener('click', function(e) {
           Promise.all(series.map(function(s) {
             var params = collectFilterParams();
             params.set('date_col', s.id);
+            if (info && info.startStr) params.set('start', info.startStr.slice(0, 10));
+            if (info && info.endStr) params.set('end', info.endStr.slice(0, 10));
             if (getCalendarLabelCol()) params.set('label_col', getCalendarLabelCol());
             return fetch('/tables/{{ table.id }}/events?' + params.toString())
               .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
@@ -2634,6 +2663,8 @@ document.addEventListener('click', function(e) {
       })
       .then(function () {
         msg('');
+        // Les autres onglets se rechargeront à leur prochain affichage
+        if (window.markTableDataChanged) window.markTableDataChanged();
         // La liste (et les vignettes) seront à jour au retour sur l'onglet Liste
         if (document.getElementById('sort-col-input')) htmx.trigger('#sort-col-input', 'refresh-sort');
       })

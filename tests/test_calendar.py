@@ -335,3 +335,19 @@ def test_edit_page_lists_date_columns_for_calendar(admin_client, db, admin_user)
 
     assert html.count('name="cal_col_ids"') == 2
     assert f'name="cal_col_ids" value="{site.id}"' not in html
+
+
+def test_events_limited_to_displayed_period(admin_client, db, admin_user):
+    """?start / ?end (envoyés par le calendrier) : seuls les événements de la période, fin exclue."""
+    table, cols = _make_dated_table(db, admin_user)
+    col_date = cols[1]
+
+    resp = admin_client.get(f"/tables/{table.id}/events", params={
+        "date_col": col_date.id, "start": "2026-03-11", "end": "2026-03-15",
+    })
+    assert resp.json() == []
+
+    resp = admin_client.get(f"/tables/{table.id}/events", params={
+        "date_col": col_date.id, "start": "2026-03-01", "end": "2026-03-16",
+    })
+    assert {e["start"] for e in resp.json()} == {"2026-03-10", "2026-03-15"}
