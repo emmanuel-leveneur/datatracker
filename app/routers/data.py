@@ -109,6 +109,7 @@ def _rows_template_ctx(
     page_size: int = DEFAULT_PAGE_SIZE,
     sort_col: int | None = None,
     sort_dir: str = "asc",
+    tile: str = "",
 ) -> dict:
     """Construit le contexte commun pour le rendu de partials/table_rows.html.
 
@@ -151,6 +152,22 @@ def _rows_template_ctx(
             CellValue.value.ilike(f"%{filter_val}%"),
         ).distinct().subquery()
         base = base.filter(TableRow.id.in_(col_subq))
+
+    # Vignette sélectionnée : filtre sur la valeur EXACTE de la colonne des vignettes
+    tiles_col_id = getattr(table, "tiles_col_id", None)
+    if tile and tiles_col_id in visible_ids:
+        if tile == "__vide__":
+            filled_subq = db.query(CellValue.row_id).filter(
+                CellValue.column_id == tiles_col_id,
+                CellValue.value.notin_(["", "None"]),
+            ).distinct().subquery()
+            base = base.filter(~TableRow.id.in_(filled_subq))
+        else:
+            tile_subq = db.query(CellValue.row_id).filter(
+                CellValue.column_id == tiles_col_id,
+                CellValue.value == tile,
+            ).distinct().subquery()
+            base = base.filter(TableRow.id.in_(tile_subq))
 
     total_count: int = base.count()
     total_pages = max(1, (total_count + page_size - 1) // page_size)
@@ -394,6 +411,7 @@ def get_rows(
     page_size: int = Query(DEFAULT_PAGE_SIZE),
     sort_col: str = Query(""),
     sort_dir: str = Query("asc"),
+    tile: str = Query(""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -407,7 +425,7 @@ def get_rows(
     sort_col_id = int(sort_col) if sort_col.strip().isdigit() else None
     return templates.TemplateResponse(
         request, "partials/table_rows_response.html",
-        _rows_template_ctx(db, table, user, page, q, col_filters, page_size, sort_col_id, sort_dir),
+        _rows_template_ctx(db, table, user, page, q, col_filters, page_size, sort_col_id, sort_dir, tile),
     )
 
 
@@ -863,6 +881,60 @@ async def update_row(
         resp.headers["HX-Trigger"] = "closeEditRowModal"
         return resp
     return RedirectResponse(url=f"/tables/{table_id}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/{table_id}/rows/{row_id}/status")
+def set_row_status(
+    table_id: int,
+    row_id: int,
+    value: str = Form(""),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Planner : change la valeur de la colonne des statuts d'une ligne (glisser-déposer)."""
+    table = db.get(DataTable, table_id)
+    if not table or table.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Table introuvable.")
+    if not can_access_table(table, user, db, require_write=True):
+        raise HTTPException(status_code=403, detail="Vous n'avez pas le droit de modifier cette table.")
+    row = db.get(TableRow, row_id)
+    if not row or row.table_id != table_id or row.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Ligne introuvable.")
+
+    visible = get_visible_columns(table, user, db)
+    col = next(
+        (c for c in visible if c.id == getattr(table, "status_col_id", None)
+         and c.col_type.value not in ("relation", "latitude", "longitude")),
+        None,
+    )
+    if not col:
+        raise HTTPException(status_code=400, detail="Aucune colonne des statuts n'est définie.")
+    if is_column_readonly(col, user, db):
+        raise HTTPException(status_code=403, detail=f"La colonne « {col.name} » est en lecture seule pour vous.")
+
+    value = "" if value == "__vide__" else value.strip()
+    if value and col.col_type == ColumnType.SELECT and col.select_options:
+        options = {o.strip().lower(): o.strip() for o in col.select_options.split(",") if o.strip()}
+        if value.lower() not in options:
+            raise HTTPException(status_code=400, detail=f"« {value} » ne fait pas partie des choix.")
+        value = options[value.lower()]
+    if col.is_unique and _check_unique_violation(db, col.id, value, exclude_row_id=row.id):
+        raise HTTPException(status_code=409, detail=f"La valeur « {value} » existe déjà dans cette colonne.")
+
+    cell = next((cv for cv in row.cell_values if cv.column_id == col.id), None)
+    old_val = cell.value if cell else ""
+    if (old_val or "") != value:
+        if cell:
+            cell.value = value
+        else:
+            db.add(CellValue(row_id=row.id, column_id=col.id, value=value))
+        log_action(db, user, "update_row", "row",
+                   resource_id=row.id, resource_name=table.name, table_id=table.id,
+                   details=f'Planner — "{col.name}" : "{old_val or ""}" → "{value}"')
+        db.flush()
+        evaluate_alerts_for_row(db, row, table)
+        db.commit()
+    return {"ok": True, "row_id": row.id, "value": value}
 
 
 @router.post("/{table_id}/rows/{row_id}/delete")

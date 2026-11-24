@@ -491,7 +491,10 @@ def table_detail(
             "lat_col": lat_col,
             "lon_col": lon_col,
             "date_cols": date_cols,
+            "calendar_series": _calendar_series(table, date_cols),
             "table_sync": table_sync,
+            "status_col": _planner_status_col(table, visible_cols),
+            "tiles_col": next((c for c in visible_cols if c.id == table.tiles_col_id and c.col_type.value != "relation"), None),
         },
     )
 
@@ -587,6 +590,7 @@ def table_events(
     request: Request,
     q: str = Query(""),
     date_col: int = Query(...),
+    label_col: str = Query(""),
     table: DataTable = Depends(get_table_or_404),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -640,10 +644,432 @@ def table_events(
         start = _normalize_event_date(cells.get(date_col))
         if not start:
             continue
-        title = next((cells[c.id] for c in other_cols if cells.get(c.id)), f"#{row.id}")
+        label_id = int(label_col) if label_col.strip().isdigit() else None
+        if label_id in visible_col_ids:
+            title = cells.get(label_id) or f"#{row.id}"
+        else:
+            title = next((cells[c.id] for c in other_cols if cells.get(c.id)), f"#{row.id}")
         events.append({"id": row.id, "row_id": row.id, "title": title, "start": start})
 
     return events
+
+
+# ── Statistiques ────────────────────────────────────────────────────────────
+
+def _parse_number(value):
+    """Convertit une cellule texte en nombre (accepte '12,5', '1 250', espaces insécables)."""
+    if value is None:
+        return None
+    s = str(value).strip().replace("\u00a0", "").replace("\u202f", "").replace(" ", "").replace(",", ".")
+    if not s or s == "None":
+        return None
+    try:
+        n = float(s)
+    except ValueError:
+        return None
+    if n != n or n in (float("inf"), float("-inf")):  # NaN / infini
+        return None
+    return n
+
+
+_STATS_AGG_LABELS = {"sum": "Somme", "avg": "Moyenne", "min": "Min", "max": "Max"}
+
+
+@router.get("/{table_id}/stats")
+def table_stats(
+    request: Request,
+    q: str = Query(""),
+    group_col: str = Query(""),
+    value_col: str = Query(""),
+    agg: str = Query("sum"),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if table.deleted_at is not None:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    from collections import Counter, defaultdict
+    from app.dependencies import get_visible_columns
+
+    visible_cols = get_visible_columns(table, user, db)
+    visible_col_ids = {c.id for c in visible_cols}
+    stat_cols = [c for c in visible_cols if c.col_type.value != "relation"]
+    date_types = (ColumnType.DATE, ColumnType.DATETIME)
+
+    # ── Mêmes filtres que la liste / la carte / le calendrier ──
+    col_filters = {k[7:]: v for k, v in request.query_params.items() if k.startswith("filter_") and v}
+    base = db.query(TableRow).filter(
+        TableRow.table_id == table.id,
+        TableRow.deleted_at == None,
+    )
+    if q:
+        matching_subq = db.query(CellValue.row_id).filter(
+            CellValue.value.ilike(f"%{q}%"),
+            CellValue.column_id.in_(visible_col_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_col_ids:
+            continue
+        col_subq = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col_id,
+            CellValue.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    rows = base.options(subqueryload(TableRow.cell_values)).all()
+    cells_by_row = [
+        {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
+        for row in rows
+    ]
+    total = len(cells_by_row)
+
+    def _clean(v):
+        v = (v or "").strip()
+        return "" if v == "None" else v
+
+    def _month(v):
+        d = _normalize_event_date(v)
+        return d[:7] if d and len(d) >= 7 else ""
+
+    # ── Statistiques par colonne ──
+    columns_out = []
+    for col in stat_cols:
+        values = [v for v in (_clean(c.get(col.id)) for c in cells_by_row) if v]
+        entry = {
+            "id": col.id,
+            "name": col.name,
+            "type": col.col_type.value,
+            "filled": len(values),
+            "empty": total - len(values),
+            "distinct": len(set(values)),
+        }
+        if col.col_type in date_types:
+            months = [m for m in (_month(v) for v in values) if m]
+            entry["top"] = sorted(Counter(months).items())[-12:]
+            entry["top_label"] = "Lignes par mois (12 derniers mois avec données)"
+            dates = sorted(d[:10] for d in (_normalize_event_date(v) for v in values) if d)
+            if dates:
+                entry["date_min"], entry["date_max"] = dates[0], dates[-1]
+        else:
+            nums = [n for n in (_parse_number(v) for v in values) if n is not None]
+            # Colonne considérée comme numérique si au moins 80 % des valeurs sont des nombres
+            if values and len(nums) >= 0.8 * len(values):
+                entry["numeric"] = {
+                    "count": len(nums),
+                    "sum": sum(nums),
+                    "avg": sum(nums) / len(nums),
+                    "min": min(nums),
+                    "max": max(nums),
+                }
+            else:
+                entry["top"] = Counter(values).most_common(10)
+                entry["top_label"] = "Valeurs les plus fréquentes"
+        columns_out.append(entry)
+
+    # ── Regroupement (« Grouper par » + « Valeur ») ──
+    group = None
+    gcol = next((c for c in stat_cols if str(c.id) == group_col), None)
+    if gcol:
+        vcol = next((c for c in stat_cols if str(c.id) == value_col), None)
+        agg = agg if agg in _STATS_AGG_LABELS else "sum"
+        buckets = defaultdict(list)
+        for cells in cells_by_row:
+            key = _clean(cells.get(gcol.id))
+            if gcol.col_type in date_types:
+                key = _month(key)
+            key = key or "(vide)"
+            if vcol:
+                n = _parse_number(cells.get(vcol.id))
+                if n is not None:
+                    buckets[key].append(n)
+            else:
+                buckets[key].append(1)
+
+        items = []
+        for key, vals in buckets.items():
+            if not vals:
+                continue
+            if not vcol:
+                val = len(vals)
+            elif agg == "avg":
+                val = sum(vals) / len(vals)
+            elif agg == "min":
+                val = min(vals)
+            elif agg == "max":
+                val = max(vals)
+            else:
+                val = sum(vals)
+            items.append({"label": key, "value": val})
+
+        if gcol.col_type in date_types:
+            items.sort(key=lambda it: (it["label"] == "(vide)", it["label"]))
+        else:
+            items.sort(key=lambda it: it["value"], reverse=True)
+
+        value_label = f"{_STATS_AGG_LABELS[agg]} de {vcol.name}" if vcol else "Nombre de lignes"
+        group = {
+            "col_name": gcol.name,
+            "value_label": value_label,
+            "title": f"{value_label} par {gcol.name}",
+            "items": items[:50],
+        }
+
+    return {
+        "total_rows": total,
+        "filtered": bool(q or any(v.strip() for v in col_filters.values())),
+        "columns": columns_out,
+        "group": group,
+    }
+
+
+# ── Vignettes (filtre rapide par valeur) ────────────────────────────────────
+
+_TILES_EMPTY = "__vide__"
+_TILES_MAX = 50
+
+
+@router.get("/{table_id}/tiles")
+def table_tiles(
+    request: Request,
+    q: str = Query(""),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Nombre de lignes par valeur de la colonne des vignettes, selon la recherche
+    et les filtres en cours (la vignette sélectionnée elle-même n'est pas appliquée)."""
+    if table.deleted_at is not None:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    from app.dependencies import get_visible_columns
+    visible_cols = get_visible_columns(table, user, db)
+    visible_col_ids = {c.id for c in visible_cols}
+    col = next(
+        (c for c in visible_cols if c.id == table.tiles_col_id and c.col_type.value != "relation"),
+        None,
+    )
+    if not col:
+        return {"column": None, "total": 0, "items": [], "more": False}
+
+    col_filters = {k[7:]: v for k, v in request.query_params.items() if k.startswith("filter_") and v}
+    base = db.query(TableRow).filter(
+        TableRow.table_id == table.id,
+        TableRow.deleted_at == None,
+    )
+    if q:
+        matching_subq = db.query(CellValue.row_id).filter(
+            CellValue.value.ilike(f"%{q}%"),
+            CellValue.column_id.in_(visible_col_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_col_ids:
+            continue
+        col_subq = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col_id,
+            CellValue.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    total = base.count()
+    ids_subq = base.with_entities(TableRow.id).subquery()
+    counts = (
+        db.query(CellValue.value, sa_func.count(CellValue.id))
+        .filter(
+            CellValue.column_id == col.id,
+            CellValue.row_id.in_(select(ids_subq.c.id)),
+            CellValue.value.notin_(["", "None"]),
+        )
+        .group_by(CellValue.value)
+        .all()
+    )
+    items = sorted(
+        ({"value": v, "label": v, "count": n} for v, n in counts),
+        key=lambda it: (-it["count"], it["label"].lower()),
+    )
+    empty = total - sum(it["count"] for it in items)
+    if empty > 0:
+        items.append({"value": _TILES_EMPTY, "label": "(vide)", "count": empty})
+
+    return {
+        "column": col.name,
+        "total": total,
+        "items": items[:_TILES_MAX],
+        "more": len(items) > _TILES_MAX,
+    }
+
+
+# ── Planner (colonnes par statut) ───────────────────────────────────────────
+
+_PLANNER_EMPTY = "__vide__"
+_PLANNER_MAX_BUCKETS = 30
+_PLANNER_MAX_CARDS = 200  # par colonne de statut
+
+
+def _planner_status_col(table, visible_cols):
+    return next(
+        (c for c in visible_cols if c.id == table.status_col_id
+         and c.col_type.value not in ("relation", "latitude", "longitude")),
+        None,
+    )
+
+
+@router.get("/{table_id}/board")
+def table_board(
+    request: Request,
+    q: str = Query(""),
+    table: DataTable = Depends(get_table_or_404),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Données du Planner : une colonne par statut, avec les cartes des lignes,
+    selon la recherche et les filtres en cours."""
+    if table.deleted_at is not None:
+        raise HTTPException(status_code=404)
+    if not can_access_table(table, user, db):
+        raise HTTPException(status_code=403)
+
+    from app.dependencies import get_visible_columns, is_column_readonly
+    visible_cols = get_visible_columns(table, user, db)
+    visible_col_ids = {c.id for c in visible_cols}
+    scol = _planner_status_col(table, visible_cols)
+    if not scol:
+        return {"column": None, "can_move": False, "total": 0, "buckets": []}
+
+    col_filters = {k[7:]: v for k, v in request.query_params.items() if k.startswith("filter_") and v}
+    base = db.query(TableRow).filter(
+        TableRow.table_id == table.id,
+        TableRow.deleted_at == None,
+    )
+    if q:
+        matching_subq = db.query(CellValue.row_id).filter(
+            CellValue.value.ilike(f"%{q}%"),
+            CellValue.column_id.in_(visible_col_ids),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(matching_subq))
+    for col_id_str, filter_val in col_filters.items():
+        if not filter_val.strip():
+            continue
+        try:
+            col_id = int(col_id_str)
+        except ValueError:
+            continue
+        if col_id not in visible_col_ids:
+            continue
+        col_subq = db.query(CellValue.row_id).filter(
+            CellValue.column_id == col_id,
+            CellValue.value.ilike(f"%{filter_val}%"),
+        ).distinct().subquery()
+        base = base.filter(TableRow.id.in_(col_subq))
+
+    rows = base.options(subqueryload(TableRow.cell_values)).order_by(TableRow.id.desc()).all()
+
+    # Contenu des cartes : la 1re colonne remplie = titre, puis 2 champs
+    card_cols = [c for c in visible_cols if c.id != scol.id and c.col_type.value != "relation"]
+
+    # Ordre des colonnes de statut : options du « select », puis valeurs trouvées
+    options = []
+    if scol.col_type == ColumnType.SELECT and scol.select_options:
+        options = [o.strip() for o in scol.select_options.split(",") if o.strip()]
+    canon = {o.lower(): o for o in options}
+
+    buckets: dict[str, dict] = {_PLANNER_EMPTY: {"value": _PLANNER_EMPTY, "label": "Sans statut", "count": 0, "cards": []}}
+    for o in options:
+        buckets[o] = {"value": o, "label": o, "count": 0, "cards": []}
+
+    for row in rows:
+        cells = {cv.column_id: cv.value for cv in row.cell_values if cv.column_id in visible_col_ids}
+        raw = (cells.get(scol.id) or "").strip()
+        if raw == "None":
+            raw = ""
+        key = canon.get(raw.lower(), raw) if raw else _PLANNER_EMPTY
+        if key not in buckets:
+            buckets[key] = {"value": key, "label": key, "count": 0, "cards": []}
+        b = buckets[key]
+        b["count"] += 1
+        if len(b["cards"]) < _PLANNER_MAX_CARDS:
+            filled = [(c.name, cells[c.id]) for c in card_cols
+                      if cells.get(c.id) and cells.get(c.id) != "None"]
+            title = filled[0][1] if filled else f"Ligne #{row.id}"
+            b["cards"].append({"row_id": row.id, "title": title, "fields": filled[1:3]})
+
+    # Sans statut d'abord (seulement s'il y a des lignes), options dans l'ordre, autres valeurs triées
+    ordered = [buckets[o] for o in options]
+    extra = sorted((k for k in buckets if k != _PLANNER_EMPTY and k not in options), key=str.lower)
+    ordered += [buckets[k] for k in extra]
+    if buckets[_PLANNER_EMPTY]["count"]:
+        ordered.insert(0, buckets[_PLANNER_EMPTY])
+
+    can_move = (
+        can_access_table(table, user, db, require_write=True)
+        and not is_column_readonly(scol, user, db)
+    )
+    return {
+        "column": scol.name,
+        "can_move": bool(can_move),
+        "total": len(rows),
+        "buckets": ordered[:_PLANNER_MAX_BUCKETS],
+    }
+
+
+# ── Calendrier : colonnes date affichées et leurs couleurs ──────────────────
+
+_CAL_PALETTE = ["#2563eb", "#16a34a", "#ea580c", "#9333ea", "#db2777", "#0891b2", "#ca8a04", "#475569"]
+_CAL_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _calendar_series(table, date_cols):
+    """[{id, name, color, show}] pour chaque colonne date, d'après table.calendar_config.
+
+    Sans réglage enregistré : seule la 1re colonne date est affichée (comportement historique),
+    couleurs de la palette par défaut. Une colonne date ajoutée après le réglage est masquée
+    par défaut. Si aucune n'est cochée, la 1re reste affichée pour ne pas montrer un calendrier vide.
+    """
+    import json
+    try:
+        cfg = json.loads(getattr(table, "calendar_config", "") or "[]")
+    except ValueError:
+        cfg = []
+    by_id = {}
+    for item in cfg if isinstance(cfg, list) else []:
+        if isinstance(item, dict):
+            try:
+                by_id[int(item.get("col"))] = item
+            except (TypeError, ValueError):
+                continue
+    series = []
+    for i, col in enumerate(date_cols):
+        item = by_id.get(col.id)
+        color = str(item.get("color") or "") if item else ""
+        if not _CAL_HEX_RE.match(color):
+            color = _CAL_PALETTE[i % len(_CAL_PALETTE)]
+        show = bool(item.get("show")) if item else (not by_id and i == 0)
+        series.append({"id": col.id, "name": col.name, "color": color.lower(), "show": show})
+    if series and not any(s["show"] for s in series):
+        series[0]["show"] = True
+    return series
+
+
+def _table_date_cols(table):
+    return [c for c in table.columns if c.col_type in (ColumnType.DATE, ColumnType.DATETIME)]
 
 
 @router.get("/{table_id}/edit", response_class=HTMLResponse)
@@ -664,6 +1090,7 @@ def edit_table_page(
             "table": table,
             "column_types": COLUMN_TYPES,
             "all_tables_json": _all_tables_json(db, user, exclude_id=table.id),
+            "calendar_series": _calendar_series(table, _table_date_cols(table)),
         },
     )
 
@@ -690,6 +1117,11 @@ def edit_table(
     rgpd_responsable: str = Form(""),
     rgpd_destinataires: str = Form(""),
     rgpd_hors_ue: str = Form(""),
+    cal_col_ids: list[str] = Form(default=[]),
+    cal_colors: list[str] = Form(default=[]),
+    cal_show: list[str] = Form(default=[]),
+    status_col_id: str = Form(""),
+    tiles_col_id: str = Form(""),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -738,6 +1170,7 @@ def edit_table(
                 "table": table,
                 "column_types": COLUMN_TYPES,
                 "all_tables_json": _all_tables_json(db, user, exclude_id=table.id),
+            "calendar_series": _calendar_series(table, _table_date_cols(table)),
                 "dup_errors": dup_errors,
             },
         )
@@ -750,6 +1183,24 @@ def edit_table(
     table.rgpd_responsable = rgpd_responsable
     table.rgpd_destinataires = rgpd_destinataires
     table.rgpd_hors_ue = bool(rgpd_hors_ue)
+    # Calendrier : couleurs et affichage par défaut (seulement si la section était dans le formulaire)
+    if cal_col_ids:
+        import json as _json
+        _date_ids = {c.id for c in _table_date_cols(table)}
+        _show = set(cal_show)
+        _cfg = []
+        for _i, _cid in enumerate(cal_col_ids):
+            if not _cid.strip().isdigit() or int(_cid) not in _date_ids:
+                continue
+            _color = cal_colors[_i].strip() if _i < len(cal_colors) else ""
+            if not _CAL_HEX_RE.match(_color):
+                _color = _CAL_PALETTE[len(_cfg) % len(_CAL_PALETTE)]
+            _cfg.append({"col": int(_cid), "color": _color.lower(), "show": _cid in _show})
+        table.calendar_config = _json.dumps(_cfg)
+    _status = int(status_col_id) if status_col_id.strip().isdigit() else None
+    table.status_col_id = _status if _status in {c.id for c in table.columns} else None
+    _tiles = int(tiles_col_id) if tiles_col_id.strip().isdigit() else None
+    table.tiles_col_id = _tiles if _tiles in {c.id for c in table.columns} else None
 
     submitted_ids = set(col_ids)
 

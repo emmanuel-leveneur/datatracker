@@ -104,6 +104,12 @@
         Fiche détail
       </h2>
       <div class="flex items-center gap-1">
+        {% if can_write %}
+        <button onclick="editFromDetail()" title="Modifier la ligne"
+          class="text-gray-400 hover:text-blue-600 p-1.5 rounded-lg hover:bg-blue-50 transition">
+          <i data-lucide="pencil" class="w-4 h-4"></i>
+        </button>
+        {% endif %}
         <button onclick="openShareRowModal()" title="Partager par email"
           class="text-gray-400 hover:text-emerald-600 p-1.5 rounded-lg hover:bg-emerald-50 transition">
           <i data-lucide="plus" class="w-4 h-4"></i>
@@ -311,7 +317,7 @@
     {% endif %}
   </div>
   <div class="flex flex-wrap gap-2 items-center">
-    {% if (lat_col and lon_col) or date_cols %}
+    {% if columns %}
     <div class="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm font-medium">
       <button id="btn-list-view" onclick="setViewMode('list')"
         class="px-3 py-1.5 flex items-center gap-1.5 transition">
@@ -327,6 +333,16 @@
       <button id="btn-calendar-view" onclick="setViewMode('calendar')"
         class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
         <i data-lucide="calendar" class="w-4 h-4"></i> Calendrier
+      </button>
+      {% endif %}
+      <button id="btn-stats-view" onclick="setViewMode('stats')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
+        <i data-lucide="bar-chart-3" class="w-4 h-4"></i> Statistiques
+      </button>
+      {% if status_col %}
+      <button id="btn-planner-view" onclick="setViewMode('planner')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
+        <i data-lucide="kanban" class="w-4 h-4"></i> Planner
       </button>
       {% endif %}
     </div>
@@ -519,18 +535,29 @@
 <div id="calendar-view" class="hidden" data-default-date-col="{{ date_cols[0].id }}">
   <div id="calendar-filter-bar" class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm">
     <div class="flex flex-wrap items-center gap-2 px-3 py-2">
-      {% if date_cols | length > 1 %}
-      <div class="flex items-center gap-1.5 shrink-0">
+      <div id="calendar-series" class="flex flex-wrap items-center gap-1.5">
         <i data-lucide="calendar-days" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
-        <span class="text-xs text-gray-500 whitespace-nowrap">Colonne date</span>
-        <select id="calendar-date-col-select" onchange="onCalendarDateColChange()"
+        <span class="text-xs text-gray-500 whitespace-nowrap">Dates</span>
+        {% for s in calendar_series %}
+        <button type="button" class="cal-series flex items-center gap-1.5 px-2 py-1 text-xs border border-gray-200 rounded-lg hover:bg-gray-50 transition"
+          data-col="{{ s.id }}" data-color="{{ s.color }}" data-name="{{ s.name }}" data-default="{{ '1' if s.show else '0' }}"
+          onclick="toggleCalendarSeries(this)" title="Afficher ou masquer « {{ s.name }} »">
+          <span class="w-2.5 h-2.5 rounded-full shrink-0" style="background-color: {{ s.color }}"></span>
+          <span class="cal-series-name text-gray-700">{{ s.name }}</span>
+        </button>
+        {% endfor %}
+      </div>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <i data-lucide="type" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
+        <span class="text-xs text-gray-500 whitespace-nowrap">Colonne affichée</span>
+        <select id="calendar-label-col-select" onchange="onCalendarLabelColChange()"
           class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
-          {% for col in date_cols %}
+          <option value="">— Automatique —</option>
+          {% for col in columns %}{% if col.col_type.value != 'relation' %}
           <option value="{{ col.id }}">{{ col.name }}</option>
-          {% endfor %}
+          {% endif %}{% endfor %}
         </select>
       </div>
-      {% endif %}
       <button type="button" onclick="toggleFilterPanel('calendar-filter-panel', 'calendar-filter-toggle-icon')"
         class="ml-auto flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
         <i data-lucide="filter" class="w-3.5 h-3.5"></i>
@@ -567,6 +594,75 @@
 </div>
 {% endif %}
 
+{% if status_col %}
+<!-- Planner view -->
+<div id="planner-view" class="hidden">
+  <div class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm px-3 py-2 flex flex-wrap items-center gap-3 text-xs">
+    <span class="flex items-center gap-1.5 text-gray-500">
+      <i data-lucide="kanban" class="w-3.5 h-3.5 text-gray-400"></i>
+      Statuts : <span class="font-semibold text-gray-700">{{ status_col.name }}</span>
+    </span>
+    <span id="planner-summary" class="text-gray-500"></span>
+    <span id="planner-msg" class="text-red-600"></span>
+    <button type="button" onclick="loadPlanner()"
+      class="ml-auto flex items-center gap-1 px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+      <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Actualiser
+    </button>
+  </div>
+  <div id="planner-board" class="flex gap-3 overflow-x-auto pb-3 items-start"></div>
+</div>
+{% endif %}
+
+{% if columns %}
+<!-- Stats view -->
+<div id="stats-view" class="hidden">
+  <div class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm px-3 py-2 flex flex-wrap items-center gap-3 text-xs">
+    <div class="flex items-center gap-1.5">
+      <i data-lucide="layers" class="w-3.5 h-3.5 text-gray-400"></i>
+      <span class="text-gray-500 whitespace-nowrap">Grouper par</span>
+      <select id="stats-group-col" onchange="loadStats()"
+        class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+        <option value="">— Aucun —</option>
+        {% for col in columns %}{% if col.col_type.value != 'relation' %}
+        <option value="{{ col.id }}">{{ col.name }}</option>
+        {% endif %}{% endfor %}
+      </select>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <i data-lucide="sigma" class="w-3.5 h-3.5 text-gray-400"></i>
+      <span class="text-gray-500 whitespace-nowrap">Valeur</span>
+      <select id="stats-value-col" onchange="loadStats()"
+        class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+        <option value="">Nombre de lignes</option>
+        {% for col in columns %}{% if col.col_type.value != 'relation' %}
+        <option value="{{ col.id }}">{{ col.name }}</option>
+        {% endif %}{% endfor %}
+      </select>
+      <select id="stats-agg" onchange="loadStats()"
+        class="hidden border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+        <option value="sum">Somme</option>
+        <option value="avg">Moyenne</option>
+        <option value="min">Min</option>
+        <option value="max">Max</option>
+      </select>
+    </div>
+    <span id="stats-summary" class="ml-auto text-gray-500"></span>
+  </div>
+
+  <div id="stats-group-block" class="hidden mb-4 bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+    <h3 id="stats-group-title" class="text-sm font-semibold text-gray-700 mb-3"></h3>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="relative h-72"><canvas id="stats-chart"></canvas></div>
+      <div class="max-h-72 overflow-y-auto">
+        <table id="stats-group-table" class="min-w-full text-sm"></table>
+      </div>
+    </div>
+  </div>
+
+  <div id="stats-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+</div>
+{% endif %}
+
 <!-- Table data -->
 {% if columns %}
 <div id="filters-zone">
@@ -574,6 +670,17 @@
          hx-get="/tables/{{ table.id }}/rows" hx-trigger="refresh-sort"
          hx-target="#table-body" hx-include="#filters-zone, #global-search" hx-vals='{"page": 1}'>
   <input type="hidden" id="sort-dir-input" name="sort_dir" value="{{ sort_dir or 'asc' }}">
+  {% if tiles_col %}
+  <input type="hidden" id="tile-input" name="tile" value="">
+  <div id="tiles-bar" class="mb-3">
+    <p class="text-xs text-gray-500 mb-1.5 flex items-center gap-1.5">
+      <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i> {{ tiles_col.name }}
+    </p>
+    <div id="tiles-list" class="flex flex-wrap gap-2">
+      <span class="text-xs text-gray-400">Chargement…</span>
+    </div>
+  </div>
+  {% endif %}
   {% if q or col_filters %}
   <div class="mb-2 flex justify-end">
     <button
@@ -794,6 +901,8 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
 // ──────────────────────────────────────────────────────────────────────────
 
 function clearAllFilters(tableId) {
+  var ti = document.getElementById('tile-input');
+  if (ti) ti.value = '';
   var gs = document.getElementById('global-search');
   if (gs) gs.value = '';
   document.querySelectorAll('#main-table thead input[type="search"]').forEach(function(inp) {
@@ -1273,6 +1382,16 @@ function openDetailModal() {
   document.getElementById('row-detail-backdrop').classList.remove('hidden');
   document.getElementById('row-detail-modal').classList.remove('hidden');
 }
+// Crayon de la fiche détail : ferme la fiche et ouvre le formulaire de modification
+function editFromDetail() {
+  var id = window.currentDetailRowId;
+  if (!id) return;
+  closeDetailModal();
+  htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + id + '/edit', {
+    target: '#edit-row-modal-body',
+    swap: 'innerHTML'
+  });
+}
 function closeDetailModal() {
   document.getElementById('row-detail-backdrop').classList.add('hidden');
   document.getElementById('row-detail-modal').classList.add('hidden');
@@ -1570,7 +1689,8 @@ document.addEventListener('click', function(e) {
 });
 </script>
 
-{% if (lat_col and lon_col) or date_cols %}
+{% if columns %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 {% if lat_col and lon_col %}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 {% endif %}
@@ -1583,6 +1703,29 @@ document.addEventListener('click', function(e) {
   var _canWrite = {{ 'true' if can_write else 'false' }};
   var activeClass   = ['bg-blue-600', 'text-white'];
   var inactiveClass = ['bg-white', 'text-gray-600', 'hover:bg-gray-50'];
+
+  // ── Rechargement des onglets seulement si quelque chose a changé ─────────
+  // Signature = recherche + filtres + version des données. Toute requête HTMX qui
+  // modifie des données (POST…) ou un déplacement dans le Planner incrémente la version.
+  var _dataVersion = 0;
+  var _viewSig = {};
+  function _viewNeedsReload(mode) {
+    var sig = collectFilterParams().toString() + '#' + _dataVersion;
+    if (_viewSig[mode] === sig) return false;
+    _viewSig[mode] = sig;
+    return true;
+  }
+  window.markTableDataChanged = function () { _dataVersion++; };
+  document.body.addEventListener('htmx:afterRequest', function (e) {
+    var cfg = e.detail && e.detail.requestConfig;
+    var verb = cfg && cfg.verb ? String(cfg.verb).toLowerCase() : 'get';
+    if (verb !== 'get' && e.detail.successful) _dataVersion++;
+  });
+  // Icônes : uniquement dans l'onglet affiché (la liste est gérée par base.html)
+  function _refreshViewIcons(el) {
+    if (!el || !window.lucide) return;
+    try { lucide.createIcons({ root: el }); } catch (e) { lucide.createIcons(); }
+  }
 
   // ── Collecte des filtres (mode-aware) ─────────────────────────────────────
   function collectFilterParams() {
@@ -1696,9 +1839,13 @@ document.addEventListener('click', function(e) {
     var btnList  = document.getElementById('btn-list-view');
     var btnMap   = document.getElementById('btn-map-view');
     var btnCal   = document.getElementById('btn-calendar-view');
+    var statsView = document.getElementById('stats-view');
+    var btnStats  = document.getElementById('btn-stats-view');
+    var plannerView = document.getElementById('planner-view');
+    var btnPlanner  = document.getElementById('btn-planner-view');
 
-    [listView, mapView, calView].forEach(function(el) { if (el) el.classList.add('hidden'); });
-    [btnList, btnMap, btnCal].forEach(function(btn) {
+    [listView, mapView, calView, statsView, plannerView].forEach(function(el) { if (el) el.classList.add('hidden'); });
+    [btnList, btnMap, btnCal, btnStats, btnPlanner].forEach(function(btn) {
       if (!btn) return;
       btn.classList.remove(...activeClass);
       btn.classList.add(...inactiveClass);
@@ -1711,7 +1858,8 @@ document.addEventListener('click', function(e) {
       btnMap.classList.remove(...inactiveClass);
       btnMap.classList.add(...activeClass);
       resizeMap();
-      initMap(collectFilterParams());
+      if (_viewNeedsReload('map')) initMap(collectFilterParams());
+      _refreshViewIcons(mapView);
     } else if (mode === 'calendar' && calView) {
       syncFilters('filters-zone', 'calendar-filter-bar');
       updateFilterIndicator('calendar-filter-bar', 'calendar-filter-badge', 'calendar-filter-chips');
@@ -1719,13 +1867,26 @@ document.addEventListener('click', function(e) {
       btnCal.classList.remove(...inactiveClass);
       btnCal.classList.add(...activeClass);
       resizeCalendarEl();
-      initCalendar();
+      if (_viewNeedsReload('calendar') || !_calendar) initCalendar();
+      _refreshViewIcons(calView);
+    } else if (mode === 'stats' && statsView) {
+      statsView.classList.remove('hidden');
+      btnStats.classList.remove(...inactiveClass);
+      btnStats.classList.add(...activeClass);
+      if (_viewNeedsReload('stats')) loadStats();
+      _refreshViewIcons(statsView);
+    } else if (mode === 'planner' && plannerView) {
+      plannerView.classList.remove('hidden');
+      btnPlanner.classList.remove(...inactiveClass);
+      btnPlanner.classList.add(...activeClass);
+      if (_viewNeedsReload('planner')) loadPlanner();
+      _refreshViewIcons(plannerView);
     } else {
       listView.classList.remove('hidden');
       btnList.classList.remove(...inactiveClass);
       btnList.classList.add(...activeClass);
     }
-    lucide.createIcons();
+    _refreshViewIcons(document.getElementById('view-switcher') || (btnList && btnList.parentNode));
   }
 
   window.setViewMode = function (mode) {
@@ -1906,6 +2067,7 @@ document.addEventListener('click', function(e) {
   }
 
   window.closeMapPanel = function() {
+    if (!document.getElementById('map-panel')) return;
     document.getElementById('map-panel').classList.remove('open');
     document.getElementById('map-panel-backdrop').classList.remove('open');
   };
@@ -1962,12 +2124,33 @@ document.addEventListener('click', function(e) {
         locale: 'fr',
         headerToolbar: { left: 'prev,next today', center: 'title', right: '' },
         events: function(info, successCallback, failureCallback) {
-          var params = collectFilterParams();
-          params.set('date_col', getCalendarDateCol());
-          fetch('/tables/{{ table.id }}/events?' + params.toString())
-            .then(function(r) { return r.json(); })
-            .then(successCallback)
+          // Une requête par colonne date affichée, chaque série avec sa couleur
+          var series = calendarSeries().filter(function(s) { return s.on; });
+          if (!series.length) { successCallback([]); return; }
+          Promise.all(series.map(function(s) {
+            var params = collectFilterParams();
+            params.set('date_col', s.id);
+            if (info && info.startStr) params.set('start', info.startStr.slice(0, 10));
+            if (info && info.endStr) params.set('end', info.endStr.slice(0, 10));
+            if (getCalendarLabelCol()) params.set('label_col', getCalendarLabelCol());
+            return fetch('/tables/{{ table.id }}/events?' + params.toString())
+              .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+              .then(function(list) {
+                return list.map(function(e) {
+                  e.id = e.row_id + '-' + s.id;
+                  e.color = s.color;
+                  e.contrastColor = '#ffffff';
+                  e.extendedProps = { row_id: e.row_id, series: s.name };
+                  return e;
+                });
+              });
+          }))
+            .then(function(lists) { successCallback([].concat.apply([], lists)); })
             .catch(failureCallback);
+        },
+        eventDidMount: function(info) {
+          var serie = info.event.extendedProps && info.event.extendedProps.series;
+          if (serie) info.el.setAttribute('title', serie + ' : ' + info.event.title);
         },
         eventClick: function(info) {
           info.jsEvent.preventDefault();
@@ -1984,6 +2167,8 @@ document.addEventListener('click', function(e) {
         },
       });
       populateCalendarYearSelect();
+      restoreCalendarLabelCol();
+      paintCalendarSeries();
       _calendar.render();
 
       var bar = document.getElementById('calendar-filter-bar');
@@ -2006,6 +2191,66 @@ document.addEventListener('click', function(e) {
       _calendar.refetchEvents();
     }
   }
+
+  // ── Colonne affichée sur les événements (mémorisée dans ce navigateur) ────
+  var CAL_LABEL_KEY = 'calendar_label_{{ table.id }}';
+
+  function getCalendarLabelCol() {
+    var sel = document.getElementById('calendar-label-col-select');
+    return sel ? sel.value : '';
+  }
+
+  function restoreCalendarLabelCol() {
+    var sel = document.getElementById('calendar-label-col-select');
+    if (!sel) return;
+    var saved = '';
+    try { saved = localStorage.getItem(CAL_LABEL_KEY) || ''; } catch (e) {}
+    if (saved && sel.querySelector('option[value="' + saved + '"]')) sel.value = saved;
+  }
+
+  window.onCalendarLabelColChange = function() {
+    try { localStorage.setItem(CAL_LABEL_KEY, getCalendarLabelCol()); } catch (e) {}
+    if (_calendar) _calendar.refetchEvents();
+  };
+
+  // ── Légende du calendrier : colonnes date affichées (choix mémorisé dans ce navigateur) ──
+  var CAL_SERIES_KEY = 'calendar_series_{{ table.id }}';
+
+  function calendarSeriesState() {
+    try { return JSON.parse(localStorage.getItem(CAL_SERIES_KEY) || '{}') || {}; } catch (e) { return {}; }
+  }
+
+  function calendarSeries() {
+    var state = calendarSeriesState();
+    return Array.prototype.map.call(document.querySelectorAll('#calendar-series .cal-series'), function(btn) {
+      var id = btn.dataset.col;
+      return {
+        id: id,
+        name: btn.dataset.name,
+        color: btn.dataset.color,
+        on: (id in state) ? !!state[id] : btn.dataset.default === '1',
+        btn: btn
+      };
+    });
+  }
+
+  function paintCalendarSeries() {
+    calendarSeries().forEach(function(s) {
+      s.btn.classList.toggle('opacity-40', !s.on);
+      s.btn.querySelector('.cal-series-name').classList.toggle('line-through', !s.on);
+      s.btn.setAttribute('aria-pressed', s.on ? 'true' : 'false');
+    });
+  }
+
+  window.toggleCalendarSeries = function(btn) {
+    var state = calendarSeriesState();
+    var current = calendarSeries().find(function(s) { return s.btn === btn; });
+    if (!current) return;
+    state[current.id] = !current.on;
+    try { localStorage.setItem(CAL_SERIES_KEY, JSON.stringify(state)); } catch (e) {}
+    paintCalendarSeries();
+    if (_calendar) _calendar.refetchEvents();
+  };
 
   window.onCalendarDateColChange = function() {
     if (_calendar) _calendar.refetchEvents();
@@ -2063,12 +2308,374 @@ document.addEventListener('click', function(e) {
   {% endif %}
 
   // ── Init : restaurer le dernier mode ─────────────────────────────────────
+  // ── Vue statistiques ──────────────────────────────────────────────────────
+  var _statsChart = null;
+  var _statsTimer = null;
+  var _statsBound = false;
+
+  function fmtNum(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return Number(n).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+  }
+
+  function statsViewVisible() {
+    var sv = document.getElementById('stats-view');
+    return sv && !sv.classList.contains('hidden');
+  }
+
+  function statBox(label, value) {
+    return '<div class="bg-gray-50 rounded-lg px-3 py-2">' +
+      '<div class="text-[11px] text-gray-400 uppercase tracking-wide">' + label + '</div>' +
+      '<div class="font-semibold text-gray-800">' + fmtNum(value) + '</div></div>';
+  }
+
+  window.loadStats = function() {
+    // Recherche globale -> recalcul automatique quand on est sur l'onglet Statistiques
+    if (!_statsBound) {
+      _statsBound = true;
+      var qEl = document.getElementById('global-search');
+      if (qEl) qEl.addEventListener('input', function() {
+        if (!statsViewVisible()) return;
+        clearTimeout(_statsTimer);
+        _statsTimer = setTimeout(window.loadStats, 350);
+      });
+    }
+    var params = collectFilterParams();
+    var g = document.getElementById('stats-group-col').value;
+    var v = document.getElementById('stats-value-col').value;
+    var aggEl = document.getElementById('stats-agg');
+    if (g) params.set('group_col', g);
+    if (v) params.set('value_col', v);
+    params.set('agg', aggEl.value);
+    aggEl.classList.toggle('hidden', !v);
+    document.getElementById('stats-summary').textContent = 'Calcul en cours…';
+    fetch('/tables/{{ table.id }}/stats?' + params.toString())
+      .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(renderStats)
+      .catch(function() {
+        document.getElementById('stats-summary').textContent = '';
+        document.getElementById('stats-cards').innerHTML =
+          '<p class="text-sm text-red-600">Erreur lors du chargement des statistiques.</p>';
+      });
+  };
+
+  function renderStats(data) {
+    document.getElementById('stats-summary').textContent =
+      fmtNum(data.total_rows) + ' ligne(s) analysée(s)' +
+      (data.filtered ? ' — filtres et recherche de la vue Liste appliqués' : '');
+
+    // ── Bloc « Grouper par » : graphique + tableau ──
+    var block = document.getElementById('stats-group-block');
+    if (_statsChart) { _statsChart.destroy(); _statsChart = null; }
+    if (data.group) {
+      block.classList.remove('hidden');
+      document.getElementById('stats-group-title').textContent = data.group.title;
+      var items = data.group.items;
+      var html = '<thead><tr class="text-xs text-gray-400 uppercase tracking-wide">' +
+        '<th class="text-left font-semibold py-1.5 pr-3">' + escHtml(data.group.col_name) + '</th>' +
+        '<th class="text-right font-semibold py-1.5">' + escHtml(data.group.value_label) + '</th></tr></thead><tbody>';
+      items.forEach(function(it) {
+        html += '<tr class="border-t border-gray-100">' +
+          '<td class="py-1.5 pr-3 text-gray-700">' + escHtml(String(it.label)) + '</td>' +
+          '<td class="py-1.5 text-right font-medium text-gray-800">' + fmtNum(it.value) + '</td></tr>';
+      });
+      if (!items.length) html += '<tr><td colspan="2" class="py-4 text-center text-gray-400">Aucune donnée</td></tr>';
+      document.getElementById('stats-group-table').innerHTML = html + '</tbody>';
+      if (window.Chart && items.length) {
+        var top = items.slice(0, 25);
+        _statsChart = new Chart(document.getElementById('stats-chart'), {
+          type: 'bar',
+          data: {
+            labels: top.map(function(it) { return it.label; }),
+            datasets: [{
+              label: data.group.value_label,
+              data: top.map(function(it) { return it.value; }),
+              backgroundColor: '#3b82f6',
+              borderRadius: 4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true } }
+          }
+        });
+      }
+    } else {
+      block.classList.add('hidden');
+    }
+
+    // ── Une carte par colonne ──
+    var cards = data.columns.map(function(c) {
+      var h = '<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4">' +
+        '<div class="flex items-center justify-between gap-2 mb-1">' +
+        '<h3 class="text-sm font-semibold text-gray-800 truncate" title="' + escHtml(c.name) + '">' + escHtml(c.name) + '</h3>' +
+        '<span class="text-[10px] uppercase tracking-wide bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">' + escHtml(c.type) + '</span></div>' +
+        '<p class="text-xs text-gray-400 mb-3">' + fmtNum(c.filled) + ' remplie(s) · ' + fmtNum(c.empty) +
+        ' vide(s) · ' + fmtNum(c.distinct) + ' distincte(s)</p>';
+      if (c.numeric) {
+        var n = c.numeric;
+        h += '<div class="grid grid-cols-2 gap-2 text-sm">' +
+          statBox('Somme', n.sum) + statBox('Moyenne', n.avg) +
+          statBox('Min', n.min) + statBox('Max', n.max) + '</div>';
+      } else if (c.top && c.top.length) {
+        if (c.date_min) {
+          h += '<p class="text-xs text-gray-500 mb-2">Du ' + escHtml(c.date_min) + ' au ' + escHtml(c.date_max) + '</p>';
+        }
+        h += '<p class="text-[11px] text-gray-400 uppercase tracking-wide mb-1">' + escHtml(c.top_label) + '</p>';
+        var maxCount = Math.max.apply(null, c.top.map(function(t) { return t[1]; }));
+        c.top.forEach(function(t) {
+          var pct = maxCount ? Math.round(t[1] / maxCount * 100) : 0;
+          h += '<div class="mb-1"><div class="flex justify-between text-xs">' +
+            '<span class="truncate pr-2 text-gray-700" title="' + escHtml(String(t[0])) + '">' + escHtml(String(t[0])) + '</span>' +
+            '<span class="text-gray-500 shrink-0">' + fmtNum(t[1]) + '</span></div>' +
+            '<div class="h-1.5 bg-gray-100 rounded-full"><div class="h-1.5 bg-blue-500 rounded-full" style="width:' + pct + '%"></div></div></div>';
+        });
+      } else {
+        h += '<p class="text-xs text-gray-400">Aucune valeur</p>';
+      }
+      return h + '</div>';
+    }).join('');
+    document.getElementById('stats-cards').innerHTML = cards ||
+      '<p class="text-sm text-gray-400">Aucune colonne à analyser.</p>';
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     var saved;
     try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
-    var validModes = ['list'{% if lat_col and lon_col %}, 'map'{% endif %}{% if date_cols %}, 'calendar'{% endif %}];
+    var validModes = ['list', 'stats'{% if status_col %}, 'planner'{% endif %}{% if lat_col and lon_col %}, 'map'{% endif %}{% if date_cols %}, 'calendar'{% endif %}];
     applyViewMode(validModes.indexOf(saved) !== -1 ? saved : 'list');
   });
+})();
+</script>
+{% endif %}
+{% if tiles_col %}
+<script>
+// ── Vignettes : une par valeur de la colonne choisie, clic = filtre exact ──
+(function () {
+  var VIDE = '__vide__';
+  var listEl = document.getElementById('tiles-list');
+  var input = document.getElementById('tile-input');
+  if (!listEl || !input) return;
+  var items = [];
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function fmt(n) { return Number(n).toLocaleString('fr-FR'); }
+
+  function params() {
+    var p = new URLSearchParams();
+    var qEl = document.getElementById('global-search');
+    if (qEl && qEl.value) p.set('q', qEl.value);
+    document.querySelectorAll('#filters-zone [name^="filter_"]').forEach(function (el) {
+      if (el.value) p.set(el.name, el.value);
+    });
+    return p;
+  }
+
+  function tileHtml(i, label, count, active) {
+    return '<button type="button" data-tile="' + i + '" class="text-left min-w-[110px] px-3 py-2 rounded-lg border transition ' +
+      (active ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-gray-200 bg-white hover:bg-gray-50') + '">' +
+      '<div class="text-xl font-semibold ' + (active ? 'text-blue-700' : 'text-gray-800') + '">' + fmt(count) + '</div>' +
+      '<div class="text-xs truncate max-w-[180px] ' + (active ? 'text-blue-700' : 'text-gray-500') + '" title="' + esc(label) + '">' +
+      esc(label) + '</div></button>';
+  }
+
+  function render(data) {
+    items = [{ value: '', label: 'Toutes', count: data.total }].concat(data.items || []);
+    // La vignette sélectionnée reste visible même si la recherche en cours la vide
+    if (input.value && !items.some(function (it) { return it.value === input.value; })) {
+      items.push({ value: input.value, label: input.value === VIDE ? '(vide)' : input.value, count: 0 });
+    }
+    listEl.innerHTML = items.map(function (it, i) {
+      return tileHtml(i, it.label, it.count, input.value === it.value);
+    }).join('') + (data.more
+      ? '<span class="self-center text-xs text-gray-400">Seules les 50 valeurs les plus fréquentes sont affichées.</span>'
+      : '');
+  }
+
+  function load() {
+    fetch('/tables/{{ table.id }}/tiles?' + params().toString())
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(render)
+      .catch(function () {
+        listEl.innerHTML = '<span class="text-xs text-red-600">Impossible de charger les vignettes.</span>';
+      });
+  }
+
+  listEl.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-tile]');
+    if (!btn) return;
+    var it = items[parseInt(btn.dataset.tile, 10)];
+    if (!it) return;
+    input.value = (it.value === '' || input.value === it.value) ? '' : it.value;
+    // Recharge le tableau (page 1) avec les filtres + la vignette (#filters-zone inclus)
+    htmx.trigger('#sort-col-input', 'refresh-sort');
+  });
+
+  // Après chaque rechargement du tableau (recherche, filtres, vignette) : recompter
+  document.body.addEventListener('htmx:afterSwap', function (e) {
+    if (e.detail.target && e.detail.target.id === 'table-body') load();
+  });
+  document.addEventListener('DOMContentLoaded', load);
+})();
+</script>
+{% endif %}
+{% if status_col %}
+<script>
+// ── Planner : une colonne par statut, glisser-déposer pour changer le statut ──
+(function () {
+  var TABLE_ID = {{ table.id }};
+  var board = document.getElementById('planner-board');
+  if (!board) return;
+  var bound = false, timer = null, dragId = null, dragFrom = null, canMove = false;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function fmt(n) { return Number(n).toLocaleString('fr-FR'); }
+  function visible() {
+    var v = document.getElementById('planner-view');
+    return v && !v.classList.contains('hidden');
+  }
+  function params() {
+    var p = new URLSearchParams();
+    var qEl = document.getElementById('global-search');
+    if (qEl && qEl.value) p.set('q', qEl.value);
+    document.querySelectorAll('#filters-zone [name^="filter_"]').forEach(function (el) {
+      if (el.value) p.set(el.name, el.value);
+    });
+    return p;
+  }
+  function msg(t) { document.getElementById('planner-msg').textContent = t || ''; }
+
+  function cardHtml(c) {
+    var h = '<div class="planner-card bg-white border border-gray-200 rounded-lg p-2.5 shadow-sm text-sm hover:border-blue-300 ' +
+      (canMove ? 'cursor-grab' : 'cursor-pointer') + '" draggable="' + (canMove ? 'true' : 'false') +
+      '" data-row="' + c.row_id + '">' +
+      '<div class="font-medium text-gray-800 break-words">' + esc(c.title) + '</div>';
+    (c.fields || []).forEach(function (f) {
+      h += '<div class="text-xs text-gray-500 truncate" title="' + esc(f[1]) + '"><span class="text-gray-400">' +
+        esc(f[0]) + ' :</span> ' + esc(f[1]) + '</div>';
+    });
+    return h + '</div>';
+  }
+
+  function render(data) {
+    canMove = !!data.can_move;
+    document.getElementById('planner-summary').textContent =
+      fmt(data.total) + ' ligne(s)' + (canMove ? ' · glissez une carte pour changer son statut' : ' · lecture seule');
+    board.innerHTML = data.buckets.map(function (b) {
+      var more = b.count > b.cards.length
+        ? '<p class="text-xs text-gray-400 text-center py-1">+ ' + fmt(b.count - b.cards.length) + ' non affichée(s)</p>' : '';
+      return '<div class="planner-col shrink-0 w-72 bg-gray-100 rounded-xl flex flex-col max-h-[75vh]" data-value="' + esc(b.value) + '">' +
+        '<div class="flex items-center justify-between px-3 py-2">' +
+        '<span class="text-sm font-semibold text-gray-700 truncate" title="' + esc(b.label) + '">' + esc(b.label) + '</span>' +
+        '<span class="planner-count text-xs bg-white text-gray-500 rounded-full px-2 py-0.5">' + fmt(b.count) + '</span></div>' +
+        '<div class="planner-list flex-1 overflow-y-auto px-2 pb-2 space-y-2 min-h-[60px] rounded-b-xl">' +
+        b.cards.map(cardHtml).join('') + more + '</div></div>';
+    }).join('');
+  }
+
+  window.loadPlanner = function () {
+    if (!bound) {
+      bound = true;
+      var qEl = document.getElementById('global-search');
+      if (qEl) qEl.addEventListener('input', function () {
+        if (!visible()) return;
+        clearTimeout(timer);
+        timer = setTimeout(window.loadPlanner, 350);
+      });
+    }
+    msg('');
+    fetch('/tables/' + TABLE_ID + '/board?' + params().toString())
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(render)
+      .catch(function () { msg('Impossible de charger le Planner.'); });
+  };
+
+  function addCount(col, delta) {
+    var el = col.querySelector('.planner-count');
+    var n = parseInt(el.textContent.replace(/\D/g, ''), 10) || 0;
+    el.textContent = fmt(n + delta);
+  }
+
+  // Clic sur une carte : fiche de la ligne (comme dans le calendrier)
+  board.addEventListener('click', function (e) {
+    var card = e.target.closest('.planner-card');
+    if (!card) return;
+    htmx.ajax('GET', '/tables/' + TABLE_ID + '/rows/' + card.dataset.row + '/detail', {
+      target: '#row-detail-modal-body', swap: 'innerHTML'
+    });
+  });
+
+  board.addEventListener('dragstart', function (e) {
+    var card = e.target.closest('.planner-card');
+    if (!card || !canMove) return;
+    dragId = card.dataset.row;
+    dragFrom = card.closest('.planner-col');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragId);
+    setTimeout(function () { card.classList.add('opacity-40'); }, 0);
+  });
+  board.addEventListener('dragend', function (e) {
+    var card = e.target.closest('.planner-card');
+    if (card) card.classList.remove('opacity-40');
+    board.querySelectorAll('.planner-col').forEach(function (c) { c.classList.remove('ring-2', 'ring-blue-400'); });
+  });
+  board.addEventListener('dragover', function (e) {
+    var col = e.target.closest('.planner-col');
+    if (!col || !dragId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    board.querySelectorAll('.planner-col').forEach(function (c) {
+      c.classList.toggle('ring-2', c === col);
+      c.classList.toggle('ring-blue-400', c === col);
+    });
+  });
+  board.addEventListener('drop', function (e) {
+    var col = e.target.closest('.planner-col');
+    if (!col || !dragId) return;
+    e.preventDefault();
+    var id = dragId, from = dragFrom;
+    dragId = null; dragFrom = null;
+    if (col === from) return;
+    var card = board.querySelector('.planner-card[data-row="' + id + '"]');
+    if (!card) return;
+    // Déplacement immédiat à l'écran, puis enregistrement
+    col.querySelector('.planner-list').prepend(card);
+    addCount(col, 1); addCount(from, -1);
+    var body = new URLSearchParams();
+    body.set('value', col.dataset.value);
+    fetch('/tables/' + TABLE_ID + '/rows/' + id + '/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString()
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) {
+          if (!r.ok) throw new Error(d.detail || 'Enregistrement refusé.');
+          return d;
+        });
+      })
+      .then(function () {
+        msg('');
+        // Les autres onglets se rechargeront à leur prochain affichage
+        if (window.markTableDataChanged) window.markTableDataChanged();
+        // La liste (et les vignettes) seront à jour au retour sur l'onglet Liste
+        if (document.getElementById('sort-col-input')) htmx.trigger('#sort-col-input', 'refresh-sort');
+      })
+      .catch(function (err) {
+        msg('Statut non modifié : ' + err.message);
+        window.loadPlanner();
+      });
+  });
+
+  // Après une modification dans la fiche de la ligne : rafraîchir le Planner
+  document.body.addEventListener('closeEditRowModal', function () { if (visible()) window.loadPlanner(); });
 })();
 </script>
 {% endif %}

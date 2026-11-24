@@ -1,0 +1,2271 @@
+{% extends "base.html" %}
+{% block title %}{{ table.name }} — DataTracker{% endblock %}
+
+{% block head %}
+<style>
+  #comment-panel { transform: translateX(100%); transition: transform .28s cubic-bezier(.4,0,.2,1); }
+  #comment-panel.open { transform: translateX(0); }
+  #comment-backdrop { opacity: 0; transition: opacity .28s ease; pointer-events: none; }
+  #comment-backdrop.open { opacity: 1; pointer-events: auto; }
+</style>
+{% if lat_col and lon_col %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+.halo-marker {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 4px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.35), 0 1px 4px rgba(0,0,0,.18);
+}
+#map-panel { transform: translateX(100%); transition: transform .28s cubic-bezier(.4,0,.2,1); }
+#map-panel.open { transform: translateX(0); }
+#map-panel-backdrop { opacity: 0; transition: opacity .28s ease; pointer-events: none; }
+#map-panel-backdrop.open { opacity: 1; pointer-events: auto; }
+.map-label-tooltip {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #374151;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12);
+  white-space: nowrap;
+}
+.map-label-tooltip::before { display: none; }
+</style>
+{% endif %}
+{% if date_cols %}
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/skeleton.css" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/themes/monarch/theme.css" rel="stylesheet" />
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/themes/monarch/palettes/blue.css" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/all/global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/themes/monarch/global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@7.0.2/locales/fr/global.js"></script>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+
+{# ── Modal historique ligne ────────────────────────────────────────────────── #}
+<div id="history-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeHistoryModal()"></div>
+<div id="history-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[80vh] flex flex-col pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="history" class="w-4 h-4 text-gray-400"></i>
+        Historique de la ligne
+      </h2>
+      <button onclick="closeHistoryModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="history-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
+{% if can_write %}
+{# ── Modal édition ligne ───────────────────────────────────────────────────── #}
+<div id="edit-row-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeEditRowModal()"></div>
+<div id="edit-row-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="pencil" class="w-4 h-4 text-gray-400"></i>
+        Modifier la ligne
+        <span id="edit-row-modal-subtitle" class="text-gray-400 font-normal"></span>
+      </h2>
+      <button onclick="closeEditRowModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="edit-row-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Modal fiche détail ligne ──────────────────────────────────────────────── #}
+<div id="row-detail-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeDetailModal()"></div>
+<div id="row-detail-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="file-text" class="w-4 h-4 text-gray-400"></i>
+        Fiche détail
+      </h2>
+      <div class="flex items-center gap-1">
+        <button onclick="openShareRowModal()" title="Partager par email"
+          class="text-gray-400 hover:text-emerald-600 p-1.5 rounded-lg hover:bg-emerald-50 transition">
+          <i data-lucide="plus" class="w-4 h-4"></i>
+        </button>
+        <button onclick="closeDetailModal()"
+          class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+    <div id="row-detail-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
+{# ── Modal partage d'une ligne par email ───────────────────────────────────── #}
+<div id="share-row-backdrop" class="fixed inset-0 bg-black/40 z-[55] hidden" onclick="closeShareRowModal()"></div>
+<div id="share-row-modal" class="fixed inset-0 z-[55] flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="send" class="w-4 h-4 text-gray-400"></i>
+        Partager par email
+      </h2>
+      <button onclick="closeShareRowModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="share-row-modal-body" class="px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
+{# ── Modal partage en masse par email ──────────────────────────────────────── #}
+<div id="share-bulk-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeBulkShareModal()"></div>
+<div id="share-bulk-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="send" class="w-4 h-4 text-gray-400"></i>
+        Partager par email
+      </h2>
+      <button onclick="closeBulkShareModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="share-bulk-modal-body" class="px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
+{# ── Lightbox image pièce jointe ─────────────────────────────────────────── #}
+<div id="att-lightbox-backdrop" class="fixed inset-0 bg-black/85 z-[60] hidden" onclick="closeLightbox()"></div>
+<div id="att-lightbox" class="fixed inset-0 z-[60] flex items-center justify-center p-6 pointer-events-none hidden">
+  <div class="relative pointer-events-auto w-full max-w-5xl">
+    <div class="flex items-center justify-between mb-3 px-1">
+      <p id="att-lightbox-name" class="text-white text-sm font-medium truncate max-w-[60%] drop-shadow"></p>
+      <div class="flex items-center gap-2">
+        <a id="att-lightbox-dl" href="#" download
+           class="flex items-center gap-1.5 text-white/80 hover:text-white text-xs bg-white/10 hover:bg-white/25 px-3 py-1.5 rounded-lg transition">
+          <i data-lucide="download" class="w-3.5 h-3.5"></i>
+          Télécharger
+        </a>
+        <button onclick="closeLightbox()"
+          class="text-white/70 hover:text-white p-1.5 hover:bg-white/20 rounded-lg transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+    </div>
+    <img id="att-lightbox-img" src="" alt=""
+         class="max-w-full max-h-[80vh] object-contain rounded-xl mx-auto block shadow-2xl">
+  </div>
+</div>
+
+{# ── Prévisualisation PDF pièce jointe ────────────────────────────────────── #}
+<div id="pdf-preview-backdrop" class="fixed inset-0 bg-black/85 z-[60] hidden" onclick="closePdfPreview()"></div>
+<div id="pdf-preview" class="fixed inset-0 z-[60] flex flex-col p-4 pointer-events-none hidden">
+  <div class="relative pointer-events-auto flex flex-col w-full max-w-5xl mx-auto h-full">
+    <div class="flex items-center justify-between mb-2 px-1">
+      <p id="pdf-preview-name" class="text-white text-sm font-medium truncate max-w-[60%] drop-shadow"></p>
+      <div class="flex items-center gap-2">
+        <a id="pdf-preview-dl" href="#" download
+           class="flex items-center gap-1.5 text-white/80 hover:text-white text-xs bg-white/10 hover:bg-white/25 px-3 py-1.5 rounded-lg transition">
+          <i data-lucide="download" class="w-3.5 h-3.5"></i>
+          Télécharger
+        </a>
+        <button onclick="closePdfPreview()"
+          class="text-white/70 hover:text-white p-1.5 hover:bg-white/20 rounded-lg transition">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+    </div>
+    <iframe id="pdf-preview-frame" src=""
+      class="flex-1 w-full rounded-xl bg-white shadow-2xl border-0"
+      title="Prévisualisation PDF"></iframe>
+  </div>
+</div>
+
+{# ── Modal synchronisation webservice ─────────────────────────────────────── #}
+<div id="sync-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeSyncModal()"></div>
+<div id="sync-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col pointer-events-auto">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="refresh-cw" class="w-4 h-4 text-indigo-400"></i>
+        Synchronisation webservice
+      </h2>
+      <button onclick="closeSyncModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="sync-modal-body" class="flex-1 overflow-y-auto px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+  </div>
+</div>
+
+{% if can_write %}
+{# ── Barre de sélection multiple (bulk-edit / bulk-delete) ─────────────────── #}
+<div id="bulk-select-bar"
+     class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-gray-900 text-white rounded-full shadow-2xl px-5 py-2.5 flex items-center gap-4 text-sm">
+  <span id="bulk-select-count">0 ligne(s) sélectionnée(s)</span>
+  <button onclick="openBulkEditModal()"
+    class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3 py-1 rounded-full transition disabled:opacity-60 disabled:cursor-not-allowed">
+    Modifier en masse
+  </button>
+  <button onclick="openBulkShareModal()"
+    class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3 py-1 rounded-full transition disabled:opacity-60 disabled:cursor-not-allowed">
+    Partager
+  </button>
+  <button type="button"
+    hx-post="/tables/{{ table.id }}/rows/bulk-delete"
+    hx-target="#table-body"
+    hx-swap="innerHTML"
+    hx-include="#filters-zone, #global-search"
+    hx-vals='{"page": 1}'
+    hx-on:htmx:config-request="event.detail.parameters.row_ids = window.bulkSelectedIds ? [...window.bulkSelectedIds] : []"
+    hx-confirm="Mettre les lignes sélectionnées à la corbeille ?"
+    hx-disabled-elt="#bulk-select-bar button"
+    class="bg-red-600 hover:bg-red-700 text-white font-semibold px-3 py-1 rounded-full transition disabled:opacity-60 disabled:cursor-not-allowed">
+    <span class="htmx-indicator-hide">Supprimer</span>
+    <span class="htmx-indicator">
+      <svg class="animate-spin w-3.5 h-3.5 mr-1 inline-block align-[-3px]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>Suppression…
+    </span>
+  </button>
+  <button onclick="clearBulkSelection()"
+    class="text-gray-300 hover:text-white transition disabled:opacity-60 disabled:cursor-not-allowed">
+    Annuler
+  </button>
+</div>
+
+{# ── Modal modification en masse ──────────────────────────────────────────── #}
+<div id="bulk-edit-backdrop" class="fixed inset-0 bg-black/40 z-50 hidden" onclick="closeBulkEditModal()"></div>
+<div id="bulk-edit-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none hidden">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md pointer-events-auto relative">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+      <h2 class="font-semibold text-gray-800 flex items-center gap-2 text-sm">
+        <i data-lucide="pencil" class="w-4 h-4 text-gray-400"></i>
+        Modifier en masse
+      </h2>
+      <button onclick="closeBulkEditModal()"
+        class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <div id="bulk-edit-modal-body" class="px-6 py-5">
+      <!-- chargé par HTMX -->
+    </div>
+    {# Overlay de traitement (affiché pendant l'application en masse) — même pattern que #alert-saving-overlay #}
+    <div id="bulk-edit-saving-overlay" class="hidden absolute inset-0 bg-white bg-opacity-95 rounded-2xl z-10 flex flex-col items-center justify-center gap-3">
+      <svg class="animate-spin w-8 h-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      <p class="text-sm font-semibold text-gray-700">Application en cours…</p>
+      <p id="bulk-edit-saving-count" class="text-xs text-gray-400 text-center px-6"></p>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Panneau latéral commentaires ─────────────────────────────────────────── #}
+<div id="comment-backdrop"
+     class="fixed inset-0 bg-black/40 z-40"
+     onclick="closeCommentPanel()"></div>
+<aside id="comment-panel"
+       class="fixed top-0 right-0 h-full w-full sm:w-[440px] bg-white shadow-2xl z-50 flex flex-col">
+</aside>
+
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div class="flex items-center gap-3">
+    <a href="/tables/" class="text-gray-400 hover:text-gray-600 text-sm">← Tables</a>
+    <h1 class="text-xl font-bold text-gray-800">{{ table.name }}</h1>
+    {% if table.description %}
+    <span class="text-sm text-gray-400">— {{ table.description }}</span>
+    {% endif %}
+  </div>
+  <div class="flex flex-wrap gap-2 items-center">
+    {% if columns %}
+    <div class="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm font-medium">
+      <button id="btn-list-view" onclick="setViewMode('list')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition">
+        <i data-lucide="list" class="w-4 h-4"></i> Liste
+      </button>
+      {% if lat_col and lon_col %}
+      <button id="btn-map-view" onclick="setViewMode('map')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
+        <i data-lucide="map" class="w-4 h-4"></i> Carte
+      </button>
+      {% endif %}
+      {% if date_cols %}
+      <button id="btn-calendar-view" onclick="setViewMode('calendar')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
+        <i data-lucide="calendar" class="w-4 h-4"></i> Calendrier
+      </button>
+      {% endif %}
+      <button id="btn-stats-view" onclick="setViewMode('stats')"
+        class="px-3 py-1.5 flex items-center gap-1.5 transition border-l border-gray-200">
+        <i data-lucide="bar-chart-3" class="w-4 h-4"></i> Statistiques
+      </button>
+    </div>
+    {% endif %}
+    {% if columns %}
+    <input
+      id="global-search"
+      type="search"
+      name="q"
+      value="{{ q | default('') }}"
+      placeholder="Rechercher…"
+      autocomplete="off"
+      hx-get="/tables/{{ table.id }}/rows"
+      hx-target="#table-body"
+      hx-trigger="input changed delay:350ms, search"
+      hx-include="#filters-zone, #global-search"
+      class="w-64 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+    />
+    {% endif %}
+    {% if can_write %}
+    <button
+      hx-get="/tables/{{ table.id }}/rows/new"
+      hx-target="#row-form-area"
+      hx-swap="innerHTML"
+      class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition">
+      + Ajouter une ligne
+    </button>
+    {% endif %}
+    <button onclick="openAlertsPanel()"
+      class="bg-amber-50 hover:bg-amber-100 text-amber-700 text-sm font-medium px-4 py-1.5 rounded-lg border border-amber-200 transition flex items-center gap-1.5">
+      <i data-lucide="bell" class="w-4 h-4"></i> Alertes
+    </button>
+
+    {# ── Menu déroulant Outils ──────────────────────────────────────── #}
+    <div class="relative" id="outils-menu-wrapper">
+      <button onclick="toggleOutilsMenu()"
+        class="bg-white hover:bg-gray-50 text-gray-700 text-sm font-medium px-3 py-1.5 rounded-lg border border-gray-200 transition flex items-center gap-1.5">
+        <i data-lucide="settings-2" class="w-4 h-4 text-gray-400"></i>
+        Outils
+        <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-gray-400"></i>
+      </button>
+      <div id="outils-menu"
+        class="hidden absolute right-0 mt-1 w-52 bg-white border border-gray-200 rounded-xl shadow-lg z-30 py-1 text-sm">
+        {% if can_write %}
+        <a href="/tables/{{ table.id }}/import"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="upload" class="w-4 h-4 text-green-500 shrink-0"></i> Importer CSV
+        </a>
+        {% endif %}
+        <a href="/tables/{{ table.id }}/export/excel"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="download" class="w-4 h-4 text-blue-400 shrink-0"></i> Exporter Excel
+        </a>
+        {% if is_owner or user.is_admin %}
+        <a href="/tables/{{ table.id }}/export/rgpd" target="_blank"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="shield-check" class="w-4 h-4 text-indigo-500 shrink-0"></i> Rapport RGPD
+        </a>
+        {% endif %}
+        <div class="border-t border-gray-100 my-1"></div>
+        {% if is_owner or user.is_admin %}
+        <a href="/tables/{{ table.id }}/edit"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="pencil" class="w-4 h-4 text-gray-400 shrink-0"></i> Modifier la table
+        </a>
+        <a href="/tables/{{ table.id }}/permissions"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="key" class="w-4 h-4 text-yellow-500 shrink-0"></i> Droits d'accès
+        </a>
+        {% if table_sync %}
+        <button
+          hx-get="/tables/{{ table.id }}/sync/panel"
+          hx-target="#sync-modal-body"
+          hx-swap="innerHTML"
+          onclick="document.getElementById('outils-menu').classList.add('hidden')"
+          class="w-full flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition text-left">
+          <i data-lucide="refresh-cw" class="w-4 h-4 text-indigo-400 shrink-0"></i> Synchronisation
+        </button>
+        {% endif %}
+        <div class="border-t border-gray-100 my-1"></div>
+        {% endif %}
+        <a href="/tables/{{ table.id }}/tracabilite"
+          class="flex items-center gap-2.5 px-4 py-2 text-gray-700 hover:bg-gray-50 transition">
+          <i data-lucide="history" class="w-4 h-4 text-purple-400 shrink-0"></i> Traçabilité
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Panneau alertes -->
+<div id="alerts-overlay" class="fixed inset-0 bg-black bg-opacity-30 z-30 hidden" onclick="closeAlertsPanel()"></div>
+<div id="alerts-panel" class="fixed inset-y-0 right-0 w-80 bg-white shadow-2xl z-40 hidden flex flex-col overflow-hidden">
+  <!-- Overlay de traitement (affiché pendant save/toggle) -->
+  <div id="alert-saving-overlay" class="hidden absolute inset-0 bg-white bg-opacity-95 z-50 flex flex-col items-center justify-center gap-4">
+    <svg class="animate-spin w-9 h-9 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+    </svg>
+    <div class="text-center px-6">
+      <p class="text-sm font-semibold text-gray-700">Enregistrement en cours…</p>
+      <p class="text-xs text-gray-400 mt-1">Évaluation des alertes sur toutes les lignes de la table</p>
+    </div>
+    <!-- Messages progressifs — révélés par JS après délai -->
+    <p id="alert-msg-1" class="text-xs text-gray-400 italic px-6 text-center opacity-0 transition-opacity duration-700">
+      L'évaluation peut prendre quelques secondes selon le volume de données.
+    </p>
+    <p id="alert-msg-2" class="text-xs text-amber-500 italic px-6 text-center opacity-0 transition-opacity duration-700">
+      Toujours en cours… merci de patienter.
+    </p>
+  </div>
+  <div id="alerts-panel-content" class="flex flex-col h-full overflow-hidden">
+    <!-- chargé par HTMX -->
+  </div>
+</div>
+
+<!-- Écouteur refresh table (déclenché par HX-Trigger: refreshTable depuis le panneau alertes) -->
+<div hx-get="/tables/{{ table.id }}/rows"
+     hx-target="#table-body"
+     hx-swap="innerHTML"
+     hx-trigger="refreshTable from:body"></div>
+
+<!-- Row form area (HTMX) -->
+<div id="row-form-area" class="mb-4"></div>
+
+{% if lat_col and lon_col %}
+<!-- Map view -->
+<div id="map-view" class="hidden">
+  <div id="map-filter-bar" class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+    <div class="flex flex-wrap items-center gap-2 px-3 py-2">
+      <div class="flex items-center gap-1.5 shrink-0">
+        <i data-lucide="tag" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
+        <span class="text-xs text-gray-500 whitespace-nowrap">Label</span>
+        <select id="map-label-select" onchange="onLabelColChange()"
+          class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+          <option value="">Aucun</option>
+          {% for col in columns %}{% if col.col_type.value not in ('latitude', 'longitude') %}
+          <option value="{{ col.name }}">{{ col.name }}</option>
+          {% endif %}{% endfor %}
+        </select>
+        <button type="button" id="map-label-toggle" onclick="toggleMapLabels()"
+          title="Afficher / masquer les labels"
+          class="p-1 rounded text-blue-600 hover:bg-blue-50 transition">
+          <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+      <button type="button" onclick="toggleFilterPanel('map-filter-panel', 'map-filter-toggle-icon')"
+        class="ml-auto flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+        <i data-lucide="filter" class="w-3.5 h-3.5"></i>
+        Filtres
+        <span id="map-filter-badge" class="hidden bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none"></span>
+        <i data-lucide="chevron-down" id="map-filter-toggle-icon" class="w-3.5 h-3.5 transition-transform"></i>
+      </button>
+      <button type="button" onclick="clearMapFilters()"
+        class="flex items-center gap-1 px-2.5 py-1 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+        <i data-lucide="x" class="w-3 h-3"></i> Effacer
+      </button>
+    </div>
+    <div id="map-filter-chips" class="hidden flex flex-wrap gap-1.5 px-3 pb-2"></div>
+    <div id="map-filter-panel" class="hidden grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 px-3 pb-3 pt-2 border-t border-gray-100">
+      {% for col in columns %}{% if col.col_type.value not in ('latitude', 'longitude') %}
+      <label class="flex flex-col gap-0.5">
+        <span class="text-xs text-gray-400 whitespace-nowrap">{{ col.name }}</span>
+        <input type="search" name="filter_{{ col.id }}" placeholder="…" autocomplete="off"
+          class="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+      </label>
+      {% endif %}{% endfor %}
+    </div>
+  </div>
+  <div id="leaflet-map" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm"></div>
+</div>
+
+{# ── Panneau détail marqueur ──────────────────────────────────────────────── #}
+<div id="map-panel-backdrop" class="fixed inset-0 bg-black/30 z-[1000]" onclick="closeMapPanel()"></div>
+<aside id="map-panel" class="fixed top-0 right-0 h-full w-full sm:w-[420px] bg-white shadow-2xl z-[1001] flex flex-col">
+  <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+    <h2 class="font-semibold text-gray-800 text-sm">Détail</h2>
+    <button onclick="closeMapPanel()"
+      class="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition">
+      <i data-lucide="x" class="w-4 h-4"></i>
+    </button>
+  </div>
+  <div id="map-panel-content" class="flex-1 overflow-y-auto px-5 py-4 text-sm"></div>
+  <div id="map-panel-footer" class="shrink-0 px-5 py-3 border-t border-gray-100 empty:hidden"></div>
+</aside>
+{% endif %}
+
+{% if date_cols %}
+<!-- Calendar view -->
+<div id="calendar-view" class="hidden" data-default-date-col="{{ date_cols[0].id }}">
+  <div id="calendar-filter-bar" class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm">
+    <div class="flex flex-wrap items-center gap-2 px-3 py-2">
+      {% if date_cols | length > 1 %}
+      <div class="flex items-center gap-1.5 shrink-0">
+        <i data-lucide="calendar-days" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
+        <span class="text-xs text-gray-500 whitespace-nowrap">Colonne date</span>
+        <select id="calendar-date-col-select" onchange="onCalendarDateColChange()"
+          class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+          {% for col in date_cols %}
+          <option value="{{ col.id }}">{{ col.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+      <button type="button" onclick="toggleFilterPanel('calendar-filter-panel', 'calendar-filter-toggle-icon')"
+        class="ml-auto flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+        <i data-lucide="filter" class="w-3.5 h-3.5"></i>
+        Filtres
+        <span id="calendar-filter-badge" class="hidden bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none"></span>
+        <i data-lucide="chevron-down" id="calendar-filter-toggle-icon" class="w-3.5 h-3.5 transition-transform"></i>
+      </button>
+      <button type="button" onclick="clearCalendarFilters()"
+        class="flex items-center gap-1 px-2.5 py-1 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
+        <i data-lucide="x" class="w-3 h-3"></i> Effacer
+      </button>
+    </div>
+    <div id="calendar-filter-chips" class="hidden flex flex-wrap gap-1.5 px-3 pb-2"></div>
+    <div id="calendar-filter-panel" class="hidden grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 px-3 pb-3 pt-2 border-t border-gray-100">
+      {% for col in columns %}
+      <label class="flex flex-col gap-0.5">
+        <span class="text-xs text-gray-400 whitespace-nowrap">{{ col.name }}</span>
+        <input type="search" name="filter_{{ col.id }}" placeholder="…" autocomplete="off"
+          class="w-full border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400" />
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="flex items-center justify-end gap-1.5 mb-2">
+    <i data-lucide="calendar-search" class="w-3.5 h-3.5 text-gray-400 shrink-0"></i>
+    <span class="text-xs text-gray-500 whitespace-nowrap">Aller à l'année</span>
+    <select id="calendar-year-select" onchange="onCalendarYearChange()"
+      class="border border-gray-300 rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
+    </select>
+  </div>
+  <div id="calendar-wrap" class="rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-white">
+    <div id="calendar-el"></div>
+  </div>
+</div>
+{% endif %}
+
+{% if columns %}
+<!-- Stats view -->
+<div id="stats-view" class="hidden">
+  <div class="mb-3 bg-white border border-gray-200 rounded-xl shadow-sm px-3 py-2 flex flex-wrap items-center gap-3 text-xs">
+    <div class="flex items-center gap-1.5">
+      <i data-lucide="layers" class="w-3.5 h-3.5 text-gray-400"></i>
+      <span class="text-gray-500 whitespace-nowrap">Grouper par</span>
+      <select id="stats-group-col" onchange="loadStats()"
+        class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+        <option value="">— Aucun —</option>
+        {% for col in columns %}{% if col.col_type.value != 'relation' %}
+        <option value="{{ col.id }}">{{ col.name }}</option>
+        {% endif %}{% endfor %}
+      </select>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <i data-lucide="sigma" class="w-3.5 h-3.5 text-gray-400"></i>
+      <span class="text-gray-500 whitespace-nowrap">Valeur</span>
+      <select id="stats-value-col" onchange="loadStats()"
+        class="border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+        <option value="">Nombre de lignes</option>
+        {% for col in columns %}{% if col.col_type.value != 'relation' %}
+        <option value="{{ col.id }}">{{ col.name }}</option>
+        {% endif %}{% endfor %}
+      </select>
+      <select id="stats-agg" onchange="loadStats()"
+        class="hidden border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+        <option value="sum">Somme</option>
+        <option value="avg">Moyenne</option>
+        <option value="min">Min</option>
+        <option value="max">Max</option>
+      </select>
+    </div>
+    <span id="stats-summary" class="ml-auto text-gray-500"></span>
+  </div>
+
+  <div id="stats-group-block" class="hidden mb-4 bg-white border border-gray-200 rounded-xl shadow-sm p-4">
+    <h3 id="stats-group-title" class="text-sm font-semibold text-gray-700 mb-3"></h3>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="relative h-72"><canvas id="stats-chart"></canvas></div>
+      <div class="max-h-72 overflow-y-auto">
+        <table id="stats-group-table" class="min-w-full text-sm"></table>
+      </div>
+    </div>
+  </div>
+
+  <div id="stats-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+</div>
+{% endif %}
+
+<!-- Table data -->
+{% if columns %}
+<div id="filters-zone">
+  <input type="hidden" id="sort-col-input" name="sort_col" value="{{ sort_col or '' }}"
+         hx-get="/tables/{{ table.id }}/rows" hx-trigger="refresh-sort"
+         hx-target="#table-body" hx-include="#filters-zone, #global-search" hx-vals='{"page": 1}'>
+  <input type="hidden" id="sort-dir-input" name="sort_dir" value="{{ sort_dir or 'asc' }}">
+  {% if q or col_filters %}
+  <div class="mb-2 flex justify-end">
+    <button
+      type="button"
+      onclick="clearAllFilters('{{ table.id }}')"
+      class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition whitespace-nowrap">
+      <i data-lucide="x" class="w-4 h-4"></i> Effacer les filtres
+    </button>
+  </div>
+  {% endif %}
+  <div class="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+    <!-- Barre outils : boutons DataTables (gauche) + page_size (droite) -->
+    <div id="dt-toolbar" class="flex items-center gap-2 px-3 py-2 border-b border-gray-100 min-h-[44px] flex-wrap">
+      <!-- Les boutons DT sont déplacés ici par JS après init -->
+      <span id="colvis-hidden-badge" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 whitespace-nowrap"></span>
+      <div class="ml-auto flex items-center gap-1.5 shrink-0">
+        <label class="text-xs text-gray-500 whitespace-nowrap">Lignes&nbsp;:</label>
+        <select
+          name="page_size"
+          hx-get="/tables/{{ table.id }}/rows"
+          hx-target="#table-body"
+          hx-trigger="change"
+          hx-include="#filters-zone, #global-search"
+          class="border border-gray-300 rounded px-2 py-1 text-sm text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+          {% for ps in allowed_page_sizes | default([25, 50, 100, 250, 500]) %}
+          <option value="{{ ps }}" {% if ps == page_size %}selected{% endif %}>{{ ps }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="overflow-x-auto">
+      <table id="main-table" class="min-w-full divide-y divide-gray-200 text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            {% if can_write %}
+            <!-- Colonne sélection multiple : non exportable, non triable -->
+            <th class="dt-no-export w-8 px-2 py-3">
+              <input type="checkbox" id="select-all-checkbox" title="Tout sélectionner (page courante)">
+            </th>
+            {% endif %}
+            <!-- Colonne alerte : non exportable, non triable -->
+            <th class="dt-no-export w-8 px-2 py-3"></th>
+            {% for col in columns %}
+            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap{% if col.col_type.value != 'relation' %} cursor-pointer select-none hover:bg-gray-100{% endif %}"
+                data-col-id="{{ col.id }}"
+                {% if col.col_type.value != 'relation' %}onclick="toggleSort({{ col.id }})"{% endif %}>
+              {{ col.name }}
+              {% if col.col_type.value != 'relation' %}<span class="sort-indicator ml-0.5 text-gray-400" data-sort-indicator="{{ col.id }}">{% if sort_col == col.id %}{{ '▲' if sort_dir != 'desc' else '▼' }}{% endif %}</span>{% endif %}
+              {% if col.required %}<span class="text-red-400">*</span>{% endif %}
+              {% if col_readonly.get(col.id) %}
+              <span class="ml-1 text-xs bg-gray-200 text-gray-500 px-1 rounded" title="Lecture seule">🔒</span>
+              {% endif %}
+            </th>
+            {% endfor %}
+            {# Colonne actions sticky à droite #}
+            <th class="dt-no-export col-sticky-right px-3 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap bg-gray-50">
+              {% if can_write %}Actions{% endif %}
+            </th>
+          </tr>
+          <!-- Ligne de filtres par colonne -->
+          <tr class="border-t border-gray-200 bg-white">
+            {% if can_write %}<th class="w-8 px-2 py-1.5"></th>{% endif %}<!-- colonne sélection -->
+            <th class="w-8 px-2 py-1.5"></th><!-- colonne alerte -->
+            {% for col in columns %}
+            <th class="px-2 py-1.5">
+              <input
+                id="filter-{{ col.id }}"
+                type="search"
+                name="filter_{{ col.id }}"
+                value="{{ (col_filters | default({})).get(col.id | string, '') }}"
+                placeholder="{{ col.name }}…"
+                autocomplete="off"
+                onclick="event.stopPropagation()"
+                hx-get="/tables/{{ table.id }}/rows"
+                hx-target="#table-body"
+                hx-trigger="input changed delay:350ms, search"
+                hx-include="#filters-zone, #global-search"
+                class="w-full border border-gray-200 rounded px-2 py-1 text-xs text-gray-600 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400 font-normal"
+              />
+            </th>
+            {% endfor %}
+            <th class="col-sticky-right px-2 py-1.5 bg-white"></th>{# colonne actions #}
+          </tr>
+        </thead>
+        <tbody id="table-body" class="divide-y divide-gray-100 bg-white">
+          {% include "partials/table_rows.html" %}
+        </tbody>
+      </table>
+    </div>
+    {% include "partials/table_pagination.html" %}
+  </div>
+</div>
+{% else %}
+<div class="text-center py-16 text-gray-400 bg-white border border-gray-200 rounded-xl">
+  <p class="text-lg font-medium text-gray-500">Aucune colonne définie</p>
+  {% if is_owner or user.is_admin %}
+  <a href="/tables/{{ table.id }}/edit" class="inline-block mt-3 text-sm text-blue-600 hover:underline">
+    Ajouter des colonnes
+  </a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if trashed_rows_data %}
+<details class="mt-6 group">
+  <summary class="cursor-pointer flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-700 select-none list-none">
+    <span class="transition-transform group-open:rotate-90">▶</span>
+    <i data-lucide="trash-2" class="w-4 h-4"></i> Corbeille — {{ trashed_rows_data | length }} ligne(s)
+    {% if can_write %}
+    <form method="post" action="/tables/{{ table.id }}/trash/empty" class="ml-auto"
+          onsubmit="return confirm('Vider définitivement la corbeille ({{ trashed_rows_data | length }} ligne(s)) ? Cette action est irréversible.')">
+      <button type="submit" onclick="event.stopPropagation()"
+        class="inline-flex items-center gap-1 text-xs font-medium text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 bg-white hover:bg-red-50 px-2 py-0.5 rounded transition">
+        <i data-lucide="trash" class="w-3 h-3"></i> Vider
+      </button>
+    </form>
+    {% endif %}
+  </summary>
+  <div class="mt-3 bg-white border border-red-100 rounded-xl shadow-sm overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-gray-200 text-sm">
+        <thead class="bg-red-50">
+          <tr>
+            {% for col in columns %}
+            <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
+              {{ col.name }}
+            </th>
+            {% endfor %}
+            {% if can_write %}
+            <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100 bg-white">
+          {% for item in trashed_rows_data %}
+          <tr class="opacity-60 hover:opacity-100 transition">
+            {% for col in columns %}
+            {% set dval = item.cells.get(col.id, '') %}
+            <td class="px-4 py-2.5 text-gray-500 whitespace-nowrap max-w-[200px] truncate line-through"
+                title="{% if col.col_type.value == 'date' and dval and dval | length >= 10 %}{{ dval[8:10] }}/{{ dval[5:7] }}/{{ dval[0:4] }}{% elif col.col_type.value == 'datetime' and dval and dval | length >= 16 %}{{ dval[8:10] }}/{{ dval[5:7] }}/{{ dval[0:4] }} {{ dval[11:16] }}{% else %}{{ dval }}{% endif %}">
+              {% if col.col_type.value == 'date' and dval and dval | length >= 10 %}
+                {{ dval[8:10] }}/{{ dval[5:7] }}/{{ dval[0:4] }}
+              {% elif col.col_type.value == 'datetime' and dval and dval | length >= 16 %}
+                {{ dval[8:10] }}/{{ dval[5:7] }}/{{ dval[0:4] }} {{ dval[11:16] }}
+              {% else %}
+                {{ dval }}
+              {% endif %}
+            </td>
+            {% endfor %}
+            {% if can_write %}
+            <td class="px-4 py-2.5 text-right whitespace-nowrap">
+              <form method="post" action="/tables/{{ table.id }}/rows/{{ item.row.id }}/restore" class="inline">
+                <button type="submit" title="Restaurer"
+                  class="text-green-600 hover:text-green-800 p-1.5 rounded hover:bg-green-50 transition inline-flex">
+                  <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                </button>
+              </form>
+              <form method="post" action="/tables/{{ table.id }}/rows/{{ item.row.id }}/delete-permanent" class="inline"
+                onsubmit="return confirm('Supprimer définitivement cette ligne ?')">
+                <button type="submit" title="Supprimer définitivement"
+                  class="text-red-500 hover:text-red-700 p-1.5 rounded hover:bg-red-50 transition inline-flex">
+                  <i data-lucide="trash" class="w-4 h-4"></i>
+                </button>
+              </form>
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</details>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Autocomplete relation ──────────────────────────────────────────────────
+function selectRelation(li) {
+  var wrapper = li.closest('.relation-autocomplete');
+  if (!wrapper) return;
+  wrapper.querySelector('.relation-hidden-input').value = li.dataset.value;
+  wrapper.querySelector('.relation-text-input').value = li.dataset.label;
+  var sug = wrapper.querySelector('.relation-suggestions');
+  if (sug) sug.classList.add('hidden');
+}
+
+// Vider la valeur cachée dès que l'utilisateur retape (force une nouvelle sélection)
+document.addEventListener('input', function(e) {
+  if (e.target.classList.contains('relation-text-input')) {
+    var wrapper = e.target.closest('.relation-autocomplete');
+    if (wrapper) wrapper.querySelector('.relation-hidden-input').value = '';
+  }
+});
+
+// Fermer les suggestions quand le focus quitte le widget (délai pour laisser le clic s'enregistrer)
+document.addEventListener('focusout', function(e) {
+  if (!e.target.classList.contains('relation-text-input')) return;
+  var wrapper = e.target.closest('.relation-autocomplete');
+  if (!wrapper) return;
+  setTimeout(function() {
+    if (!wrapper.contains(document.activeElement)) {
+      var sug = wrapper.querySelector('.relation-suggestions');
+      if (sug) sug.classList.add('hidden');
+    }
+  }, 150);
+});
+
+// Afficher / masquer la liste après chaque swap HTMX
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  var target = e.detail.target;
+  if (target && target.classList.contains('relation-suggestions')) {
+    target.classList.toggle('hidden', target.children.length === 0);
+  }
+});
+// ──────────────────────────────────────────────────────────────────────────
+
+function clearAllFilters(tableId) {
+  var gs = document.getElementById('global-search');
+  if (gs) gs.value = '';
+  document.querySelectorAll('#main-table thead input[type="search"]').forEach(function(inp) {
+    inp.value = '';
+  });
+  var ps = document.querySelector('#filters-zone [name="page_size"]');
+  var psVal = ps ? ps.value : '25';
+  htmx.ajax('GET', '/tables/' + tableId + '/rows?page_size=' + psVal, {
+    target: '#table-body',
+    swap: 'innerHTML'
+  });
+}
+// Overlay de traitement des alertes
+(function() {
+  var _t1 = null, _t2 = null;
+
+  function showAlertOverlay() {
+    var o = document.getElementById('alert-saving-overlay');
+    if (!o) return;
+    // Réinitialise les messages progressifs
+    var m1 = document.getElementById('alert-msg-1');
+    var m2 = document.getElementById('alert-msg-2');
+    if (m1) m1.style.opacity = '0';
+    if (m2) m2.style.opacity = '0';
+    o.classList.remove('hidden');
+    // Message 1 après 3s
+    _t1 = setTimeout(function() {
+      if (m1) m1.style.opacity = '1';
+    }, 3000);
+    // Message 2 après 8s
+    _t2 = setTimeout(function() {
+      if (m2) m2.style.opacity = '1';
+    }, 8000);
+  }
+
+  function hideAlertOverlay() {
+    clearTimeout(_t1); clearTimeout(_t2);
+    var o = document.getElementById('alert-saving-overlay');
+    if (o) o.classList.add('hidden');
+  }
+
+  // Afficher avant chaque POST HTMX depuis le panneau alertes
+  document.body.addEventListener('htmx:beforeRequest', function(e) {
+    var elt = e.detail.elt;
+    if (elt && elt.closest && elt.closest('#alerts-panel-content') &&
+        e.detail.requestConfig && e.detail.requestConfig.verb === 'post') {
+      showAlertOverlay();
+    }
+  });
+  // Masquer dès que la réponse est swappée (ou en cas d'erreur)
+  document.body.addEventListener('htmx:afterSwap', function(e) {
+    if (e.detail.target && e.detail.target.id === 'alerts-panel-content') {
+      hideAlertOverlay();
+    }
+  });
+  document.body.addEventListener('htmx:responseError', hideAlertOverlay);
+  document.body.addEventListener('htmx:sendError', hideAlertOverlay);
+})();
+
+function openAlertsPanel() {
+  document.getElementById('alerts-panel').classList.remove('hidden');
+  document.getElementById('alerts-overlay').classList.remove('hidden');
+  htmx.ajax('GET', '/tables/{{ table.id }}/alerts/panel', {
+    target: '#alerts-panel-content',
+    swap: 'innerHTML'
+  });
+}
+function closeAlertsPanel() {
+  document.getElementById('alerts-panel').classList.add('hidden');
+  document.getElementById('alerts-overlay').classList.add('hidden');
+}
+</script>
+<script>
+(function() {
+  var canWrite = {{ 'true' if can_write else 'false' }};
+  var nbCols   = {{ columns | length }};
+  // Colonne 0 = alerte (non exportable) ; colonnes data = 1..nbCols ; actions = nbCols+1
+
+  // ── Persistance visibilité colonnes (localStorage) ────────────────────────
+  var COLVIS_KEY = 'colvis_{{ table.id }}';
+  // Mapping index → col-id, lu une seule fois sur le thead complet (avant toute
+  // colonne masquée) : réutilisé à chaque resynchronisation, car le thead perd
+  // ses <th> pour les colonnes masquées (DataTables les retire du DOM).
+  var colIdByIndex = [];
+
+  function colvisLoad() {
+    try { return JSON.parse(localStorage.getItem(COLVIS_KEY) || '{}'); }
+    catch(e) { return {}; }
+  }
+
+  function colvisSave(dt, colIdByIndex) {
+    var state = {};
+    dt.columns().every(function() {
+      var colId = colIdByIndex[this.index()];
+      if (colId) state[colId] = this.visible();
+    });
+    try { localStorage.setItem(COLVIS_KEY, JSON.stringify(state)); }
+    catch(e) {}
+  }
+
+  function colvisRestore(dt, colIdByIndex) {
+    var state = colvisLoad();
+    if (!Object.keys(state).length) return;
+    dt.columns().every(function() {
+      var colId = colIdByIndex[this.index()];
+      if (colId && state.hasOwnProperty(String(colId))) {
+        this.visible(state[String(colId)], false);
+      }
+    });
+    dt.columns.adjust();
+  }
+
+  // ── Badge "N colonnes masquées" ────────────────────────────────────────────
+  function updateHiddenBadge(dt) {
+    var hidden = 0;
+    dt.columns(':not(.dt-no-export)').every(function() { if (!this.visible()) hidden++; });
+    var $badge = $('#colvis-hidden-badge');
+    if (hidden > 0) {
+      $badge.html(
+        hidden + ' colonne' + (hidden > 1 ? 's' : '') + ' masquée' + (hidden > 1 ? 's' : '') +
+        ' &mdash; <a href="#" class="underline hover:text-blue-800" id="colvis-show-all">tout afficher</a>'
+      ).removeClass('hidden');
+      $('#colvis-show-all').off('click').on('click', function(e) {
+        e.preventDefault();
+        dt.columns().visible(true);
+        colvisSave(dt, colIdByIndex);
+        updateHiddenBadge(dt);
+      });
+    } else {
+      $badge.addClass('hidden');
+    }
+  }
+
+  // Boutons avec exclusion de la colonne alerte des exports
+  var exportOpts = { columns: ':not(.dt-no-export)' };
+  var DETAIL_BUTTONS = [
+    { extend: 'copy',   text: 'Copier',    exportOptions: exportOpts },
+    { extend: 'csv',    text: 'CSV',       exportOptions: exportOpts },
+    { extend: 'excel',  text: 'Excel',     exportOptions: exportOpts },
+    { extend: 'pdf',    text: 'PDF',       exportOptions: exportOpts },
+    { extend: 'print',  text: 'Imprimer',  exportOptions: exportOpts },
+    { extend: 'colvis', text: 'Colonnes',  columns: ':not(.dt-no-export)',
+      columnText: function(dt, idx, title) {
+        // thead a 2 lignes (noms + filtres) : lire le titre depuis la 1re ligne
+        return $('#main-table thead tr:first th').eq(idx).text().trim() || title;
+      }
+    }
+  ];
+
+  function initMainTable() {
+    if (!document.getElementById('main-table')) return;
+
+    if ($.fn.DataTable.isDataTable('#main-table')) {
+      // Le tbody (#table-body) est désormais swappé seul par HTMX (le thead reste statique
+      // pour ne pas faire perdre le focus des champs de filtre) : le nœud <table> n'est donc
+      // plus jamais recréé. Un destroy()+réinit ici restaure le DOM tel qu'il était AU
+      // MOMENT DE L'INIT précédente (comportement documenté de DataTables : destroy()
+      // "reverts the table to its original state", en écrasant le tbody fraîchement swappé
+      // par les lignes d'avant filtre) — on se contente donc de resynchroniser les données
+      // depuis le DOM courant, sans destroy().
+      var dt = $('#main-table').DataTable();
+      // Le listener column-visibility.dt (attaché une fois au tout premier init, jamais
+      // détaché puisque cette instance n'est jamais détruite) sauvegarderait sinon en
+      // localStorage l'état "tout visible" ci-dessous AVANT que colvisRestore() ait pu
+      // relire l'état réellement souhaité — on le détache donc le temps de cette
+      // manipulation interne, et on le rattache une fois la resynchronisation terminée.
+      dt.off('column-visibility.dt');
+      // Si des colonnes sont actuellement masquées (bVisible=false en interne, hérité
+      // d'un resync précédent), les repasser à visible AVANT le rows.add()+draw() qui
+      // suit : les <tr> fraîchement injectés par HTMX contiennent TOUJOURS toutes les
+      // colonnes (le serveur ignore l'état colvis, purement côté client), et le masquage
+      // automatique que DataTables tente d'appliquer pendant ce premier draw() à des
+      // colonnes déjà bVisible=false sur des lignes "brutes" est peu fiable (constaté :
+      // exception interne _DT_CellIndex + cellules erronées retirées sur la 1re ligne).
+      // Partir d'un état "tout visible" homogène pour ce premier draw évite ce chemin
+      // interne bogué ; le masquage réel est réappliqué juste après, proprement, via
+      // colvisRestore() (même mécanisme fiable que le bouton "Colonnes").
+      dt.columns().visible(true, false);
+      dt.clear();
+      dt.rows.add($('#main-table tbody tr'));
+      dt.draw(false);
+      colvisRestore(dt, colIdByIndex);
+      dt.draw(false);
+      dt.on('column-visibility.dt', function() {
+        colvisSave(dt, colIdByIndex);
+        updateHiddenBadge(dt);
+      });
+      // Le listener global de base.html (lucide.createIcons() sur tout htmx:afterSwap)
+      // s'exécute après celui-ci, mais un repaint tardif du navigateur sur la colonne
+      // sticky (col-sticky-right) peut laisser la 1re ligne visuellement vide malgré un
+      // DOM correct. On force explicitement un nouveau passage + un recalcul de géométrie
+      // DataTables juste après le redraw, plutôt que de dépendre de l'ordre implicite.
+      lucide.createIcons();
+      dt.columns.adjust();
+      return;
+    }
+
+    // Lire le mapping index → col-id AVANT que DataTables modifie le DOM
+    $('#main-table thead tr:first th').each(function(i, th) {
+      colIdByIndex[i] = $(th).data('col-id') || null;
+    });
+
+    // Tri géré côté serveur (toggleSort) sur l'ensemble des lignes, pas uniquement la page
+    // affichée : le tri client DataTables est désactivé sur toutes les colonnes pour éviter
+    // un double mécanisme de tri contradictoire.
+    var colDefs = [{ orderable: false, searchable: false, targets: '_all' }];
+
+    var cfg = {
+      dom: 'Brt',
+      buttons: DETAIL_BUTTONS,
+      language: DT_LANG_FR,
+      order: [],
+      paging: false,
+      searching: false,
+      columnDefs: colDefs,
+    };
+    var dt = $('#main-table').DataTable(cfg);
+
+    // Restaurer la visibilité sauvegardée
+    colvisRestore(dt, colIdByIndex);
+
+    // Sauvegarder + mettre à jour le badge à chaque changement de visibilité
+    dt.on('column-visibility.dt', function() {
+      colvisSave(dt, colIdByIndex);
+      updateHiddenBadge(dt);
+    });
+
+    // Déplace les boutons DT dans la barre d'outils persistante
+    var $toolbar = $('#dt-toolbar');
+    if ($toolbar.length) {
+      var $existingBtns = $toolbar.find('.dt-buttons');
+      if ($existingBtns.length) $existingBtns.remove();
+      $toolbar.prepend(dt.buttons().container());
+    }
+
+    // Badge initial (si colonnes déjà masquées via localStorage)
+    updateHiddenBadge(dt);
+  }
+
+  $(document).ready(initMainTable);
+
+  // ── Préservation focus/curseur des champs de recherche pendant le resync ────
+  // Le remplacement du <tbody id="table-body"> (insertion/retrait de <tr>) fait perdre le
+  // focus aux inputs du thead (recherche globale, filtres par colonne) même si ceux-ci ne
+  // sont jamais eux-mêmes touchés par le swap : constaté en navigateur (Chromium recalcule
+  // le layout de la table entière à l'ajout/retrait de lignes, ce qui blur les autres
+  // cellules du même tableau). htmx ne restaure le focus que si l'élément a été RETIRÉ du DOM
+  // (https://github.com/bigskysoftware/htmx `doSwap`) — ce n'est pas le cas ici (le thead
+  // reste statique), donc htmx ne s'en charge pas : on le fait nous-mêmes.
+  // Note : htmx déclenche 'htmx:afterSwap' une fois par élément "settling" (le tbody ET la
+  // div de pagination OOB partagent le même e.detail.target.id côté réponse) — la restauration
+  // doit donc pouvoir s'appliquer à chaque occurrence, initMainTable() étant lui-même rappelé
+  // à chaque fois et pouvant re-provoquer le même blur.
+  var pendingFocusRestore = null;
+  document.body.addEventListener('htmx:beforeRequest', function(e) {
+    var active = document.activeElement;
+    if (e.detail.elt === active && active && active.id &&
+        (active.id === 'global-search' || active.id.indexOf('filter-') === 0)) {
+      pendingFocusRestore = { id: active.id, start: active.selectionStart, end: active.selectionEnd };
+    }
+  });
+  function restorePendingFocus() {
+    if (!pendingFocusRestore) return;
+    var el = document.getElementById(pendingFocusRestore.id);
+    if (el && document.activeElement !== el) {
+      el.focus({ preventScroll: true });
+      try { el.setSelectionRange(pendingFocusRestore.start, pendingFocusRestore.end); } catch (err) {}
+    }
+  }
+  document.body.addEventListener('htmx:afterSwap', function(e) {
+    if (e.detail.target && e.detail.target.id === 'table-body') {
+      initMainTable();
+      restorePendingFocus();
+    }
+  });
+  document.body.addEventListener('htmx:afterRequest', function(e) {
+    if (pendingFocusRestore && e.detail.elt && e.detail.elt.id === pendingFocusRestore.id) {
+      restorePendingFocus();
+      pendingFocusRestore = null;
+    }
+  });
+})();
+
+// ── Tri par colonne (serveur, porte sur l'ensemble des lignes) ─────────────
+function toggleSort(colId) {
+  var $sc = document.getElementById('sort-col-input');
+  var $sd = document.getElementById('sort-dir-input');
+  var newDir = (String($sc.value) === String(colId) && $sd.value === 'asc') ? 'desc' : 'asc';
+  $sc.value = colId;
+  $sd.value = newDir;
+  document.querySelectorAll('[data-sort-indicator]').forEach(function(el) {
+    el.textContent = (el.dataset.sortIndicator === String(colId)) ? (newDir === 'asc' ? '▲' : '▼') : '';
+  });
+  htmx.trigger('#sort-col-input', 'refresh-sort');
+}
+
+// ── Modal synchronisation webservice ──────────────────────────────────────
+function openSyncModal() {
+  document.getElementById('sync-backdrop').classList.remove('hidden');
+  document.getElementById('sync-modal').classList.remove('hidden');
+}
+function closeSyncModal() {
+  document.getElementById('sync-backdrop').classList.add('hidden');
+  document.getElementById('sync-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'sync-modal-body') {
+    openSyncModal();
+    lucide.createIcons();
+  }
+});
+
+{% if can_write %}
+// ── Sélection multiple + modification en masse ──────────────────────────────
+window.bulkSelectedIds = new Set();
+
+function updateBulkBar() {
+  var bar = document.getElementById('bulk-select-bar');
+  var count = document.getElementById('bulk-select-count');
+  if (!bar || !count) return;
+  var n = window.bulkSelectedIds.size;
+  count.textContent = n + ' ligne' + (n > 1 ? 's' : '') + ' sélectionnée' + (n > 1 ? 's' : '');
+  bar.classList.toggle('hidden', n === 0);
+}
+
+function clearBulkSelection() {
+  window.bulkSelectedIds.clear();
+  document.querySelectorAll('.row-select-checkbox').forEach(function(cb) { cb.checked = false; });
+  var selectAll = document.getElementById('select-all-checkbox');
+  if (selectAll) selectAll.checked = false;
+  updateBulkBar();
+}
+
+document.body.addEventListener('change', function(e) {
+  if (e.target.classList.contains('row-select-checkbox')) {
+    var id = parseInt(e.target.dataset.rowId, 10);
+    if (e.target.checked) window.bulkSelectedIds.add(id);
+    else window.bulkSelectedIds.delete(id);
+    updateBulkBar();
+  } else if (e.target.id === 'select-all-checkbox') {
+    document.querySelectorAll('.row-select-checkbox').forEach(function(cb) {
+      cb.checked = e.target.checked;
+      var id = parseInt(cb.dataset.rowId, 10);
+      if (e.target.checked) window.bulkSelectedIds.add(id);
+      else window.bulkSelectedIds.delete(id);
+    });
+    updateBulkBar();
+  }
+});
+
+// Le tbody est intégralement remplacé à chaque page/tri/filtre/recherche (rendu serveur,
+// cf. _rows_template_ctx) : la sélection (limitée à la page courante en V1) ne peut pas
+// survivre au swap. On la réinitialise pour éviter des IDs "fantômes" qui ne correspondent
+// plus à ce qui est affiché à l'écran.
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'table-body') {
+    clearBulkSelection();
+  }
+});
+
+function openBulkEditModal() {
+  if (window.bulkSelectedIds.size === 0) return;
+  document.getElementById('bulk-edit-backdrop').classList.remove('hidden');
+  document.getElementById('bulk-edit-modal').classList.remove('hidden');
+  htmx.ajax('GET', '/tables/{{ table.id }}/rows/bulk-edit', {
+    target: '#bulk-edit-modal-body',
+    swap: 'innerHTML'
+  });
+}
+function closeBulkEditModal() {
+  document.getElementById('bulk-edit-backdrop').classList.add('hidden');
+  document.getElementById('bulk-edit-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'bulk-edit-modal-body') {
+    var msg = document.getElementById('bulk-edit-count-msg');
+    if (msg) {
+      var n = window.bulkSelectedIds.size;
+      msg.textContent = n + ' ligne' + (n > 1 ? 's' : '') + ' sélectionnée' + (n > 1 ? 's' : '') +
+        ' — la modification s\'appliquera à toutes.';
+    }
+  }
+});
+document.body.addEventListener('closeBulkEditModal', closeBulkEditModal);
+
+function openBulkShareModal() {
+  if (window.bulkSelectedIds.size === 0) return;
+  document.getElementById('share-bulk-backdrop').classList.remove('hidden');
+  document.getElementById('share-bulk-modal').classList.remove('hidden');
+  htmx.ajax('GET', '/tables/{{ table.id }}/rows/bulk-share', {
+    target: '#share-bulk-modal-body',
+    swap: 'innerHTML'
+  });
+}
+function closeBulkShareModal() {
+  document.getElementById('share-bulk-backdrop').classList.add('hidden');
+  document.getElementById('share-bulk-modal').classList.add('hidden');
+}
+function submitBulkShareForm(e) {
+  return _submitShareForm(e, 'share-bulk-modal-body', 'closeBulkShareModal', function(fd) {
+    (window.bulkSelectedIds || new Set()).forEach(function(id) { fd.append('row_ids', id); });
+  });
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'share-bulk-modal-body') {
+    var msg = document.getElementById('share-bulk-count-msg');
+    if (msg) {
+      var n = window.bulkSelectedIds.size;
+      msg.textContent = n + ' ligne' + (n > 1 ? 's' : '') + ' sélectionnée' + (n > 1 ? 's' : '') +
+        ' — les colonnes cochées ci-dessous seront incluses dans l\'email.';
+    }
+    _applyShareHistoryUI({{ table.id }}, 'share-bulk');
+    lucide.createIcons();
+  }
+});
+
+// Overlay de traitement pendant l'application en masse (même pattern que l'overlay Alertes).
+// Uniquement pour la soumission du formulaire (le POST qui applique la modification) —
+// pas pour le <select> "Colonne à modifier", qui fait son propre hx-get vers /bulk-edit/field
+// pour charger le champ de valeur et serait sinon masqué à tort par l'overlay.
+document.body.addEventListener('htmx:beforeRequest', function(e) {
+  var elt = e.detail.elt;
+  if (elt && elt.tagName === 'FORM' && elt.closest && elt.closest('#bulk-edit-modal-body')) {
+    var o = document.getElementById('bulk-edit-saving-overlay');
+    var msg = document.getElementById('bulk-edit-saving-count');
+    if (msg) {
+      var n = window.bulkSelectedIds ? window.bulkSelectedIds.size : 0;
+      msg.textContent = 'Mise à jour de ' + n + ' ligne' + (n > 1 ? 's' : '') +
+        ' et évaluation des alertes.';
+    }
+    if (o) o.classList.remove('hidden');
+  }
+});
+document.body.addEventListener('htmx:afterRequest', function(e) {
+  var elt = e.detail.elt;
+  if (elt && elt.tagName === 'FORM' && elt.closest && elt.closest('#bulk-edit-modal-body')) {
+    var o = document.getElementById('bulk-edit-saving-overlay');
+    if (o) o.classList.add('hidden');
+  }
+});
+
+// Erreur de suppression en masse (sélection vide / trop de lignes) — renvoyée via
+// HX-Trigger par bulk_delete_rows, pas de modale dédiée pour cette action.
+document.body.addEventListener('bulkDeleteError', function(e) {
+  alert(e.detail.value);
+});
+{% endif %}
+
+// ── Lightbox image ─────────────────────────────────────────────────────────
+function openLightbox(viewUrl, dlUrl, name) {
+  document.getElementById('att-lightbox-img').src = viewUrl;
+  document.getElementById('att-lightbox-name').textContent = name;
+  document.getElementById('att-lightbox-dl').href = dlUrl;
+  document.getElementById('att-lightbox-backdrop').classList.remove('hidden');
+  document.getElementById('att-lightbox').classList.remove('hidden');
+}
+function closeLightbox() {
+  document.getElementById('att-lightbox-backdrop').classList.add('hidden');
+  document.getElementById('att-lightbox').classList.add('hidden');
+  document.getElementById('att-lightbox-img').src = '';
+}
+function openPdfPreview(viewUrl, dlUrl, name) {
+  document.getElementById('pdf-preview-frame').src = viewUrl;
+  document.getElementById('pdf-preview-name').textContent = name;
+  document.getElementById('pdf-preview-dl').href = dlUrl;
+  document.getElementById('pdf-preview-backdrop').classList.remove('hidden');
+  document.getElementById('pdf-preview').classList.remove('hidden');
+}
+function closePdfPreview() {
+  document.getElementById('pdf-preview-backdrop').classList.add('hidden');
+  document.getElementById('pdf-preview').classList.add('hidden');
+  document.getElementById('pdf-preview-frame').src = '';
+}
+
+// ── Modal fiche détail ─────────────────────────────────────────────────────
+function openDetailModal() {
+  document.getElementById('row-detail-backdrop').classList.remove('hidden');
+  document.getElementById('row-detail-modal').classList.remove('hidden');
+}
+function closeDetailModal() {
+  document.getElementById('row-detail-backdrop').classList.add('hidden');
+  document.getElementById('row-detail-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'row-detail-modal-body') {
+    openDetailModal();
+    // Repère la ligne affichée (depuis l'URL de la requête) pour le bouton "+" de
+    // partage dans l'en-tête de la fiche, qui n'a pas le row.id dans son propre markup.
+    var m = e.detail.xhr && e.detail.xhr.responseURL &&
+      e.detail.xhr.responseURL.match(/\/rows\/(\d+)\/detail/);
+    window.currentDetailRowId = m ? m[1] : null;
+    lucide.createIcons();
+  }
+});
+// Réinitialise les icônes Lucide pour tout swap à l'intérieur de la fiche détail (panneau pièces jointes inclus)
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.closest &&
+      e.detail.target.closest('#row-detail-modal-body')) {
+    lucide.createIcons();
+  }
+});
+
+// ── Historique local (3 dernières valeurs par champ, par table) des formulaires de
+// partage par email — purement côté navigateur (localStorage), jamais transmis au
+// serveur. Titre/Message : 3 dernières valeurs complètes, une puce remplace le champ.
+// Destinataires (multi-valeurs) : 3 dernières adresses distinctes, une puce s'ajoute
+// au champ sans effacer les adresses déjà saisies.
+function _shareHistoryKey(tableId) {
+  return 'dt_share_history_' + tableId;
+}
+function _loadShareHistory(tableId) {
+  try {
+    var raw = localStorage.getItem(_shareHistoryKey(tableId));
+    var h = raw ? JSON.parse(raw) : {};
+    return { titles: h.titles || [], messages: h.messages || [], recipients: h.recipients || [] };
+  } catch (e) {
+    return { titles: [], messages: [], recipients: [] };
+  }
+}
+function _pushHistoryValue(arr, value) {
+  value = (value || '').trim();
+  if (!value) return arr;
+  var filtered = arr.filter(function(v) { return v !== value; });
+  filtered.unshift(value);
+  return filtered.slice(0, 3);
+}
+function _recordShareHistory(tableId, title, recipientsRaw, message) {
+  try {
+    var h = _loadShareHistory(tableId);
+    h.titles = _pushHistoryValue(h.titles, title);
+    h.messages = _pushHistoryValue(h.messages, message);
+    (recipientsRaw || '').split(/[,;\s]+/).map(function(s) { return s.trim(); }).filter(Boolean)
+      .forEach(function(addr) { h.recipients = _pushHistoryValue(h.recipients, addr); });
+    localStorage.setItem(_shareHistoryKey(tableId), JSON.stringify(h));
+  } catch (e) { /* localStorage indisponible (navigation privée, etc.) : on ignore */ }
+}
+function _escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function _renderHistoryChips(containerId, values, onClick) {
+  var el = document.getElementById(containerId);
+  if (!el) return;
+  if (!values || !values.length) { el.innerHTML = ''; return; }
+  el.innerHTML = values.map(function(v) {
+    return '<button type="button" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 ' +
+      'px-2 py-0.5 rounded-full transition truncate max-w-[160px]" title="' + _escapeHtml(v) + '">' +
+      _escapeHtml(v) + '</button>';
+  }).join('');
+  Array.prototype.forEach.call(el.querySelectorAll('button'), function(btn, i) {
+    btn.addEventListener('click', function() { onClick(values[i]); });
+  });
+}
+function _applyShareHistoryUI(tableId, prefix) {
+  var h = _loadShareHistory(tableId);
+  var bodySelector = '#' + prefix + '-modal-body ';
+  _renderHistoryChips(prefix + '-title-history', h.titles, function(v) {
+    var input = document.querySelector(bodySelector + 'input[name="email_title"]');
+    if (input) input.value = v;
+  });
+  _renderHistoryChips(prefix + '-message-history', h.messages, function(v) {
+    var ta = document.querySelector(bodySelector + 'textarea[name="message"]');
+    if (ta) ta.value = v;
+  });
+  _renderHistoryChips(prefix + '-recipients-history', h.recipients, function(v) {
+    var input = document.querySelector(bodySelector + 'input[name="recipients"]');
+    if (!input) return;
+    var current = input.value.split(/[,;\s]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+    if (current.indexOf(v) === -1) current.push(v);
+    input.value = current.join(', ');
+  });
+}
+
+// ── Modal partage d'une ligne par email ─────────────────────────────────────
+// Déclenché soit par le bouton "+" de la fiche détail (ligne déjà ouverte, utilise
+// window.currentDetailRowId), soit directement par l'icône "send" de la colonne
+// Actions (hx-get classique sur #share-row-modal-body, voir table_rows.html).
+function openShareRowModal() {
+  if (!window.currentDetailRowId) return;
+  htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + window.currentDetailRowId + '/share', {
+    target: '#share-row-modal-body',
+    swap: 'innerHTML'
+  });
+}
+function closeShareRowModal() {
+  document.getElementById('share-row-backdrop').classList.add('hidden');
+  document.getElementById('share-row-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'share-row-modal-body') {
+    document.getElementById('share-row-backdrop').classList.remove('hidden');
+    document.getElementById('share-row-modal').classList.remove('hidden');
+    _applyShareHistoryUI({{ table.id }}, 'share-row');
+    lucide.createIcons();
+  }
+});
+
+// Soumission des formulaires de partage par email : volontairement SANS htmx, car la
+// réponse de succès est un fichier binaire (.eml), pas du HTML — htmx ne sait swapper
+// que du HTML. On passe par fetch() + téléchargement manuel du Blob ; en cas d'erreur
+// de validation, le serveur renvoie le même partiel HTML qu'avant (re-rendu avec
+// l'erreur), qu'on réinjecte comme avant.
+async function _submitShareForm(e, bodyTargetId, closeFnName, extraFormData) {
+  e.preventDefault();
+  var form = e.target;
+  // Le 2e argument (submitter) permet \u00e0 FormData d'inclure name="share_action" avec
+  // la valeur du bouton effectivement cliqu\u00e9 ("send" ou "download") \u2014 n\u00e9cessaire car
+  // on construit la FormData nous-m\u00eames (e.preventDefault() plus haut), le navigateur
+  // ne le fait pas pour nous comme lors d'une soumission classique. IMPORTANT : \u00e0
+  // construire AVANT de d\u00e9sactiver les boutons ci-dessous \u2014 un bouton d\u00e9sactiv\u00e9 est
+  // exclu de l'ensemble des champs soumis (comme pour une vraie soumission de
+  // formulaire), donc son name=value dispara\u00eetrait si on inversait l'ordre.
+  var fd = new FormData(form, e.submitter);
+  var buttons = form.querySelectorAll('button');
+  buttons.forEach(function(b) { b.disabled = true; });
+  var submitBtn = e.submitter;
+  if (submitBtn) submitBtn.classList.add('htmx-request');
+  var prefix = bodyTargetId.replace('-modal-body', '');
+
+  try {
+    if (extraFormData) extraFormData(fd);
+    var resp = await fetch(form.action, { method: 'POST', body: fd });
+    var contentType = resp.headers.get('Content-Type') || '';
+    var body = document.getElementById(bodyTargetId);
+
+    if (contentType.indexOf('message/rfc822') !== -1) {
+      var blob = await resp.blob();
+      var cd = resp.headers.get('Content-Disposition') || '';
+      var m = cd.match(/filename="?([^"]+)"?/);
+      var filename = m ? m[1] : 'partage.eml';
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      _recordShareHistory({{ table.id }}, fd.get('email_title'), fd.get('recipients'), fd.get('message'));
+
+      body.innerHTML =
+        '<div class="flex flex-col items-center text-center gap-3 py-4">' +
+        '<div class="w-11 h-11 rounded-full bg-green-100 text-green-600 flex items-center justify-center">' +
+        '<i data-lucide="check" class="w-5 h-5"></i></div>' +
+        '<div><p class="text-sm font-semibold text-gray-800">Email pr\u00eat \u2014 fichier t\u00e9l\u00e9charg\u00e9</p>' +
+        '<p class="text-xs text-gray-500 mt-1">Ouvrez \u00ab ' + filename + ' \u00bb avec votre client mail ' +
+        'par d\u00e9faut pour le relire, l\'ajuster et l\'envoyer.</p></div>' +
+        '<button type="button" onclick="' + closeFnName + '()" ' +
+        'class="text-sm text-white bg-blue-600 hover:bg-blue-700 px-5 py-1.5 rounded-lg transition mt-1">Fermer</button>' +
+        '</div>';
+    } else if (contentType.indexOf('application/json') !== -1) {
+      var data = await resp.json();
+      _recordShareHistory({{ table.id }}, fd.get('email_title'), fd.get('recipients'), fd.get('message'));
+
+      body.innerHTML =
+        '<div class="flex flex-col items-center text-center gap-3 py-4">' +
+        '<div class="w-11 h-11 rounded-full bg-green-100 text-green-600 flex items-center justify-center">' +
+        '<i data-lucide="check" class="w-5 h-5"></i></div>' +
+        '<div><p class="text-sm font-semibold text-gray-800">Email envoy\u00e9</p>' +
+        '<p class="text-xs text-gray-500 mt-1">\u00e0 ' + data.recipients.length + ' destinataire' +
+        (data.recipients.length > 1 ? 's' : '') + ' : ' + data.recipients.join(', ') + '</p></div>' +
+        '<button type="button" onclick="' + closeFnName + '()" ' +
+        'class="text-sm text-white bg-blue-600 hover:bg-blue-700 px-5 py-1.5 rounded-lg transition mt-1">Fermer</button>' +
+        '</div>';
+    } else {
+      body.innerHTML = await resp.text();
+      _applyShareHistoryUI({{ table.id }}, prefix);
+    }
+    lucide.createIcons();
+  } catch (err) {
+    var body2 = document.getElementById(bodyTargetId);
+    if (body2) {
+      body2.insertAdjacentHTML('afterbegin',
+        '<p class="text-xs text-red-600 font-medium bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">' +
+        '&#9888; Erreur réseau, réessayez.</p>');
+    }
+    buttons.forEach(function(b) { b.disabled = false; });
+    if (submitBtn) submitBtn.classList.remove('htmx-request');
+  }
+  return false;
+}
+function submitShareRowForm(e) {
+  return _submitShareForm(e, 'share-row-modal-body', 'closeShareRowModal');
+}
+
+// ── Modal historique ───────────────────────────────────────────────────────
+function openHistoryModal() {
+  document.getElementById('history-backdrop').classList.remove('hidden');
+  document.getElementById('history-modal').classList.remove('hidden');
+}
+function closeHistoryModal() {
+  document.getElementById('history-backdrop').classList.add('hidden');
+  document.getElementById('history-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'history-modal-body') {
+    openHistoryModal();
+    lucide.createIcons();
+  }
+});
+
+{% if can_write %}
+// ── Modal édition ligne ──────────────────────────────────────────────────────
+function openEditRowModal() {
+  document.getElementById('edit-row-backdrop').classList.remove('hidden');
+  document.getElementById('edit-row-modal').classList.remove('hidden');
+}
+function closeEditRowModal() {
+  document.getElementById('edit-row-backdrop').classList.add('hidden');
+  document.getElementById('edit-row-modal').classList.add('hidden');
+}
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'edit-row-modal-body') {
+    openEditRowModal();
+    lucide.createIcons();
+  }
+});
+document.body.addEventListener('closeEditRowModal', closeEditRowModal);
+{% endif %}
+
+// ── Panneau commentaires ───────────────────────────────────────────────────
+function openCommentPanel() {
+  document.getElementById('comment-panel').classList.add('open');
+  document.getElementById('comment-backdrop').classList.add('open');
+}
+
+function closeCommentPanel() {
+  var panel = document.getElementById('comment-panel');
+  var backdrop = document.getElementById('comment-backdrop');
+  panel.classList.remove('open');
+  backdrop.classList.remove('open');
+  // Vider le contenu après la transition pour éviter le flash au prochain chargement
+  setTimeout(function() { if (!panel.classList.contains('open')) panel.innerHTML = ''; }, 300);
+}
+
+// Ouvre le panneau dès que HTMX a injecté son contenu
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'comment-panel') {
+    openCommentPanel();
+    lucide.createIcons();
+    // Focus automatique sur le textarea
+    setTimeout(function() {
+      var ta = document.getElementById('comment-input');
+      if (ta) ta.focus();
+    }, 300);
+  }
+});
+
+// Après chaque swap dans le panneau (nouveau commentaire, suppression…)
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target && e.detail.target.id === 'comment-list') {
+    lucide.createIcons();
+  }
+});
+
+// Touche Échap pour fermer (lightbox et PDF en priorité)
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  if (!document.getElementById('att-lightbox').classList.contains('hidden')) {
+    closeLightbox(); return;
+  }
+  if (!document.getElementById('pdf-preview').classList.contains('hidden')) {
+    closePdfPreview(); return;
+  }
+  closeCommentPanel(); closeHistoryModal(); closeSyncModal(); closeDetailModal();
+  if (typeof closeEditRowModal === 'function') closeEditRowModal();
+});
+
+// Menu Outils
+function toggleOutilsMenu() {
+  document.getElementById('outils-menu').classList.toggle('hidden');
+}
+document.addEventListener('click', function(e) {
+  const wrapper = document.getElementById('outils-menu-wrapper');
+  if (wrapper && !wrapper.contains(e.target)) {
+    document.getElementById('outils-menu').classList.add('hidden');
+  }
+});
+</script>
+
+{% if columns %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+{% if lat_col and lon_col %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+{% endif %}
+<script>
+(function () {
+  var VIEW_KEY  = 'viewmode_{{ table.id }}';
+  var _map      = null;
+  var _markersLayer = null;
+  var _filterTimer  = null;
+  var _canWrite = {{ 'true' if can_write else 'false' }};
+  var activeClass   = ['bg-blue-600', 'text-white'];
+  var inactiveClass = ['bg-white', 'text-gray-600', 'hover:bg-gray-50'];
+
+  // ── Collecte des filtres (mode-aware) ─────────────────────────────────────
+  function collectFilterParams() {
+    var params = new URLSearchParams();
+    var qEl = document.getElementById('global-search');
+    if (qEl && qEl.value) params.set('q', qEl.value);
+    var mapView = document.getElementById('map-view');
+    var calView = document.getElementById('calendar-view');
+    var isMap = mapView && !mapView.classList.contains('hidden');
+    var isCal = calView && !calView.classList.contains('hidden');
+    var containerId = isMap ? 'map-filter-bar' : (isCal ? 'calendar-filter-bar' : 'filters-zone');
+    var container = document.getElementById(containerId);
+    if (container) {
+      container.querySelectorAll('[name^="filter_"]').forEach(function(el) {
+        if (el.value) params.set(el.name, el.value);
+      });
+    }
+    return params;
+  }
+
+  // ── Synchronisation des valeurs entre les deux barres ────────────────────
+  function syncFilters(fromId, toId) {
+    var from = document.getElementById(fromId);
+    var to   = document.getElementById(toId);
+    if (!from || !to) return;
+    from.querySelectorAll('[name^="filter_"]').forEach(function(el) {
+      var target = to.querySelector('[name="' + el.name + '"]');
+      if (target) target.value = el.value;
+    });
+  }
+
+  // ── Panneau de filtres repliable + indicateur de filtres actifs ──────────
+  // Partagé entre la carte et le calendrier : évite qu'un filtre appliqué depuis
+  // la liste passe inaperçu une fois le panneau détaillé refermé.
+  window.toggleFilterPanel = function(panelId, iconId) {
+    var panel = document.getElementById(panelId);
+    var icon  = document.getElementById(iconId);
+    if (!panel) return;
+    var isHidden = panel.classList.toggle('hidden');
+    if (icon) icon.classList.toggle('rotate-180', !isHidden);
+  };
+
+  function updateFilterIndicator(barId, badgeId, chipsId) {
+    var bar = document.getElementById(barId);
+    var badge = document.getElementById(badgeId);
+    var chipsRow = document.getElementById(chipsId);
+    if (!bar) return;
+    var active = [];
+    bar.querySelectorAll('[name^="filter_"]').forEach(function(input) {
+      if (!input.value) return;
+      var label = input.closest('label');
+      var name = label ? label.querySelector('span').textContent : input.name;
+      active.push({ input: input, name: name, value: input.value });
+    });
+    if (badge) {
+      badge.textContent = String(active.length);
+      badge.classList.toggle('hidden', active.length === 0);
+    }
+    if (chipsRow) {
+      chipsRow.innerHTML = '';
+      chipsRow.classList.toggle('hidden', active.length === 0);
+      active.forEach(function(f) {
+        var chip = document.createElement('span');
+        chip.className = 'inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-full border border-blue-200';
+        var text = document.createElement('span');
+        text.textContent = f.name + ' : ' + f.value;
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.setAttribute('aria-label', 'Retirer le filtre ' + f.name);
+        removeBtn.className = 'hover:text-blue-900 font-semibold leading-none';
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', function() {
+          f.input.value = '';
+          f.input.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        chip.appendChild(text);
+        chip.appendChild(removeBtn);
+        chipsRow.appendChild(chip);
+      });
+    }
+  }
+
+  // ── Rechargement différé des marqueurs (debounce 350 ms) ─────────────────
+  function scheduleReload() {
+    clearTimeout(_filterTimer);
+    _filterTimer = setTimeout(function() {
+      if (_map) loadMarkers(collectFilterParams());
+    }, 350);
+  }
+
+  // ── Hauteur dynamique : mesurée depuis le haut de #leaflet-map ───────────
+  function resizeMap() {
+    var leafletEl = document.getElementById('leaflet-map');
+    var mapViewEl = document.getElementById('map-view');
+    if (!leafletEl || mapViewEl.classList.contains('hidden')) return;
+    var footerEl = document.querySelector('footer');
+    var footerH  = footerEl ? footerEl.offsetHeight : 0;
+    var top      = leafletEl.getBoundingClientRect().top;
+    var availH   = window.innerHeight - top - footerH - 4;
+    leafletEl.style.height = Math.max(300, availH) + 'px';
+    if (_map) _map.invalidateSize();
+  }
+  window.addEventListener('resize', resizeMap);
+  {% if date_cols %}window.addEventListener('resize', resizeCalendarEl);{% endif %}
+
+  // ── Bascule liste ↔ carte ↔ calendrier ────────────────────────────────────
+  function applyViewMode(mode) {
+    var listView = document.getElementById('filters-zone');
+    var mapView  = document.getElementById('map-view');
+    var calView  = document.getElementById('calendar-view');
+    var btnList  = document.getElementById('btn-list-view');
+    var btnMap   = document.getElementById('btn-map-view');
+    var btnCal   = document.getElementById('btn-calendar-view');
+    var statsView = document.getElementById('stats-view');
+    var btnStats  = document.getElementById('btn-stats-view');
+
+    [listView, mapView, calView, statsView].forEach(function(el) { if (el) el.classList.add('hidden'); });
+    [btnList, btnMap, btnCal, btnStats].forEach(function(btn) {
+      if (!btn) return;
+      btn.classList.remove(...activeClass);
+      btn.classList.add(...inactiveClass);
+    });
+
+    if (mode === 'map' && mapView) {
+      syncFilters('filters-zone', 'map-filter-bar');
+      updateFilterIndicator('map-filter-bar', 'map-filter-badge', 'map-filter-chips');
+      mapView.classList.remove('hidden');
+      btnMap.classList.remove(...inactiveClass);
+      btnMap.classList.add(...activeClass);
+      resizeMap();
+      initMap(collectFilterParams());
+    } else if (mode === 'calendar' && calView) {
+      syncFilters('filters-zone', 'calendar-filter-bar');
+      updateFilterIndicator('calendar-filter-bar', 'calendar-filter-badge', 'calendar-filter-chips');
+      calView.classList.remove('hidden');
+      btnCal.classList.remove(...inactiveClass);
+      btnCal.classList.add(...activeClass);
+      resizeCalendarEl();
+      initCalendar();
+    } else if (mode === 'stats' && statsView) {
+      statsView.classList.remove('hidden');
+      btnStats.classList.remove(...inactiveClass);
+      btnStats.classList.add(...activeClass);
+      loadStats();
+    } else {
+      listView.classList.remove('hidden');
+      btnList.classList.remove(...inactiveClass);
+      btnList.classList.add(...activeClass);
+    }
+    lucide.createIcons();
+  }
+
+  window.setViewMode = function (mode) {
+    try { localStorage.setItem(VIEW_KEY, mode); } catch (e) {}
+    applyViewMode(mode);
+  };
+
+  // ── Effacer filtres carte + recherche globale ─────────────────────────────
+  window.clearMapFilters = function() {
+    var bar = document.getElementById('map-filter-bar');
+    if (bar) bar.querySelectorAll('[name^="filter_"]').forEach(function(el) { el.value = ''; });
+    var qEl = document.getElementById('global-search');
+    if (qEl) qEl.value = '';
+    updateFilterIndicator('map-filter-bar', 'map-filter-badge', 'map-filter-chips');
+    if (_map) loadMarkers(new URLSearchParams());
+  };
+
+  // ── Initialisation Leaflet (une seule fois) ────────────────────────────────
+  function initMap(params) {
+    if (!_map) {
+      var ignOrtho = L.tileLayer(
+        'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0' +
+        '&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image/jpeg' +
+        '&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+        { maxZoom: 20, attribution: '© <a href="https://www.ign.fr/" target="_blank">IGN</a>-F / Géoplateforme' }
+      );
+      var ignPlan = L.tileLayer(
+        'https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0' +
+        '&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png' +
+        '&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}',
+        { maxZoom: 20, attribution: '© <a href="https://www.ign.fr/" target="_blank">IGN</a>-F / Géoplateforme' }
+      );
+      var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
+      });
+      _map = L.map('leaflet-map', { layers: [osm] });
+      L.control.layers({
+        'Orthophoto (IGN)': ignOrtho,
+        'Plan IGN': ignPlan,
+        'OpenStreetMap': osm
+      }).addTo(_map);
+      _markersLayer = L.layerGroup().addTo(_map);
+
+      // Inputs de la barre de filtres carte → rechargement live
+      var bar = document.getElementById('map-filter-bar');
+      if (bar) {
+        bar.addEventListener('input', function(e) {
+          if (e.target.name && e.target.name.startsWith('filter_')) {
+            updateFilterIndicator('map-filter-bar', 'map-filter-badge', 'map-filter-chips');
+            scheduleReload();
+          }
+        });
+      }
+      // Recherche globale → rechargement live quand on est en mode carte
+      var qEl = document.getElementById('global-search');
+      if (qEl) {
+        qEl.addEventListener('input', function() {
+          var mv = document.getElementById('map-view');
+          if (mv && !mv.classList.contains('hidden')) scheduleReload();
+        });
+      }
+    } else {
+      _map.invalidateSize();
+    }
+    loadMarkers(params);
+  }
+
+  // ── Chargement des marqueurs (filtrés) ────────────────────────────────────
+  var _labelsVisible = true;
+
+  function loadMarkers(params, skipFit) {
+    var url = '/tables/{{ table.id }}/geojson';
+    var qs = params ? params.toString() : '';
+    if (qs) url += '?' + qs;
+
+    _markersLayer.clearLayers();
+
+    var labelCol = (document.getElementById('map-label-select') || {}).value || '';
+
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var bounds = [];
+        data.features.forEach(function (f) {
+          var lon = f.geometry.coordinates[0];
+          var lat = f.geometry.coordinates[1];
+          var icon = L.divIcon({
+            className: '',
+            html: '<span class="halo-marker"></span>',
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+            popupAnchor: [0, -10],
+          });
+          (function(props) {
+            var marker = L.marker([lat, lon], { icon: icon });
+            marker.on('click', function() { openMapPanel(props); });
+            if (labelCol && props[labelCol] != null && props[labelCol] !== '') {
+              marker.bindTooltip(escHtml(String(props[labelCol])), {
+                permanent: true,
+                direction: 'right',
+                className: 'map-label-tooltip',
+              });
+              if (!_labelsVisible) marker.closeTooltip();
+            }
+            marker.addTo(_markersLayer);
+          })(f.properties);
+          bounds.push([lat, lon]);
+        });
+        if (!skipFit) {
+          if (bounds.length > 0) {
+            _map.fitBounds(bounds, { padding: [40, 40] });
+          } else {
+            _map.setView([46.5, 2.3], 6);
+          }
+        }
+      })
+      .catch(function () { if (!skipFit) _map.setView([46.5, 2.3], 6); });
+  }
+
+  window.onLabelColChange = function() {
+    loadMarkers(collectFilterParams(), true);
+  };
+
+  window.toggleMapLabels = function() {
+    _labelsVisible = !_labelsVisible;
+    _markersLayer.eachLayer(function(m) {
+      if (typeof m.getTooltip === 'function' && m.getTooltip()) {
+        if (_labelsVisible) { m.openTooltip(); } else { m.closeTooltip(); }
+      }
+    });
+    var btn = document.getElementById('map-label-toggle');
+    if (btn) {
+      var icon = btn.querySelector('i');
+      if (icon) {
+        icon.setAttribute('data-lucide', _labelsVisible ? 'eye' : 'eye-off');
+        lucide.createIcons({ nodes: [icon] });
+      }
+      btn.classList.toggle('text-blue-600', _labelsVisible);
+      btn.classList.toggle('text-gray-400', !_labelsVisible);
+    }
+  };
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Panneau détail marqueur ───────────────────────────────────────────────
+  function openMapPanel(props) {
+    var lines = '';
+    Object.keys(props).forEach(function(k) {
+      if (k === 'row_id') return;
+      var val = props[k];
+      if (val === '' || val == null) return;
+      lines +=
+        '<div class="flex gap-3 py-3 border-b border-gray-50 last:border-0">' +
+        '<dt class="text-xs text-gray-400 uppercase tracking-wide w-36 shrink-0 pt-0.5">' + escHtml(k) + '</dt>' +
+        '<dd class="text-sm text-gray-800 flex-1 break-words">' + escHtml(String(val)) + '</dd>' +
+        '</div>';
+    });
+    document.getElementById('map-panel-content').innerHTML = lines
+      ? '<dl>' + lines + '</dl>'
+      : '<p class="text-sm text-gray-400 text-center py-10">Aucune donnée</p>';
+
+    var footer = document.getElementById('map-panel-footer');
+    if (footer) {
+      footer.innerHTML = (_canWrite && props.row_id)
+        ? '<button onclick="editMapRow(' + parseInt(props.row_id, 10) + ')" ' +
+          'class="w-full flex items-center justify-center gap-1.5 text-sm font-medium text-blue-600 ' +
+          'hover:text-blue-800 py-2 rounded-lg hover:bg-blue-50 transition">' +
+          '<i data-lucide="pencil" class="w-4 h-4"></i> Modifier cette ligne</button>'
+        : '';
+      lucide.createIcons();
+    }
+
+    document.getElementById('map-panel').classList.add('open');
+    document.getElementById('map-panel-backdrop').classList.add('open');
+  }
+
+  window.closeMapPanel = function() {
+    if (!document.getElementById('map-panel')) return;
+    document.getElementById('map-panel').classList.remove('open');
+    document.getElementById('map-panel-backdrop').classList.remove('open');
+  };
+
+  window.editMapRow = function(rowId) {
+    window.closeMapPanel();
+    window.setViewMode('list');
+    htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + rowId + '/edit', {
+      target: '#edit-row-modal-body',
+      swap: 'innerHTML'
+    });
+  };
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') window.closeMapPanel();
+  });
+
+  {% if date_cols %}
+  // ── Vue calendrier (FullCalendar) ─────────────────────────────────────────
+  var _calendar = null;
+  var _calFilterTimer = null;
+
+  function getCalendarDateCol() {
+    var sel = document.getElementById('calendar-date-col-select');
+    if (sel) return sel.value;
+    var view = document.getElementById('calendar-view');
+    return view ? view.dataset.defaultDateCol : '';
+  }
+
+  function resizeCalendarEl() {
+    var wrapEl = document.getElementById('calendar-wrap');
+    var calViewEl = document.getElementById('calendar-view');
+    if (!wrapEl || calViewEl.classList.contains('hidden')) return;
+    var footerEl = document.querySelector('footer');
+    var footerH  = footerEl ? footerEl.offsetHeight : 0;
+    var top      = wrapEl.getBoundingClientRect().top;
+    var availH   = window.innerHeight - top - footerH - 4;
+    wrapEl.style.height = Math.max(400, availH) + 'px';
+  }
+
+  function scheduleCalendarReload() {
+    clearTimeout(_calFilterTimer);
+    _calFilterTimer = setTimeout(function() {
+      if (_calendar) _calendar.refetchEvents();
+    }, 350);
+  }
+
+  function initCalendar() {
+    if (!_calendar) {
+      var calEl = document.getElementById('calendar-el');
+      _calendar = new FullCalendar.Calendar(calEl, {
+        initialView: 'multiMonthYear',
+        height: '100%',
+        locale: 'fr',
+        headerToolbar: { left: 'prev,next today', center: 'title', right: '' },
+        events: function(info, successCallback, failureCallback) {
+          var params = collectFilterParams();
+          params.set('date_col', getCalendarDateCol());
+          fetch('/tables/{{ table.id }}/events?' + params.toString())
+            .then(function(r) { return r.json(); })
+            .then(successCallback)
+            .catch(failureCallback);
+        },
+        eventClick: function(info) {
+          info.jsEvent.preventDefault();
+          htmx.ajax('GET', '/tables/{{ table.id }}/rows/' + info.event.extendedProps.row_id + '/detail', {
+            target: '#row-detail-modal-body',
+            swap: 'innerHTML'
+          });
+        },
+        datesSet: function(info) {
+          // Milieu de la plage visible plutôt que info.start : plus fiable pour identifier
+          // "l'année affichée" quel que soit le point d'entrée (prev/next/today/sélecteur).
+          var mid = new Date((info.start.getTime() + info.end.getTime()) / 2);
+          syncCalendarYearSelect(mid.getFullYear());
+        },
+      });
+      populateCalendarYearSelect();
+      _calendar.render();
+
+      var bar = document.getElementById('calendar-filter-bar');
+      if (bar) {
+        bar.addEventListener('input', function(e) {
+          if (e.target.name && e.target.name.startsWith('filter_')) {
+            updateFilterIndicator('calendar-filter-bar', 'calendar-filter-badge', 'calendar-filter-chips');
+            scheduleCalendarReload();
+          }
+        });
+      }
+      var qEl = document.getElementById('global-search');
+      if (qEl) {
+        qEl.addEventListener('input', function() {
+          var cv = document.getElementById('calendar-view');
+          if (cv && !cv.classList.contains('hidden')) scheduleCalendarReload();
+        });
+      }
+    } else {
+      _calendar.refetchEvents();
+    }
+  }
+
+  window.onCalendarDateColChange = function() {
+    if (_calendar) _calendar.refetchEvents();
+  };
+
+  // ── Sélecteur "Aller à l'année" ─────────────────────────────────────────────
+  function populateCalendarYearSelect() {
+    var sel = document.getElementById('calendar-year-select');
+    if (!sel || sel.dataset.populated) return;
+    var current = new Date().getFullYear();
+    for (var y = current - 15; y <= current + 5; y++) {
+      var opt = document.createElement('option');
+      opt.value = String(y);
+      opt.textContent = String(y);
+      if (y === current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.dataset.populated = '1';
+  }
+
+  function syncCalendarYearSelect(year) {
+    var sel = document.getElementById('calendar-year-select');
+    if (!sel) return;
+    var y = String(year);
+    if (!sel.querySelector('option[value="' + y + '"]')) {
+      // Navigation (prev/next) au-delà de la plage pré-remplie : on l'étend à la volée,
+      // en l'insérant à sa place chronologique plutôt qu'en fin de liste.
+      var opt = document.createElement('option');
+      opt.value = y;
+      opt.textContent = y;
+      var before = Array.prototype.find.call(sel.options, function(o) {
+        return parseInt(o.value, 10) > year;
+      });
+      if (before) sel.insertBefore(opt, before);
+      else sel.appendChild(opt);
+    }
+    if (sel.value !== y) sel.value = y;
+  }
+
+  window.onCalendarYearChange = function() {
+    var sel = document.getElementById('calendar-year-select');
+    if (_calendar && sel && sel.value) {
+      _calendar.gotoDate(new Date(parseInt(sel.value, 10), 0, 1));
+    }
+  };
+
+  window.clearCalendarFilters = function() {
+    var bar = document.getElementById('calendar-filter-bar');
+    if (bar) bar.querySelectorAll('[name^="filter_"]').forEach(function(el) { el.value = ''; });
+    var qEl = document.getElementById('global-search');
+    if (qEl) qEl.value = '';
+    updateFilterIndicator('calendar-filter-bar', 'calendar-filter-badge', 'calendar-filter-chips');
+    if (_calendar) _calendar.refetchEvents();
+  };
+  {% endif %}
+
+  // ── Init : restaurer le dernier mode ─────────────────────────────────────
+  // ── Vue statistiques ──────────────────────────────────────────────────────
+  var _statsChart = null;
+  var _statsTimer = null;
+  var _statsBound = false;
+
+  function fmtNum(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    return Number(n).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+  }
+
+  function statsViewVisible() {
+    var sv = document.getElementById('stats-view');
+    return sv && !sv.classList.contains('hidden');
+  }
+
+  function statBox(label, value) {
+    return '<div class="bg-gray-50 rounded-lg px-3 py-2">' +
+      '<div class="text-[11px] text-gray-400 uppercase tracking-wide">' + label + '</div>' +
+      '<div class="font-semibold text-gray-800">' + fmtNum(value) + '</div></div>';
+  }
+
+  window.loadStats = function() {
+    // Recherche globale -> recalcul automatique quand on est sur l'onglet Statistiques
+    if (!_statsBound) {
+      _statsBound = true;
+      var qEl = document.getElementById('global-search');
+      if (qEl) qEl.addEventListener('input', function() {
+        if (!statsViewVisible()) return;
+        clearTimeout(_statsTimer);
+        _statsTimer = setTimeout(window.loadStats, 350);
+      });
+    }
+    var params = collectFilterParams();
+    var g = document.getElementById('stats-group-col').value;
+    var v = document.getElementById('stats-value-col').value;
+    var aggEl = document.getElementById('stats-agg');
+    if (g) params.set('group_col', g);
+    if (v) params.set('value_col', v);
+    params.set('agg', aggEl.value);
+    aggEl.classList.toggle('hidden', !v);
+    document.getElementById('stats-summary').textContent = 'Calcul en cours…';
+    fetch('/tables/{{ table.id }}/stats?' + params.toString())
+      .then(function(r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(renderStats)
+      .catch(function() {
+        document.getElementById('stats-summary').textContent = '';
+        document.getElementById('stats-cards').innerHTML =
+          '<p class="text-sm text-red-600">Erreur lors du chargement des statistiques.</p>';
+      });
+  };
+
+  function renderStats(data) {
+    document.getElementById('stats-summary').textContent =
+      fmtNum(data.total_rows) + ' ligne(s) analysée(s)' +
+      (data.filtered ? ' — filtres et recherche de la vue Liste appliqués' : '');
+
+    // ── Bloc « Grouper par » : graphique + tableau ──
+    var block = document.getElementById('stats-group-block');
+    if (_statsChart) { _statsChart.destroy(); _statsChart = null; }
+    if (data.group) {
+      block.classList.remove('hidden');
+      document.getElementById('stats-group-title').textContent = data.group.title;
+      var items = data.group.items;
+      var html = '<thead><tr class="text-xs text-gray-400 uppercase tracking-wide">' +
+        '<th class="text-left font-semibold py-1.5 pr-3">' + escHtml(data.group.col_name) + '</th>' +
+        '<th class="text-right font-semibold py-1.5">' + escHtml(data.group.value_label) + '</th></tr></thead><tbody>';
+      items.forEach(function(it) {
+        html += '<tr class="border-t border-gray-100">' +
+          '<td class="py-1.5 pr-3 text-gray-700">' + escHtml(String(it.label)) + '</td>' +
+          '<td class="py-1.5 text-right font-medium text-gray-800">' + fmtNum(it.value) + '</td></tr>';
+      });
+      if (!items.length) html += '<tr><td colspan="2" class="py-4 text-center text-gray-400">Aucune donnée</td></tr>';
+      document.getElementById('stats-group-table').innerHTML = html + '</tbody>';
+      if (window.Chart && items.length) {
+        var top = items.slice(0, 25);
+        _statsChart = new Chart(document.getElementById('stats-chart'), {
+          type: 'bar',
+          data: {
+            labels: top.map(function(it) { return it.label; }),
+            datasets: [{
+              label: data.group.value_label,
+              data: top.map(function(it) { return it.value; }),
+              backgroundColor: '#3b82f6',
+              borderRadius: 4
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true } }
+          }
+        });
+      }
+    } else {
+      block.classList.add('hidden');
+    }
+
+    // ── Une carte par colonne ──
+    var cards = data.columns.map(function(c) {
+      var h = '<div class="bg-white border border-gray-200 rounded-xl shadow-sm p-4">' +
+        '<div class="flex items-center justify-between gap-2 mb-1">' +
+        '<h3 class="text-sm font-semibold text-gray-800 truncate" title="' + escHtml(c.name) + '">' + escHtml(c.name) + '</h3>' +
+        '<span class="text-[10px] uppercase tracking-wide bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">' + escHtml(c.type) + '</span></div>' +
+        '<p class="text-xs text-gray-400 mb-3">' + fmtNum(c.filled) + ' remplie(s) · ' + fmtNum(c.empty) +
+        ' vide(s) · ' + fmtNum(c.distinct) + ' distincte(s)</p>';
+      if (c.numeric) {
+        var n = c.numeric;
+        h += '<div class="grid grid-cols-2 gap-2 text-sm">' +
+          statBox('Somme', n.sum) + statBox('Moyenne', n.avg) +
+          statBox('Min', n.min) + statBox('Max', n.max) + '</div>';
+      } else if (c.top && c.top.length) {
+        if (c.date_min) {
+          h += '<p class="text-xs text-gray-500 mb-2">Du ' + escHtml(c.date_min) + ' au ' + escHtml(c.date_max) + '</p>';
+        }
+        h += '<p class="text-[11px] text-gray-400 uppercase tracking-wide mb-1">' + escHtml(c.top_label) + '</p>';
+        var maxCount = Math.max.apply(null, c.top.map(function(t) { return t[1]; }));
+        c.top.forEach(function(t) {
+          var pct = maxCount ? Math.round(t[1] / maxCount * 100) : 0;
+          h += '<div class="mb-1"><div class="flex justify-between text-xs">' +
+            '<span class="truncate pr-2 text-gray-700" title="' + escHtml(String(t[0])) + '">' + escHtml(String(t[0])) + '</span>' +
+            '<span class="text-gray-500 shrink-0">' + fmtNum(t[1]) + '</span></div>' +
+            '<div class="h-1.5 bg-gray-100 rounded-full"><div class="h-1.5 bg-blue-500 rounded-full" style="width:' + pct + '%"></div></div></div>';
+        });
+      } else {
+        h += '<p class="text-xs text-gray-400">Aucune valeur</p>';
+      }
+      return h + '</div>';
+    }).join('');
+    document.getElementById('stats-cards').innerHTML = cards ||
+      '<p class="text-sm text-gray-400">Aucune colonne à analyser.</p>';
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    var saved;
+    try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
+    var validModes = ['list', 'stats'{% if lat_col and lon_col %}, 'map'{% endif %}{% if date_cols %}, 'calendar'{% endif %}];
+    applyViewMode(validModes.indexOf(saved) !== -1 ? saved : 'list');
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}
